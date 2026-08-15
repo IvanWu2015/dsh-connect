@@ -14,6 +14,13 @@ export type Command =
   | { readonly kind: "chat" }
   | { readonly kind: "menu" }
   | { readonly kind: "settings" }
+  | { readonly kind: "plugins" }
+  | { readonly kind: "workspace"; readonly path?: string }
+  | { readonly kind: "compact" }
+  | { readonly kind: "history"; readonly limit?: number }
+  | { readonly kind: "goals" }
+  | { readonly kind: "model" }
+  | { readonly kind: "workspaces" }
   | { readonly kind: "help" }
   | { readonly kind: "message"; readonly text: string };
 
@@ -53,6 +60,25 @@ export function parseCommand(raw: string): Command {
     case "/settings":
     case "/set":
       return { kind: "settings" };
+    case "/plugins":
+    case "/plugin":
+      return { kind: "plugins" };
+    case "/workspace":
+    case "/ws":
+      return arg === undefined || arg === "" ? { kind: "workspace" } : { kind: "workspace", path: arg };
+    case "/compact":
+      return { kind: "compact" };
+    case "/history":
+    case "/hist":
+      return arg !== undefined && /^\d+$/.test(arg) ? { kind: "history", limit: Number(arg) } : { kind: "history" };
+    case "/goals":
+    case "/goal":
+      return { kind: "goals" };
+    case "/model":
+      return { kind: "model" };
+    case "/workspaces":
+    case "/wslist":
+      return { kind: "workspaces" };
     case "/help":
     case "/start":
       return { kind: "help" };
@@ -64,11 +90,18 @@ export function parseCommand(raw: string): Command {
 export const HELP_TEXT = [
   "可用命令（本地执行，不消耗模型）：",
   "- `/menu` 打开主菜单（层级点选，可返回）",
-  "- `/settings`（`/set`）打开设置：模型 / 推理强度 / 通知 / 配置总览",
+  "- `/settings`（`/set`）设置：模型 / 推理强度 / 通知 / 配置总览",
   "- `/status` 查看会话状态、模型、工作目录、排队数",
   "- `/task` 查看当前任务清单（todo）",
   "- `/chat`（`/session`）列出对话，点选切换或新建",
   "- `/dir` 列出工作目录，点选切换（或 `/dir <绝对路径>` 手动指定）",
+  "- `/workspace <绝对路径>` 新建工作区",
+  "- `/plugins` 查看插件清单",
+  "- `/compact` 压缩当前会话上下文",
+  "- `/history [条数]` 查看最近会话消息",
+  "- `/goals` 查看当前目标",
+  "- `/model` 查看 / 切换模型",
+  "- `/workspaces` 列出所有工作区",
   "- `/new` 开启新对话",
   "- `/clear` 清空当前对话",
   "- `/stop` 停止当前任务",

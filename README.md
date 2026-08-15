@@ -10,7 +10,8 @@
 - **多轮上下文**：每个飞书会话（单聊/群）绑定一个 DSH `Session`，进程重启后自动 `resume`。
 - **工作安排**：任务跑完主动推送「结果摘要」卡片；`ctx.connect.notify()` 供 goals/jobs 钩子主动推送进度。
 - **安全**：群聊默认需 @机器人；用户/群白名单；飞书凭据走环境变量或加密配置。
-- **命令**：本地指令（不消耗模型）：`/status` `/task` `/chat` `/dir` `/new` `/clear` `/stop` `/help`。
+- **交互式菜单**：`/menu` 层级点选（工作目录 / 对话 / 设置 / 插件 / 压缩等），同一张卡片原地更新，可「返回」「退出」，连续操作。
+- **本地指令**（不消耗模型）：`/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/model` `/new` `/clear` `/stop` `/settings` `/help`。
 - **可扩展**：`dsh-connect`（核心，渠道无关）+ `dsh-connect-feishu`（飞书适配器）分层，新增钉钉只需再加一个适配器包。
 
 ## 仓库结构
@@ -60,6 +61,30 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu
 重启 `dsh web`（Host 插件需重启进程才生效），按 [docs/feishu-setup.md](docs/feishu-setup.md) 完成飞书侧订阅后，即可在飞书里对话。
 
 > 详细的分步操作（含飞书端设置与验证）见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
+
+## 指令清单
+
+| 指令 | 说明 |
+|---|---|
+| `/menu` | 打开主菜单（层级点选，同一张卡片原地更新，可返回 / 退出） |
+| `/settings`（`/set`） | 设置：切换模型 / 推理强度 / 通知开关 / 配置总览 |
+| `/model` | 查看当前模型，点选切换 |
+| `/status` | 会话状态、模型、工作目录、排队数、会话 ID |
+| `/task`（`/tasks` `/todo`） | 查看当前任务清单 |
+| `/chat`（`/session` `/sessions`） | 列出对话，点选切换或新建 |
+| `/dir`（`/cd` `/pwd`） | 切换工作目录（点选，或 `/dir <绝对路径>`） |
+| `/workspace <绝对路径>` | 新建工作区 |
+| `/workspaces` | 列出所有工作区 |
+| `/plugins` | 查看插件清单 |
+| `/compact` | 压缩当前会话上下文 |
+| `/history [条数]` | 查看最近会话消息 |
+| `/goals` | 查看当前目标 |
+| `/new`（`/reset`） | 开启新对话 |
+| `/clear` | 清空当前对话 |
+| `/stop`（`/cancel`） | 停止当前任务 |
+| `/help` | 列出全部命令 |
+
+> 所有 `/` 指令都由插件本地执行，不消耗模型；其余文本作为任务发送给 DSH Agent。
 
 ## 配置
 

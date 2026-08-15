@@ -7,11 +7,82 @@
 import { createLarkChannel, LoggerLevel, type CardActionEvent } from "@larksuiteoapi/node-sdk";
 import type {
   ChannelAdapter,
+  ChoiceOption,
   ChoicePrompt,
+  ChoiceResult,
   InboundMessage,
   OutboundTarget,
   SummaryCard,
 } from "dsh-connect";
+
+/** Zero-width / variation-selector chars that render at width 0. */
+const ZERO_WIDTH = new Set([0x200b, 0x200c, 0x200d, 0xfe0e, 0xfe0f]);
+
+/** Approximate rendered width: full-width (CJK/emoji) chars count 2, others 1. */
+function displayWidth(s: string): number {
+  let w = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!;
+    if (ZERO_WIDTH.has(cp)) continue;
+    w += cp > 0xff ? 2 : 1;
+  }
+  return w;
+}
+
+/** Pad every label with trailing spaces up to the same display width. */
+function padLabels(options: readonly ChoiceOption[]): ChoiceOption[] {
+  const widths = options.map((o) => displayWidth(o.label));
+  const max = Math.max(0, ...widths);
+  // Cap the padding target so very long labels don't force wrapping everywhere.
+  const target = Math.min(20, max);
+  return options.map((o) => {
+    const pad = Math.max(0, target - displayWidth(o.label));
+    if (pad === 0) return o;
+    // Full-width spaces (U+3000, 2 units) resist collapsing; a trailing
+    // half-width space covers an odd leftover unit.
+    const full = Math.floor(pad / 2);
+    const half = pad % 2;
+    return { ...o, label: o.label + "　".repeat(full) + (half ? " " : "") };
+  });
+}
+
+/**
+ * Render options as an equal-width button grid: 3 buttons per row via
+ * `column_set` (three weighted columns), padding the last row with empty
+ * columns so every row is a uniform 3-cell layout. Labels are padded to the
+ * same display width so the buttons themselves render uniformly.
+ */
+function buildButtonGrid(options: readonly ChoiceOption[]): unknown[] {
+  const padded = padLabels(options);
+  const rows: unknown[] = [];
+  for (let i = 0; i < padded.length; i += 3) {
+    const group = padded.slice(i, i + 3);
+    const columns = group.map((opt) => ({
+      tag: "column",
+      width: "weighted",
+      weight: 1,
+      vertical_align: "center",
+      elements: [
+        {
+          tag: "button",
+          text: { tag: "plain_text", content: opt.label },
+          type: "default",
+          value: { choice: opt.id },
+        },
+      ],
+    }));
+    while (columns.length < 3) {
+      columns.push({ tag: "column", width: "weighted", weight: 1, vertical_align: "center", elements: [] });
+    }
+    rows.push({
+      tag: "column_set",
+      horizontal_spacing: "small",
+      flex_mode: "none",
+      columns,
+    });
+  }
+  return rows;
+}
 
 export interface FeishuConfig {
   appId?: string;
@@ -146,35 +217,60 @@ export class FeishuAdapter implements ChannelAdapter {
     );
   }
 
-  async promptChoice(target: OutboundTarget, prompt: ChoicePrompt): Promise<string | undefined> {
+  async promptChoice(target: OutboundTarget, prompt: ChoicePrompt, updateMessageId?: string): Promise<ChoiceResult> {
     const card = {
       header: { title: { tag: "plain_text", content: prompt.title }, template: "blue" },
       elements: [
         ...(prompt.description === undefined
           ? []
           : [{ tag: "div", text: { tag: "plain_text", content: prompt.description } }]),
-        {
-          tag: "action",
-          actions: prompt.options.map((opt) => ({
-            tag: "button",
-            text: { tag: "plain_text", content: opt.label },
-            type: "default",
-            value: { choice: opt.id },
-          })),
-        },
+        ...buildButtonGrid(prompt.options),
       ],
     };
-    const { messageId } = await this.channel.send(
-      target.chatKey,
-      { card },
-      { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) },
-    );
-    return await new Promise<string | undefined>((resolve) => {
-      const timer = setTimeout(() => {
+
+    let messageId: string;
+    if (updateMessageId !== undefined) {
+      // Reuse the existing card: replace its content in place so a menu chain
+      // navigates on one card instead of stacking new ones.
+      await this.channel.updateCard(updateMessageId, card);
+      messageId = updateMessageId;
+    } else {
+      ({ messageId } = await this.channel.send(
+        target.chatKey,
+        { card },
+        { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) },
+      ));
+    }
+
+    return await new Promise<ChoiceResult>((resolve) => {
+      const timer = setTimeout(async () => {
         this.pendingChoices.delete(messageId);
-        resolve(undefined);
+        // Replace the stale menu with an expired notice instead of leaving it silent.
+        await this.channel
+          .updateCard(messageId, {
+            header: { title: { tag: "plain_text", content: "菜单已过期" }, template: "grey" },
+            elements: [{ tag: "note", elements: [{ tag: "plain_text", content: "请重新打开菜单。" }] }],
+          })
+          .catch(() => undefined);
+        resolve({ choice: undefined, messageId });
       }, CHOICE_TIMEOUT_MS);
-      this.pendingChoices.set(messageId, { resolve, timer });
+      this.pendingChoices.set(messageId, {
+        resolve: (choice) => {
+          this.pendingChoices.delete(messageId);
+          clearTimeout(timer);
+          resolve({ choice, messageId });
+        },
+        timer,
+      });
     });
+  }
+
+  async closeMenu(messageId: string, summary: string): Promise<void> {
+    await this.channel
+      .updateCard(messageId, {
+        header: { title: { tag: "plain_text", content: "✅ 完成" }, template: "green" },
+        elements: [{ tag: "div", text: { tag: "plain_text", content: summary } }],
+      })
+      .catch(() => undefined);
   }
 }

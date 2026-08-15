@@ -114,12 +114,23 @@ function truncate(text: string, max = 500): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
 
+function textOf(message: { content: readonly { type?: string; text?: string }[] } | undefined): string {
+  if (message === undefined) return "";
+  return message.content
+    .filter((b) => b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text ?? "")
+    .join("");
+}
+
 type MenuId = "root" | "workspace" | "chat" | "settings" | "model" | "reasoning" | "notify";
 
 interface MenuItem {
   id: string;
   label: string;
-  onSelect: (target: OutboundTarget, msg: InboundMessage) => Promise<void>;
+  /** Leaf action: after it runs, the menu returns to the root menu on the same card. */
+  leaf?: boolean;
+  /** `messageId` is the menu card id: pass it to `openMenu` to navigate in place, or close the card. */
+  onSelect: (target: OutboundTarget, msg: InboundMessage, messageId: string) => Promise<void>;
 }
 
 const MENU_TITLES: Record<MenuId, string> = {
@@ -451,6 +462,38 @@ export class AgentRunner {
         await this.openMenu(target, msg, "settings", ["root"]);
         break;
       }
+      case "plugins": {
+        await this.showPlugins(target);
+        break;
+      }
+      case "workspace": {
+        if (command.path === undefined) {
+          await this.adapter.sendText(target, "用法：`/workspace <绝对路径>`，例如 `/workspace D:\\projects\\new-app`。");
+          break;
+        }
+        await this.createWorkspace(command.path, target);
+        break;
+      }
+      case "compact": {
+        await this.compact(target);
+        break;
+      }
+      case "history": {
+        await this.showHistory(target, command.limit ?? 10);
+        break;
+      }
+      case "goals": {
+        await this.showGoals(target);
+        break;
+      }
+      case "model": {
+        await this.openMenu(target, msg, "model", ["root"]);
+        break;
+      }
+      case "workspaces": {
+        await this.showAllWorkspaces(target);
+        break;
+      }
       case "help": {
         await this.adapter.sendText(target, HELP_TEXT);
         break;
@@ -537,41 +580,54 @@ export class AgentRunner {
     return out;
   }
 
-  private async openMenu(target: OutboundTarget, msg: InboundMessage, menuId: MenuId, stack: MenuId[] = []): Promise<void> {
+  private async openMenu(target: OutboundTarget, msg: InboundMessage, menuId: MenuId, stack: MenuId[] = [], cardId?: string): Promise<void> {
     const items = await this.menuItems(menuId);
     const options: ChoiceOption[] = items.map((i) => ({ id: i.id, label: i.label }));
+    options.push({ id: "menu:exit", label: "❌ 退出" });
     if (stack.length > 0) options.push({ id: "menu:back", label: "🔙 返回" });
-    const choice = await this.adapter.promptChoice(target, { title: MENU_TITLES[menuId], options });
+    const { choice, messageId } = await this.adapter.promptChoice(target, { title: MENU_TITLES[menuId], options }, cardId);
     if (choice === undefined) return;
+    if (choice === "menu:exit") {
+      await this.adapter.closeMenu(messageId, "菜单已关闭。");
+      return;
+    }
     if (choice === "menu:back") {
       const parent = stack[stack.length - 1];
-      await this.openMenu(target, msg, parent, stack.slice(0, -1));
+      await this.openMenu(target, msg, parent, stack.slice(0, -1), messageId);
       return;
     }
     const item = items.find((i) => i.id === choice);
     if (item === undefined) return;
-    await item.onSelect(target, msg);
+    await item.onSelect(target, msg, messageId);
+    if (item.leaf === true) {
+      // Return to the root menu on the same card so the user can keep operating.
+      await this.openMenu(target, msg, "root", [], messageId);
+    }
   }
 
   private async menuItems(menuId: MenuId): Promise<MenuItem[]> {
     switch (menuId) {
       case "root":
         return [
-          { id: "workspace", label: "📁 切换工作目录", onSelect: (t, m) => this.openMenu(t, m, "workspace", ["root"]) },
-          { id: "chat", label: "💬 切换对话", onSelect: (t, m) => this.openMenu(t, m, "chat", ["root"]) },
-          { id: "status", label: "📊 查看状态", onSelect: (t) => this.showStatus(t) },
-          { id: "task", label: "📋 查看任务", onSelect: (t) => this.showTasks(t) },
-          { id: "settings", label: "⚙️ 设置", onSelect: (t, m) => this.openMenu(t, m, "settings", ["root"]) },
+          { id: "workspace", label: "📁 切换工作目录", onSelect: (t, m, cardId) => this.openMenu(t, m, "workspace", ["root"], cardId) },
+          { id: "chat", label: "💬 切换对话", onSelect: (t, m, cardId) => this.openMenu(t, m, "chat", ["root"], cardId) },
+          { id: "status", label: "📊 查看状态", leaf: true, onSelect: async (t) => { await this.showStatus(t); } },
+          { id: "task", label: "📋 查看任务", leaf: true, onSelect: async (t) => { await this.showTasks(t); } },
+          { id: "history", label: "🗒️ 历史消息", leaf: true, onSelect: async (t) => { await this.showHistory(t, 10); } },
+          { id: "goals", label: "🎯 目标", leaf: true, onSelect: async (t) => { await this.showGoals(t); } },
+          { id: "compact", label: "🗜️ 压缩上下文", leaf: true, onSelect: async (t) => { await this.compact(t); } },
+          { id: "plugins", label: "🔌 查看插件", leaf: true, onSelect: async (t) => { await this.showPlugins(t); } },
+          { id: "settings", label: "⚙️ 设置", onSelect: (t, m, cardId) => this.openMenu(t, m, "settings", ["root"], cardId) },
         ];
       case "workspace": {
         const workspaces = this.listWorkspaces();
         return workspaces.map((w) => ({
           id: `dir:${w.path}`,
           label: `${w.path === this.workDir ? "● " : ""}${w.title}${w.title !== w.path ? `  (${w.path})` : ""}`,
+          leaf: true,
           onSelect: async (t, m) => {
             this.workDir = w.path;
             await this.newChat(m);
-            await this.adapter.sendText(t, `工作目录已切换为：\n${w.path}`);
           },
         }));
       }
@@ -582,27 +638,27 @@ export class AgentRunner {
         const items: MenuItem[] = sessions.map((s) => ({
           id: `session:${s.sessionId}`,
           label: `${s.sessionId === active ? "●" : "○"} ${s.title || s.sessionId}`,
+          leaf: true,
           onSelect: async (t, m) => {
             await this.switchTo(s.sessionId, m.senderKey);
-            await this.adapter.sendText(t, `已切换到对话：${s.title || s.sessionId}`);
           },
         }));
         items.push({
           id: "action:new",
           label: "➕ 新建对话",
+          leaf: true,
           onSelect: async (t, m) => {
             await this.newChat(m);
-            await this.adapter.sendText(t, "已开启新对话。");
           },
         });
         return items;
       }
       case "settings":
         return [
-          { id: "model", label: "🤖 切换模型", onSelect: (t, m) => this.openMenu(t, m, "model", ["settings", "root"]) },
-          { id: "reasoning", label: "🧠 推理强度", onSelect: (t, m) => this.openMenu(t, m, "reasoning", ["settings", "root"]) },
-          { id: "notify", label: "🔔 通知设置", onSelect: (t, m) => this.openMenu(t, m, "notify", ["settings", "root"]) },
-          { id: "overview", label: "📄 配置总览", onSelect: (t) => this.showSettings(t) },
+          { id: "model", label: "🤖 切换模型", onSelect: (t, m, cardId) => this.openMenu(t, m, "model", ["settings", "root"], cardId) },
+          { id: "reasoning", label: "🧠 推理强度", onSelect: (t, m, cardId) => this.openMenu(t, m, "reasoning", ["settings", "root"], cardId) },
+          { id: "notify", label: "🔔 通知设置", onSelect: (t, m, cardId) => this.openMenu(t, m, "notify", ["settings", "root"], cardId) },
+          { id: "overview", label: "📄 配置总览", leaf: true, onSelect: async (t) => { await this.showSettings(t); } },
         ];
       case "model":
         return await this.modelMenuItems();
@@ -613,17 +669,17 @@ export class AgentRunner {
           {
             id: "stream",
             label: `流式输出：${this.streamEnabled ? "开" : "关"}`,
-            onSelect: async (t) => {
+            leaf: true,
+            onSelect: async () => {
               this.streamEnabled = !this.streamEnabled;
-              await this.adapter.sendText(t, `流式输出已${this.streamEnabled ? "开启" : "关闭"}。`);
             },
           },
           {
             id: "summary",
             label: `结束摘要：${this.summaryEnabled ? "开" : "关"}`,
-            onSelect: async (t) => {
+            leaf: true,
+            onSelect: async () => {
               this.summaryEnabled = !this.summaryEnabled;
-              await this.adapter.sendText(t, `结束摘要已${this.summaryEnabled ? "开启" : "关闭"}。`);
             },
           },
         ];
@@ -689,9 +745,9 @@ export class AgentRunner {
     const items: MenuItem[] = choices.map((c) => ({
       id: `model:${c.provider}:${c.model}`,
       label: `${c.provider === current.provider && c.model === current.model ? "● " : ""}${c.name}`,
+      leaf: true,
       onSelect: async (t, m) => {
         await this.setModel(c.provider, c.model, m);
-        await this.adapter.sendText(t, `模型已切换为：${c.name}`);
       },
     }));
     if (items.length === 0) {
@@ -747,9 +803,9 @@ export class AgentRunner {
       {
         id: "effort:default",
         label: `${current.reasoningEffort === undefined ? "● " : ""}默认（跟随模型）`,
+        leaf: true,
         onSelect: async (t, m) => {
           await this.setReasoning(undefined, m);
-          await this.adapter.sendText(t, "推理强度已设为默认。");
         },
       },
     ];
@@ -757,9 +813,9 @@ export class AgentRunner {
       items.push({
         id: `effort:${e.id}`,
         label: `${e.id === current.reasoningEffort ? "● " : ""}${e.name}`,
+        leaf: true,
         onSelect: async (t, m) => {
           await this.setReasoning(e.id, m);
-          await this.adapter.sendText(t, `推理强度已切换为：${e.name}`);
         },
       });
     }
@@ -777,5 +833,168 @@ export class AgentRunner {
       ...(effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) }),
     });
     await this.newChat(msg);
+  }
+
+  private async showPlugins(target: OutboundTarget): Promise<void> {
+    const loader = this.ctx.get("loader") as
+      | { entries?: () => Iterable<{ id: string; options: { name?: string }; disabled: boolean }> }
+      | undefined;
+    const all = [...(loader?.entries?.() ?? [])];
+    if (all.length === 0) {
+      await this.adapter.sendText(target, "未获取到插件清单。");
+      return;
+    }
+    const shown = all.slice(0, 50);
+    const lines = shown.map((e) => {
+      const status = e.disabled ? "⛔ 禁用" : "✅ 启用";
+      return `${status}  ${e.id}${e.options.name ? `  (${e.options.name})` : ""}`;
+    });
+    if (all.length > shown.length) lines.push(`… 共 ${all.length} 个，仅显示前 ${shown.length} 个`);
+    await this.adapter.sendText(target, `插件（${all.length}）：\n${lines.join("\n")}`);
+  }
+
+  private async createWorkspace(path: string, target: OutboundTarget): Promise<void> {
+    if (!isAbsolute(path)) {
+      await this.adapter.sendText(target, "请输入绝对路径，例如 `/workspace D:\\projects\\new-app`。");
+      return;
+    }
+    try {
+      if (!existsSync(path) || !statSync(path).isDirectory()) {
+        await this.adapter.sendText(target, `目录不存在或不是文件夹：${path}\n（请先创建该目录，再执行 /workspace）`);
+        return;
+      }
+    } catch {
+      await this.adapter.sendText(target, `无法访问目录：${path}`);
+      return;
+    }
+    const registry = this.ctx.get("workspaceRegistry") as
+      | { create?: (path: string, title?: string) => Promise<{ title: string; path: string }> }
+      | undefined;
+    if (registry?.create === undefined) {
+      await this.adapter.sendText(target, "工作区服务不可用。");
+      return;
+    }
+    try {
+      const ws = await registry.create(path);
+      await this.adapter.sendText(target, `工作区已创建：\n${ws.title}  (${ws.path})`);
+    } catch (error) {
+      await this.adapter.sendText(target, `创建失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async compact(target: OutboundTarget): Promise<void> {
+    const agent = this.agent;
+    if (agent === undefined) {
+      await this.adapter.sendText(target, "当前没有活动会话，无法压缩。");
+      return;
+    }
+    if (agent.status !== "idle") {
+      await this.adapter.sendText(target, "当前会话正在运行，请稍后再试（或先 /stop）。");
+      return;
+    }
+    const presets = this.ctx.get("agentPresets") as
+      | {
+          serviceFor?: (
+            agent: { ctx: unknown },
+            name: string,
+          ) => { compactNow?: (a: unknown, signal: AbortSignal) => Promise<unknown> } | undefined;
+        }
+      | undefined;
+    const compaction = presets?.serviceFor?.(agent, "compaction");
+    if (compaction?.compactNow === undefined) {
+      await this.adapter.sendText(target, "压缩服务不可用（当前预设未挂载压缩后端）。");
+      return;
+    }
+    try {
+      const result = await compaction.compactNow(agent, new AbortController().signal);
+      if (result === null) {
+        await this.adapter.sendText(target, "没有可压缩的历史。");
+      } else {
+        await this.adapter.sendText(target, "上下文已压缩。");
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      await this.adapter.sendText(target, `压缩失败：${truncate(msg)}`);
+    }
+  }
+
+  private async showHistory(target: OutboundTarget, limit: number): Promise<void> {
+    const agent = this.agent;
+    if (agent === undefined) {
+      await this.adapter.sendText(target, "当前没有活动会话。");
+      return;
+    }
+    const events = agent.session.events;
+    const rows: string[] = [];
+    for (let i = events.length - 1; i >= 0 && rows.length < limit; i--) {
+      const e = events[i];
+      if (e.type === "user/message") {
+        const text = textOf(e.data);
+        if (text !== "") rows.push(`👤 ${truncate(text, 100)}`);
+      } else if (e.type === "assistant/message") {
+        const text = textOf(e.data.message);
+        if (text !== "") rows.push(`🤖 ${truncate(text, 100)}`);
+      }
+    }
+    if (rows.length === 0) {
+      await this.adapter.sendText(target, "会话里还没有消息。");
+      return;
+    }
+    await this.adapter.sendText(target, `最近 ${rows.length} 条消息：\n${rows.reverse().join("\n\n")}`);
+  }
+
+  private async showGoals(target: OutboundTarget): Promise<void> {
+    const agent = this.agent;
+    if (agent === undefined) {
+      await this.adapter.sendText(target, "当前没有活动会话。");
+      return;
+    }
+    const goals = this.ctx.get("goals") as
+      | {
+          get?: (a: unknown) => {
+            objective: string;
+            phase: string;
+            maxGoalRounds: number;
+            roundsStarted: number;
+            activation: string;
+            blockedReason?: { code: string; message: string };
+          } | undefined;
+        }
+      | undefined;
+    const view = goals?.get?.(agent);
+    if (view === undefined) {
+      await this.adapter.sendText(target, "当前没有进行中的目标。");
+      return;
+    }
+    const phaseLabels: Record<string, string> = {
+      active: "🟢 进行中",
+      paused: "⏸️ 已暂停",
+      blocked: "🚫 受阻",
+      complete: "✅ 已完成",
+    };
+    const lines = [
+      `🎯 目标：${view.objective}`,
+      `状态：${phaseLabels[view.phase] ?? view.phase}`,
+      `轮次：${view.roundsStarted}/${view.maxGoalRounds}`,
+      `自动续跑：${view.activation === "armed" ? "已武装" : "已解除"}`,
+    ];
+    if (view.blockedReason !== undefined) lines.push(`受阻原因：${view.blockedReason.message}`);
+    await this.adapter.sendText(target, lines.join("\n"));
+  }
+
+  private async showAllWorkspaces(target: OutboundTarget): Promise<void> {
+    const registry = this.ctx.get("workspaceRegistry") as
+      | { list?: () => readonly { path: string; title: string; sessionIds?: readonly unknown[] }[] }
+      | undefined;
+    const all = registry?.list?.() ?? [];
+    if (all.length === 0) {
+      await this.adapter.sendText(target, "还没有工作区。可用 `/workspace <绝对路径>` 新建。");
+      return;
+    }
+    const lines = all.map((w, i) => {
+      const sess = w.sessionIds !== undefined ? `  · ${w.sessionIds.length} 会话` : "";
+      return `${i + 1}. ${w.title}${w.title !== w.path ? `  (${w.path})` : ""}${sess}`;
+    });
+    await this.adapter.sendText(target, `工作区（${all.length}）：\n${lines.join("\n")}`);
   }
 }

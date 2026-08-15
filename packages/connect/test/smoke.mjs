@@ -59,7 +59,8 @@ const adapter = {
   sendText: async () => {},
   sendCard: async () => {},
   streamText: async () => {},
-  promptChoice: async () => undefined,
+  promptChoice: async () => ({ choice: undefined, messageId: "stub-msg" }),
+  closeMenu: async () => {},
   onInbound: () => {},
 };
 service.registerAdapter(adapter);

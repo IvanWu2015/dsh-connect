@@ -21,6 +21,7 @@ export type {
   ChatType,
   ChoiceOption,
   ChoicePrompt,
+  ChoiceResult,
   InboundMessage,
   OutboundTarget,
   SummaryCard,

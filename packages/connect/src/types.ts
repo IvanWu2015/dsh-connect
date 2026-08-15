@@ -48,6 +48,13 @@ export interface ChoicePrompt {
   readonly options: readonly ChoiceOption[];
 }
 
+/** Result of an interactive choice: the picked option and the card's message id. */
+export interface ChoiceResult {
+  readonly choice: string | undefined;
+  /** Message id of the card; pass it back as `updateMessageId` to reuse the card. */
+  readonly messageId: string;
+}
+
 /** Why a driven turn ended. */
 export type TurnReason =
   | "completed"
@@ -92,10 +99,14 @@ export interface ChannelAdapter {
    */
   streamText(target: OutboundTarget, chunks: AsyncIterable<string>): Promise<void>;
   /**
-   * Present an interactive single-choice prompt and resolve with the chosen
-   * option id, or `undefined` when the user dismisses / the prompt times out.
+   * Present an interactive single-choice prompt. When `updateMessageId` is given,
+   * reuse that card (replace its content in place) instead of sending a new one —
+   * this is what lets a menu chain navigate on a single card. Resolves with the
+   * picked option id (or `undefined` on dismiss/timeout) plus the card message id.
    */
-  promptChoice(target: OutboundTarget, prompt: ChoicePrompt): Promise<string | undefined>;
+  promptChoice(target: OutboundTarget, prompt: ChoicePrompt, updateMessageId?: string): Promise<ChoiceResult>;
+  /** Replace a menu card with a completion notice (closes the interaction). */
+  closeMenu(messageId: string, summary: string): Promise<void>;
   /** Register the inbound handler; called for every normalized message. */
   onInbound(handler: (msg: InboundMessage) => void | Promise<void>): void;
 }
