@@ -29,22 +29,17 @@ examples/
 
 ## 快速开始
 
-1. 构建：
+### 安装
+
+已发布到 npm，直接装进你的 DSH profile：
 
 ```sh
-pnpm install
-pnpm build
-```
-
-2. 把两个包安装到你的 DSH profile（**用绝对路径**，因为 `dsh plugin` 是在 profile 目录内转发 pnpm）：
-
-```sh
-dsh plugin --profile web add D:\路径\到\dsh-connect\packages\connect D:\路径\到\dsh-connect\packages\connect-feishu
-# 或从 npm 安装（发布后）：
 dsh plugin --profile web add dsh-connect dsh-connect-feishu
 ```
 
-3. 在 profile 的 `cordis.patch.yml`（`$DSH_HOME/profiles/web/cordis.patch.yml`）里用 `insert` 追加（Host 平面）：
+### 配置
+
+在 profile 的 `cordis.patch.yml`（`$DSH_HOME/profiles/web/cordis.patch.yml`）里用 `insert` 追加（Host 平面）：
 
 ```yaml
 - insert:
@@ -60,7 +55,9 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu
         dmMode: open
 ```
 
-4. 重启 `dsh web`（Host 插件需重启进程才生效），按 [docs/feishu-setup.md](docs/feishu-setup.md) 完成飞书侧订阅后，即可在飞书里对话。
+### 启动
+
+重启 `dsh web`（Host 插件需重启进程才生效），按 [docs/feishu-setup.md](docs/feishu-setup.md) 完成飞书侧订阅后，即可在飞书里对话。
 
 > 详细的分步操作（含飞书端设置与验证）见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
 
@@ -71,7 +68,7 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `agentPreset` | 未设置=roster 默认 | 每个绑定会话采用的 Agent 预设（如 `standard`） |
-| `workDir` | 进程 cwd | Agent 工作目录（绝对路径） |
+| `workDir` | DSH 第一个工作区 | Agent 工作目录（绝对路径，可显式指定） |
 | `workspaces` | `[]` | `/dir` 交互式选择里列出的工作目录列表 |
 | `allowUsers` | `[]` | 发送者白名单（空=全部放行） |
 | `allowChats` | `[]` | 会话白名单（空=全部放行） |
