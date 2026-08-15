@@ -122,6 +122,53 @@ function textOf(message: { content: readonly { type?: string; text?: string }[] 
     .join("");
 }
 
+interface ReminderView {
+  id: string;
+  kind: string;
+  prompt: string;
+  scheduledAt: string;
+  everySeconds?: number;
+}
+
+/** Lightweight fold of `schedule/change` events (create / delete / dispatch). */
+function foldReminders(events: readonly SessionEvent[]): ReminderView[] {
+  const active = new Map<string, ReminderView>();
+  for (const e of events) {
+    // `schedule/change` is a plugin-extended event type outside dsh-session's map.
+    const evt = e as unknown as { type: string; data: unknown };
+    if (evt.type !== "schedule/change") continue;
+    const d = evt.data as {
+      version?: number;
+      operation?: string;
+      id?: string;
+      schedule?: { id: string; kind: string; prompt: string; scheduledAt: string; everySeconds?: number };
+      acceptedAt?: string;
+    };
+    if (d.version !== 1) continue;
+    if (d.operation === "create" && d.schedule !== undefined) {
+      active.set(d.schedule.id, {
+        id: d.schedule.id,
+        kind: d.schedule.kind,
+        prompt: d.schedule.prompt,
+        scheduledAt: d.schedule.scheduledAt,
+        everySeconds: d.schedule.everySeconds,
+      });
+    } else if (d.operation === "delete" && d.id !== undefined) {
+      active.delete(d.id);
+    } else if (d.operation === "dispatch" && d.id !== undefined) {
+      const rec = active.get(d.id);
+      if (rec === undefined) continue;
+      if (rec.kind === "every" && rec.everySeconds !== undefined && d.acceptedAt !== undefined) {
+        const next = Date.parse(d.acceptedAt) + rec.everySeconds * 1000;
+        active.set(d.id, { ...rec, scheduledAt: new Date(next).toISOString() });
+      } else {
+        active.delete(d.id);
+      }
+    }
+  }
+  return [...active.values()];
+}
+
 type MenuId = "root" | "workspace" | "chat" | "settings" | "model" | "reasoning" | "notify";
 
 interface MenuItem {
@@ -486,6 +533,10 @@ export class AgentRunner {
         await this.showGoals(target);
         break;
       }
+      case "schedule": {
+        await this.showSchedule(target);
+        break;
+      }
       case "model": {
         await this.openMenu(target, msg, "model", ["root"]);
         break;
@@ -615,6 +666,7 @@ export class AgentRunner {
           { id: "task", label: "📋 查看任务", leaf: true, onSelect: async (t) => { await this.showTasks(t); } },
           { id: "history", label: "🗒️ 历史消息", leaf: true, onSelect: async (t) => { await this.showHistory(t, 10); } },
           { id: "goals", label: "🎯 目标", leaf: true, onSelect: async (t) => { await this.showGoals(t); } },
+          { id: "schedule", label: "⏰ 定时提醒", leaf: true, onSelect: async (t) => { await this.showSchedule(t); } },
           { id: "compact", label: "🗜️ 压缩上下文", leaf: true, onSelect: async (t) => { await this.compact(t); } },
           { id: "plugins", label: "🔌 查看插件", leaf: true, onSelect: async (t) => { await this.showPlugins(t); } },
           { id: "settings", label: "⚙️ 设置", onSelect: (t, m, cardId) => this.openMenu(t, m, "settings", ["root"], cardId) },
@@ -694,13 +746,23 @@ export class AgentRunner {
     }
     const label = agent.status === "running" ? "🟢 运行中" : "⚪ 空闲";
     const model = `${agent.options.provider ?? "-"}/${agent.options.model ?? "-"}`;
-    await this.adapter.sendText(target, [
+    const lines = [
       `状态：${label}`,
       `模型：${model}`,
       `工作目录：${this.workDir}`,
       `待处理消息：${this.queue.length}`,
       `会话：${agent.id}`,
-    ].join("\n"));
+    ];
+    const tokenMeter = this.ctx.get("tokenMeter") as
+      | { measure?: (s: unknown) => { totalTokens: number; surfaceTokens: number } }
+      | undefined;
+    try {
+      const m = tokenMeter?.measure?.(agent.session);
+      if (m !== undefined) lines.push(`上下文：${m.totalTokens} tokens（会话 ${m.surfaceTokens}）`);
+    } catch {
+      // Token meter unavailable: skip.
+    }
+    await this.adapter.sendText(target, lines.join("\n"));
   }
 
   private async showTasks(target: OutboundTarget): Promise<void> {
@@ -980,6 +1042,28 @@ export class AgentRunner {
     ];
     if (view.blockedReason !== undefined) lines.push(`受阻原因：${view.blockedReason.message}`);
     await this.adapter.sendText(target, lines.join("\n"));
+  }
+
+  private async showSchedule(target: OutboundTarget): Promise<void> {
+    const agent = this.agent;
+    if (agent === undefined) {
+      await this.adapter.sendText(target, "当前没有活动会话。");
+      return;
+    }
+    const reminders = foldReminders(agent.session.events);
+    if (reminders.length === 0) {
+      await this.adapter.sendText(target, "本会话没有定时提醒。可对 Agent 说「5 分钟后提醒我…」来创建（需在配置里挂载 schedule 插件）。");
+      return;
+    }
+    const now = Date.now();
+    const lines = reminders.map((r) => {
+      const due = Date.parse(r.scheduledAt) <= now;
+      const state = due ? "⚠️ 已到期" : "⏰";
+      const kind = r.kind === "every" ? `每 ${Math.round((r.everySeconds ?? 0) / 60)} 分钟` : "一次性";
+      const when = new Date(Date.parse(r.scheduledAt)).toLocaleString("zh-CN");
+      return `${state} [${r.id}] ${r.prompt}（${kind}，${when}）`;
+    });
+    await this.adapter.sendText(target, `定时提醒（${reminders.length}）：\n${lines.join("\n")}`);
   }
 
   private async showAllWorkspaces(target: OutboundTarget): Promise<void> {

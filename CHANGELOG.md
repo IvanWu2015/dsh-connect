@@ -2,6 +2,20 @@
 
 本项目的变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 约定。
 
+## [0.3.0] - 2026-08-15
+
+### 新增
+
+- **token 统计**：`/status` 显示当前会话的上下文 token 与会话 token（基于 DSH `tokenMeter`）。
+- **定时提醒**：`/schedule`（`/reminders`）列出本会话的定时提醒；对 Agent 说「5 分钟后提醒我…」即可创建提醒（需在 profile 挂载 `@deepseek-ai/dsh-schedule`）。
+- **飞书一键接入**：不配置 `appId`/`appSecret` 时自动进入引导模式，打印接入链接（约 10 分钟有效），用飞书扫码或点击链接确认后自动创建机器人应用、预置权限与事件订阅，凭据自动保存复用（`$DSH_HOME/.dsh-connect/feishu-credentials.json`）。
+- 各包补充 README（npm 包页面不再提示「没有 README」）。
+
+### 修复
+
+- 修复 npm 包页面无 README 的问题（0.2.1 内容并入本版）。
+- 修复依赖重装时 Windows 下 pnpm 硬链接 EPERM 的问题（构建环境改用 copy 导入方式，不影响运行时）。
+
 ## [0.2.0] - 2026-08-15
 
 ### 新增

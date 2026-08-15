@@ -19,6 +19,7 @@ export type Command =
   | { readonly kind: "compact" }
   | { readonly kind: "history"; readonly limit?: number }
   | { readonly kind: "goals" }
+  | { readonly kind: "schedule" }
   | { readonly kind: "model" }
   | { readonly kind: "workspaces" }
   | { readonly kind: "help" }
@@ -74,6 +75,9 @@ export function parseCommand(raw: string): Command {
     case "/goals":
     case "/goal":
       return { kind: "goals" };
+    case "/schedule":
+    case "/reminders":
+      return { kind: "schedule" };
     case "/model":
       return { kind: "model" };
     case "/workspaces":
@@ -100,6 +104,7 @@ export const HELP_TEXT = [
   "- `/compact` 压缩当前会话上下文",
   "- `/history [条数]` 查看最近会话消息",
   "- `/goals` 查看当前目标",
+  "- `/schedule` 查看本会话的定时提醒",
   "- `/model` 查看 / 切换模型",
   "- `/workspaces` 列出所有工作区",
   "- `/new` 开启新对话",

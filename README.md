@@ -69,8 +69,9 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu
 | `/menu` | 打开主菜单（层级点选，同一张卡片原地更新，可返回 / 退出） |
 | `/settings`（`/set`） | 设置：切换模型 / 推理强度 / 通知开关 / 配置总览 |
 | `/model` | 查看当前模型，点选切换 |
-| `/status` | 会话状态、模型、工作目录、排队数、会话 ID |
+| `/status` | 会话状态、模型、工作目录、排队数、**上下文 token**、会话 ID |
 | `/task`（`/tasks` `/todo`） | 查看当前任务清单 |
+| `/schedule`（`/reminders`） | 查看本会话的定时提醒 |
 | `/chat`（`/session` `/sessions`） | 列出对话，点选切换或新建 |
 | `/dir`（`/cd` `/pwd`） | 切换工作目录（点选，或 `/dir <绝对路径>`） |
 | `/workspace <绝对路径>` | 新建工作区 |
@@ -98,16 +99,19 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu
 | `allowUsers` | `[]` | 发送者白名单（空=全部放行） |
 | `allowChats` | `[]` | 会话白名单（空=全部放行） |
 | `stateDir` | `./.dsh-connect` | 绑定路由 `bindings.json` 存放目录 |
+| `notifyStream` / `notifySummary` | 运行时可调 | `/settings` 里可切换的流式 / 摘要通知开关 |
 
 ### dsh-connect-feishu（飞书）
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `appId` / `appSecret` | 环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 应用凭据 |
+| `appId` / `appSecret` | 环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，或**一键接入**自动生成 | 应用凭据（不配置时自动进入一键接入，扫码创建应用） |
 | `transport` | `websocket` | 长连接（推荐）；`webhook` 需公网 HTTPS |
 | `verificationToken` / `encryptKey` | 空 | 仅 webhook 模式需要 |
 | `requireMention` | `true` | 群聊需 @机器人 才响应 |
 | `dmMode` | `open` | 单聊策略：`open` 接收 / `closed` 忽略 |
+
+> **一键接入**：不填 `appId`/`appSecret` 启动插件，会在日志打印一个接入链接（约 10 分钟有效），用飞书扫码或点击链接确认，自动创建机器人应用并预置权限与事件订阅，凭据自动保存（`$DSH_HOME/.dsh-connect/feishu-credentials.json`）。
 
 ## 原理
 
