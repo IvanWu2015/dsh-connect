@@ -1,0 +1,9 @@
+node_modules/
+.pnpm-store/
+.npm-cache/
+lib/
+dist/
+*.log
+*.tsbuildinfo
+.DS_Store
+.dsh-connect/

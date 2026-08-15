@@ -1,0 +1,66 @@
+/**
+ * `dsh-connect` — channel-agnostic messaging bridge core for DeepSeek Harness.
+ * Provides the `connect` service; channel adapters register into it and route
+ * normalized messages to bound DSH agents, then stream replies back.
+ * @module dsh-connect
+ */
+import type { Context } from "@deepseek-ai/cordis";
+import z from "@deepseek-ai/schemastery";
+import { ConnectService } from "./service.js";
+import type { ConnectConfig } from "./runner.js";
+
+export { ConnectService } from "./service.js";
+export { AgentRunner, resolveConnectConfig, summarizeTurn } from "./runner.js";
+export type { ConnectConfig, ResolvedConnectConfig } from "./runner.js";
+export { BindingStore } from "./binding.js";
+export type { ChatBinding, ChatSessionRecord } from "./binding.js";
+export { createAsyncQueue } from "./stream.js";
+export { parseCommand, HELP_TEXT } from "./commands.js";
+export type { Command } from "./commands.js";
+export type {
+  ChatType,
+  ChoiceOption,
+  ChoicePrompt,
+  InboundMessage,
+  OutboundTarget,
+  SummaryCard,
+  TurnReason,
+  TurnOutcome,
+  AsyncQueue,
+  ChannelAdapter,
+} from "./types.js";
+
+/** Cordis plugin name used by loader diagnostics. */
+export const name = "connect";
+
+/** Host-plane services this plugin requires before it can route messages. */
+export const inject = ["agents", "sessions", "agentDefaultModel"];
+
+/** Plugin config; all fields optional — `apply` fills code defaults. */
+export const Config = z.object({
+  /** Agent preset id composed into each bound session; omit for the roster default. */
+  agentPreset: z.string(),
+  /** Absolute working directory per agent; defaults to the process cwd. */
+  workDir: z.string(),
+  /** Optional workspace directories offered by the `/dir` chooser. */
+  workspaces: z.array(z.string()),
+  /** Sender allowlist; empty = all senders allowed. */
+  allowUsers: z.array(z.string()),
+  /** Chat allowlist; empty = all chats allowed. */
+  allowChats: z.array(z.string()),
+  /** Directory for the bindings.json routing store. */
+  stateDir: z.string(),
+});
+
+declare module "@deepseek-ai/cordis" {
+  interface Context {
+    connect: ConnectService;
+  }
+}
+
+/** Register the `connect` service; adapters resolve it via `inject: ["connect"]`. */
+export function apply(ctx: Context, config: ConnectConfig = {}): void {
+  void new ConnectService(ctx, config);
+}
+
+export default ConnectService;
