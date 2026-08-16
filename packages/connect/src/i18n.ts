@@ -40,6 +40,36 @@ export interface Messages {
   processingHeartbeat(minutes: number): string;
   processingFailed(detail: string): string;
 
+  // Processing-start acknowledgment + proactive progress notices.
+  processingStarted(preview: string): string;
+  progressReminder(minutes: number, status: string): string;
+  progressThinking: string;
+  progressMenuTitle: string;
+  progressOff: string;
+  progressMinutes(n: number): string;
+  progressSet(label: string): string;
+  progressSetting(label: string): string;
+  menuSettingsProgress: string;
+  helpProgress: string;
+
+  // Compact feedback: immediate start notice, then the outcome.
+  compactStarted: string;
+  compactDone: string;
+
+  // Interactive user choices (ask_user_question) and permission requests.
+  questionCardTitle: string;
+  questionCardHint: string;
+  questionMultiHint: string;
+  questionStep(index: number, total: number): string;
+  questionTextHint(question: string): string;
+  questionWaiting(question: string): string;
+  approvalCardTitle: string;
+  approvalAsk(toolName: string, reason: string | undefined): string;
+  approveLabel: string;
+  rejectLabel: string;
+  answerReceived: string;
+  questionToolCall(text: string): string;
+
   // Notification levels (streaming reply detail).
   notifyFull: string;
   notifyImportant: string;
@@ -258,6 +288,33 @@ const zh: Messages = {
   toolCalling: (name, summary) => `🔧 调用工具 \`${name}\`${summary === undefined || summary === "" ? "" : ` — ${summary}`}`,
   processingHeartbeat: (minutes) => `⏳ 仍在处理中（已运行约 ${minutes} 分钟）…`,
   processingFailed: (detail) => `⚠️ 处理失败：${detail}`,
+  processingStarted: (preview) =>
+    preview === "" ? "✅ 已收到，开始处理…" : `✅ 已收到，开始处理：\n「${preview}」`,
+  progressReminder: (minutes, status) =>
+    `⏳ 任务仍在处理中（已进行 ${minutes} 分钟）\n最近进展：${status}\n可发送 /status 查看详情，或 /stop 停止当前任务`,
+  progressThinking: "🤔 思考中",
+  progressMenuTitle: "进度提醒间隔",
+  progressOff: "关闭",
+  progressMinutes: (n) => `${n} 分钟`,
+  progressSet: (label) => `进度提醒间隔已设置为：${label}`,
+  progressSetting: (label) => `进度提醒：${label}`,
+  menuSettingsProgress: "⏱️ 进度提醒",
+  helpProgress: "设置长时间无进展时的主动进度提醒间隔（默认 5 分钟）",
+  compactStarted: "🔄 正在压缩上下文…（可能需要一点时间）",
+  compactDone: "✅ 上下文压缩完成，可继续对话。",
+  questionCardTitle: "🤔 需要你的选择",
+  questionCardHint: "点击按钮回答，或直接回复文字（编号或选项内容）",
+  questionMultiHint: "（可多选：回复多个编号或选项内容，用逗号分隔，如 1,3）",
+  questionTextHint: (question) => `✍️ 请直接回复文字回答：${question}`,
+  questionWaiting: (question) => `⏳ 仍在等待你的回答：${question}`,
+  questionStep: (index, total) => `（问题 ${index}/${total}）`,
+  approvalCardTitle: "🔐 需要你的授权",
+  approvalAsk: (toolName, reason) =>
+    `工具 \`${toolName}\` 请求执行需要你授权的操作${reason === undefined || reason === "" ? "" : `：\n${reason}`}\n是否允许？`,
+  approveLabel: "✅ 允许一次",
+  rejectLabel: "❌ 拒绝",
+  answerReceived: "✅ 已收到你的回答，继续处理…",
+  questionToolCall: (text) => `🤔 需要你的选择 — ${text}`,
   notifyFull: "尽量输出过程",
   notifyImportant: "输出重要节点",
   notifyResult: "只输出结果",
@@ -482,6 +539,33 @@ const en: Messages = {
   toolCalling: (name, summary) => `🔧 Calling tool \`${name}\`${summary === undefined || summary === "" ? "" : ` — ${summary}`}`,
   processingHeartbeat: (minutes) => `⏳ Still processing (~${minutes} min)…`,
   processingFailed: (detail) => `⚠️ Processing failed: ${detail}`,
+  processingStarted: (preview) =>
+    preview === "" ? "✅ Received — starting to process…" : `✅ Received — starting to process:\n“${preview}”`,
+  progressReminder: (minutes, status) =>
+    `⏳ Still working on the task (${minutes} min so far)\nLatest progress: ${status}\nSend /status for details, or /stop to cancel`,
+  progressThinking: "🤔 Thinking",
+  progressMenuTitle: "Progress reminder interval",
+  progressOff: "Off",
+  progressMinutes: (n) => `${n} min`,
+  progressSet: (label) => `Progress reminder interval set to: ${label}`,
+  progressSetting: (label) => `Progress reminder: ${label}`,
+  menuSettingsProgress: "⏱️ Progress reminder",
+  helpProgress: "set the proactive progress-notice interval when a task stays silent (default 5 minutes)",
+  compactStarted: "🔄 Compacting context… (this may take a moment)",
+  compactDone: "✅ Context compaction complete — you can continue chatting.",
+  questionCardTitle: "🤔 Your input is needed",
+  questionCardHint: "Tap a button to answer, or reply with text (number or option label)",
+  questionMultiHint: "(multi-select: reply with several numbers or labels, comma-separated, e.g. 1,3)",
+  questionTextHint: (question) => `✍️ Please reply with text: ${question}`,
+  questionWaiting: (question) => `⏳ Still waiting for your answer: ${question}`,
+  questionStep: (index, total) => `(Question ${index}/${total})`,
+  approvalCardTitle: "🔐 Permission required",
+  approvalAsk: (toolName, reason) =>
+    `Tool \`${toolName}\` is requesting an action that needs your authorization${reason === undefined || reason === "" ? "" : `:\n${reason}`}\nAllow it?`,
+  approveLabel: "✅ Allow once",
+  rejectLabel: "❌ Deny",
+  answerReceived: "✅ Got your answer — continuing…",
+  questionToolCall: (text) => `🤔 Your input is needed — ${text}`,
   notifyFull: "Full process",
   notifyImportant: "Key milestones",
   notifyResult: "Result only",

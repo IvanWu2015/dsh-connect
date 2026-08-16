@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.2] - 2026-08-17
+
+### Added
+
+- **User choices in Feishu**: when the agent calls `ask_user_question` (confirmations, plan reviews, option pickers), an interactive card with buttons now appears right in the chat — no need to open the Web GUI. Answer by tapping a button or by replying with plain text (option number or label; multi-select questions accept `1,3` style lists). The plugin answers through the host api-proxy's own respond path, so the Web GUI stays fully functional and whoever answers first wins.
+- **Permission approvals in Feishu**: sandbox/permission requests (`approval/requested`, e.g. tool escalation) render as an allow-once / deny card in the chat, and the user's decision is routed back to the approval service.
+- **Processing acknowledgment**: every received message is acknowledged immediately (“✅ 已收到，开始处理” with a preview) before the agent spins up, so the user always knows processing started.
+- **Proactive progress watchdog**: if a turn has sent no standalone status for `progressTimeoutMs` (default 5 minutes), a status card reports the latest milestone (thinking / last tool call) instead of leaving the user in silence. New `progressTimeoutMs` config (0 disables) plus a per-chat setting via `/progress` or the settings menu (off / 2 / 5 / 10 / 15 / 30 minutes), persisted in `bindings.json`.
+- **Compact feedback**: `/compact` (and the menu action) now announces “🔄 正在压缩上下文…” immediately and reports “✅ 上下文压缩完成” (or the failure) when done.
+- **`ask_user_question` visibility**: the tool-call status line now shows the actual question text at every notification level, so a pending choice is never invisible.
+
+### Changed
+
+- `ask_user_question` / approval questions time out per-card but are re-presented in place, so a choice stays answerable for as long as the agent waits.
+- Settings overview (`/settings` → 配置总览) now shows the current progress-reminder interval.
+
 ## [0.5.1] - 2026-08-16
 
 ### Added

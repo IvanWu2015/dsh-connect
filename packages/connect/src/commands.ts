@@ -23,6 +23,7 @@ export type Command =
   | { readonly kind: "schedule" }
   | { readonly kind: "model" }
   | { readonly kind: "notify" }
+  | { readonly kind: "progress" }
   | { readonly kind: "workspaces" }
   | { readonly kind: "mirror"; readonly timeoutMin?: number }
   | { readonly kind: "unlock" }
@@ -89,6 +90,9 @@ export function parseCommand(raw: string): Command {
     case "/notify":
     case "/notice":
       return { kind: "notify" };
+    case "/progress":
+    case "/remind-interval":
+      return { kind: "progress" };
     case "/workspaces":
     case "/wslist":
       return { kind: "workspaces" };
@@ -144,6 +148,7 @@ export function helpText(t: Messages): string {
     "- `/schedule` " + t.helpSchedule,
     "- `/model` " + t.helpModel,
     "- `/notify` " + t.helpNotify,
+    "- `/progress` " + t.helpProgress,
     "- `/workspaces` " + t.helpWorkspaces,
     "- `/mirror [--timeout N]` create Web mirror session (optional timeout in minutes)",
     "- `/unlock` manually release session lock",

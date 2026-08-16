@@ -9,6 +9,7 @@ import { basename, join, dirname } from "node:path";
 import type { ChannelAdapter, InboundMessage } from "./types.js";
 import { AgentRunner, resolveConnectConfig, type ConnectConfig, type ResolvedConnectConfig } from "./runner.js";
 import { BindingStore } from "./binding.js";
+import { InteractionBridge } from "./interaction.js";
 
 /** Minimal workspace registry face used by the connect service (typed loosely to avoid a hard dependency). */
 interface WorkspaceRegistryLike {
@@ -65,6 +66,7 @@ export class ConnectService extends Service {
   private readonly adapters = new Map<string, ChannelAdapter>();
   private readonly runners = new Map<string, AgentRunner>();
   private readonly bindings: BindingStore;
+  private readonly interaction: InteractionBridge;
   private workspacesRegistered = false;
 
   constructor(ctx: Context, config: ConnectConfig = {}) {
@@ -87,6 +89,7 @@ export class ConnectService extends Service {
     
     this.config = resolveConnectConfig(mergedConfig);
     this.bindings = new BindingStore(this.config.stateDir);
+    this.interaction = new InteractionBridge(ctx, this.adapters, this.bindings, this.config);
   }
 
   /** Expose the binding store so adapters (e.g. connect-web) can monitor mirror sessions. */
@@ -185,6 +188,17 @@ export class ConnectService extends Service {
     if (!this.isAllowed(msg)) return;
     const adapter = this.adapters.get(msg.channel);
     if (adapter === undefined) return;
+
+    // A question (ask_user_question) is waiting on this chat: plain text is
+    // the user's answer. Commands (starting with "/") still go to the runner
+    // so /stop etc. keep working while the agent waits.
+    if (!msg.text.trim().startsWith("/") && this.interaction.pendingFor(msg.chatKey)) {
+      this.interaction.answerText(msg.chatKey, msg.text);
+      return;
+    }
+
+    // Subscribe to host question/approval frames (idempotent, best-effort).
+    this.interaction.start();
 
     // Make sure the DSH workspace registry knows about our work dirs and
     // sessions before the first runner spins up. Awaiting guarantees the

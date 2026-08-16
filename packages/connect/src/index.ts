@@ -10,8 +10,10 @@ import { ConnectService } from "./service.js";
 import type { ConnectConfig } from "./runner.js";
 
 export { ConnectService } from "./service.js";
-export { AgentRunner, applyStreamChunk, applyToolCall, resolveConnectConfig, summarizeTurn, toolCallSummary } from "./runner.js";
+export { AgentRunner, applyStreamChunk, applyToolCall, questionTextOf, resolveConnectConfig, summarizeTurn, toolCallSummary } from "./runner.js";
 export type { ConnectConfig, NotifyLevel, ResolvedConnectConfig, StreamChunkLike, StreamState } from "./runner.js";
+export { InteractionBridge, decodeTextAnswer } from "./interaction.js";
+export type { AskQuestionLike } from "./interaction.js";
 export { BindingStore } from "./binding.js";
 export type { ChatBinding, ChatSessionRecord } from "./binding.js";
 export { createAsyncQueue } from "./stream.js";
@@ -61,6 +63,8 @@ export const Config = z.object({
   streamHeartbeatMs: z.number(),
   /** Default notification level for streaming replies (default: `important`). */
   notifyLevel: z.union([z.const("full"), z.const("important"), z.const("result")]),
+  /** Proactive progress-notice interval ms when a turn stays silent (default: 300000 = 5 min; 0 disables). */
+  progressTimeoutMs: z.number(),
 });
 
 declare module "@deepseek-ai/cordis" {

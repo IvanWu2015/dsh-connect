@@ -38,6 +38,8 @@ export interface ConnectConfig {
   streamHeartbeatMs?: number;
   /** Default notification level for streaming replies (default: `important`). */
   notifyLevel?: NotifyLevel;
+  /** Proactive progress-notice interval ms: when a turn goes silent for this long, a standalone status card is sent (default: 300000 = 5 min; 0 disables). */
+  progressTimeoutMs?: number;
 }
 
 export interface ResolvedConnectConfig {
@@ -52,6 +54,7 @@ export interface ResolvedConnectConfig {
   autoMirror: boolean;
   streamHeartbeatMs: number;
   notifyLevel: NotifyLevel;
+  progressTimeoutMs: number;
 }
 
 export function resolveConnectConfig(config: ConnectConfig): ResolvedConnectConfig {
@@ -67,6 +70,7 @@ export function resolveConnectConfig(config: ConnectConfig): ResolvedConnectConf
     autoMirror: config.autoMirror ?? true, // Enabled by default
     streamHeartbeatMs: config.streamHeartbeatMs ?? 60_000,
     notifyLevel: config.notifyLevel ?? "important",
+    progressTimeoutMs: config.progressTimeoutMs ?? 5 * 60_000, // Proactive progress notice after 5 min of silence
   };
 }
 
@@ -85,6 +89,8 @@ interface ActiveTurn {
   startedAt: number;
   /** Last time a chunk/status line was pushed (for the liveness heartbeat). */
   lastPushAt: number;
+  /** Latest user-visible milestone (thinking / last tool call) for the proactive progress notice. */
+  milestone?: string;
 }
 
 /** Per-turn streaming assembly state mutated by {@link applyStreamChunk}. */
@@ -249,6 +255,21 @@ export function toolCallSummary(argumentsJson: unknown): string | undefined {
   return undefined;
 }
 
+/** Pull the first question's text out of an `ask_user_question` arguments JSON (whitespace folded to one line). */
+export function questionTextOf(argumentsJson: unknown): string {
+  if (typeof argumentsJson !== "string") return "";
+  try {
+    const parsed = JSON.parse(argumentsJson);
+    const first = Array.isArray(parsed?.questions) ? parsed.questions[0] : undefined;
+    const text = typeof first?.question === "string" ? first.question : "";
+    const folded = text.replace(/\s+/g, " ").trim();
+    return folded.length > 60 ? `${folded.slice(0, 60)}…` : folded;
+  } catch {
+    // Not JSON — no question text.
+  }
+  return "";
+}
+
 function mapReason(kind: string): TurnReason {
   switch (kind) {
     case "completed":
@@ -408,7 +429,7 @@ function detectImageMediaType(buf: Buffer): "image/png" | "image/jpeg" | "image/
   return "image/png";
 }
 
-type MenuId = "root" | "workspace" | "chat" | "settings" | "model" | "reasoning" | "notify" | "language";
+type MenuId = "root" | "workspace" | "chat" | "settings" | "model" | "reasoning" | "notify" | "language" | "progress";
 
 interface MenuItem {
   id: string;
@@ -418,6 +439,9 @@ interface MenuItem {
   /** `messageId` is the menu card id: pass it to `openMenu` to navigate in place, or close the card. */
   onSelect: (target: OutboundTarget, msg: InboundMessage, messageId: string) => Promise<void>;
 }
+
+/** How often the proactive progress watchdog re-checks whether a status card is due (ms). */
+const PROGRESS_WATCHDOG_CHECK_MS = 15_000;
 
 export class AgentRunner {
   private readonly queue: InboundMessage[] = [];
@@ -430,6 +454,7 @@ export class AgentRunner {
   private summaryEnabled = true;
   private language: Language;
   private notifyLevel: NotifyLevel;
+  private progressTimeoutMs: number;
   private t: Messages;
 
   constructor(
@@ -447,6 +472,7 @@ export class AgentRunner {
     const stored = this.bindings.get(channel, chatKey);
     this.language = stored?.language ?? config.language ?? "zh";
     this.notifyLevel = stored?.notifyLevel ?? config.notifyLevel;
+    this.progressTimeoutMs = stored?.progressTimeoutMs ?? config.progressTimeoutMs;
     this.t = messages(this.language);
   }
 
@@ -468,6 +494,8 @@ export class AgentRunner {
         return this.t.menuNotify;
       case "language":
         return this.t.menuSettingsLanguage;
+      case "progress":
+        return this.t.progressMenuTitle;
     }
   }
 
@@ -525,18 +553,34 @@ export class AgentRunner {
     if (this.agent === undefined || session.id !== this.agent.id) return;
     if (event.seq < turn.firstSeq) return;
     if (event.type === "assistant/chunk") {
-      applyStreamChunk(turn, this.t.thinkingHint, event.data.chunk as unknown as StreamChunkLike, this.notifyLevel);
+      const chunk = event.data.chunk as unknown as StreamChunkLike;
+      // First reasoning delta = the milestone the proactive progress notice reports.
+      if (chunk.type === "reasoning-delta" && turn.milestone === undefined) {
+        turn.milestone = this.t.progressThinking;
+      }
+      applyStreamChunk(turn, this.t.thinkingHint, chunk, this.notifyLevel);
       return;
     }
     if (event.type === "tool/call") {
       const name = event.data.name as string | undefined;
       if (typeof name !== "string" || name === "") return;
+      const summary = toolCallSummary(event.data.arguments);
+      // The proactive progress notice reports the latest milestone even when
+      // `result` mode hides the streaming details.
+      if (name === "ask_user_question") {
+        const question = questionTextOf(event.data.arguments);
+        turn.milestone = this.t.questionToolCall(question);
+      } else {
+        turn.milestone = this.t.toolCalling(name, undefined);
+      }
       // `result` mode shows nothing until the final answer; `important` shows
       // the tool name only, `full` also carries the one-line summary.
       if (this.notifyLevel === "result") return;
-      const label = this.notifyLevel === "full"
-        ? this.t.toolCalling(name, toolCallSummary(event.data.arguments))
-        : this.t.toolCalling(name, undefined);
+      const label = name === "ask_user_question"
+        ? this.t.questionToolCall(questionTextOf(event.data.arguments))
+        : this.notifyLevel === "full"
+          ? this.t.toolCalling(name, summary)
+          : this.t.toolCalling(name, undefined);
       applyToolCall(turn, label);
     }
   }
@@ -590,6 +634,12 @@ export class AgentRunner {
     }
 
     try {
+      // Acknowledge receipt before the (possibly slow) agent spin-up so the
+      // user knows processing started.
+      await this.adapter
+        .sendText(this.target(msg), this.t.processingStarted(truncate(msg.text, 60)))
+        .catch(() => undefined);
+
       const agent = await this.ensureAgent(msg);
       const outcome = await this.driveAgent(agent, msg);
       this.touchBinding(msg);
@@ -806,6 +856,28 @@ export class AgentRunner {
         }, heartbeatMs)
       : undefined;
 
+    // Proactive progress watchdog: when no standalone card/text has been sent
+    // for `progressTimeoutMs` (default 5 min, user-configurable), send a status
+    // card reporting the latest milestone so a long turn never looks frozen.
+    // Streaming-card heartbeats deliberately do NOT reset this — the user asked
+    // for an explicit, separate nudge.
+    const progressTimeoutMs = this.progressTimeoutMs;
+    let lastStandaloneNoticeAt = now;
+    const progressWatchdog = progressTimeoutMs > 0
+      ? setInterval(() => {
+          const turn = this.turn;
+          if (turn === undefined) return;
+          const elapsed = Date.now() - lastStandaloneNoticeAt;
+          if (elapsed < progressTimeoutMs) return;
+          lastStandaloneNoticeAt = Date.now();
+          const minutes = Math.max(1, Math.round((Date.now() - turn.startedAt) / 60_000));
+          const status = turn.milestone ?? this.t.progressThinking;
+          void this.adapter
+            .sendText(this.target(msg), this.t.progressReminder(minutes, status))
+            .catch(() => undefined);
+        }, PROGRESS_WATCHDOG_CHECK_MS)
+      : undefined;
+
     try {
       const streamPromise = this.adapter.streamText(this.target(msg), chunks);
       agent.followup(await userMessage());
@@ -815,6 +887,7 @@ export class AgentRunner {
       await streamPromise;
     } finally {
       if (heartbeat !== undefined) clearInterval(heartbeat);
+      if (progressWatchdog !== undefined) clearInterval(progressWatchdog);
     }
 
     const outcome = summarizeTurn(agent.session.events, firstSeq);
@@ -1213,6 +1286,10 @@ export class AgentRunner {
         await this.openNotifyPicker(target, msg);
         break;
       }
+      case "progress": {
+        await this.openProgressPicker(target, msg);
+        break;
+      }
       case "workspaces": {
         await this.showAllWorkspaces(target);
         break;
@@ -1456,6 +1533,7 @@ export class AgentRunner {
           { id: "model", label: this.t.menuSettingsModel, onSelect: (t, m, cardId) => this.openMenu(t, m, "model", ["settings", "root"], cardId) },
           { id: "reasoning", label: this.t.menuSettingsReasoning, onSelect: (t, m, cardId) => this.openMenu(t, m, "reasoning", ["settings", "root"], cardId) },
           { id: "notify", label: this.t.menuSettingsNotify, onSelect: (t, m, cardId) => this.openMenu(t, m, "notify", ["settings", "root"], cardId) },
+          { id: "progress", label: this.t.menuSettingsProgress, onSelect: (t, m, cardId) => this.openMenu(t, m, "progress", ["settings", "root"], cardId) },
           { id: "language", label: this.t.menuSettingsLanguage, onSelect: (t, m, cardId) => this.openMenu(t, m, "language", ["settings", "root"], cardId) },
           { id: "overview", label: this.t.menuSettingsOverview, leaf: true, onSelect: async (t) => { await this.showSettings(t); } },
         ];
@@ -1491,6 +1569,24 @@ export class AgentRunner {
             await this.setNotifyLevel(o.id, t, m);
           },
         }));
+      case "progress": {
+        const presets: { id: string; label: string; ms: number }[] = [
+          { id: "progress:0", label: this.t.progressOff, ms: 0 },
+          { id: "progress:120000", label: this.t.progressMinutes(2), ms: 2 * 60_000 },
+          { id: "progress:300000", label: this.t.progressMinutes(5), ms: 5 * 60_000 },
+          { id: "progress:600000", label: this.t.progressMinutes(10), ms: 10 * 60_000 },
+          { id: "progress:900000", label: this.t.progressMinutes(15), ms: 15 * 60_000 },
+          { id: "progress:1800000", label: this.t.progressMinutes(30), ms: 30 * 60_000 },
+        ];
+        return presets.map((o) => ({
+          id: o.id,
+          label: `${this.progressTimeoutMs === o.ms ? "● " : ""}${o.label}`,
+          leaf: true,
+          onSelect: async (t: OutboundTarget, m: InboundMessage) => {
+            await this.setProgressTimeout(o.ms, t, m);
+          },
+        }));
+      }
     }
   }
 
@@ -1593,6 +1689,7 @@ export class AgentRunner {
     lines.push(this.t.chatCountField(binding?.sessions.length ?? 0));
     lines.push(this.t.streamLabel(this.streamEnabled));
     lines.push(this.t.summaryLabel(this.summaryEnabled));
+    lines.push(this.t.progressSetting(this.progressTimeoutMs === 0 ? this.t.progressOff : this.t.progressMinutes(Math.round(this.progressTimeoutMs / 60_000))));
     lines.push(this.t.allowUsersField(this.config.allowUsers.length, this.config.allowUsers.length === 0));
     lines.push(this.t.allowChatsField(this.config.allowChats.length, this.config.allowChats.length === 0));
     lines.push(this.t.stateDirField(this.config.stateDir ?? ".dsh-connect"));
@@ -1761,6 +1858,49 @@ export class AgentRunner {
     await this.setNotifyLevel(level, target, msg);
   }
 
+  /**
+   * Switch the proactive progress-notice interval for this chat (persisted in
+   * its binding and effective for the next turn; 0 disables the watchdog).
+   */
+  private async setProgressTimeout(ms: number, target: OutboundTarget, msg: InboundMessage): Promise<void> {
+    this.progressTimeoutMs = ms;
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding !== undefined) {
+      this.bindings.put({ ...binding, progressTimeoutMs: ms, lastActiveAt: Date.now() });
+    } else {
+      this.bindings.put({
+        channel: this.channel,
+        chatKey: this.chatKey,
+        chatType: this.chatType,
+        sessionId: "",
+        ownerKey: msg.senderKey,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        progressTimeoutMs: ms,
+        sessions: [],
+      });
+    }
+    const label = ms === 0 ? this.t.progressOff : this.t.progressMinutes(Math.round(ms / 60_000));
+    await this.adapter.sendText(target, this.t.progressSet(label));
+  }
+
+  /** Show the progress-interval picker (used by the `/progress` command). */
+  private async openProgressPicker(target: OutboundTarget, msg: InboundMessage): Promise<void> {
+    const options: ChoiceOption[] = [
+      { id: "progress:0", label: this.t.progressOff },
+      { id: "progress:120000", label: this.t.progressMinutes(2) },
+      { id: "progress:300000", label: this.t.progressMinutes(5) },
+      { id: "progress:600000", label: this.t.progressMinutes(10) },
+      { id: "progress:900000", label: this.t.progressMinutes(15) },
+      { id: "progress:1800000", label: this.t.progressMinutes(30) },
+    ];
+    const { choice } = await this.adapter.promptChoice(target, { title: this.t.progressMenuTitle, options });
+    if (choice === undefined || !choice.startsWith("progress:")) return;
+    const ms = Number(choice.slice("progress:".length));
+    if (!Number.isInteger(ms) || ms < 0) return;
+    await this.setProgressTimeout(ms, target, msg);
+  }
+
   private async showPlugins(target: OutboundTarget): Promise<void> {
     const loader = this.ctx.get("loader") as
       | { entries?: () => Iterable<{ id: string; options: { name?: string }; disabled: boolean }> }
@@ -1832,11 +1972,13 @@ export class AgentRunner {
       return;
     }
     try {
+      // Compaction can take a while — tell the user it started, then report the outcome.
+      await this.adapter.sendText(target, this.t.compactStarted);
       const result = await compaction.compactNow(agent, new AbortController().signal);
       if (result === null) {
         await this.adapter.sendText(target, this.t.nothingToCompact);
       } else {
-        await this.adapter.sendText(target, this.t.contextCompacted);
+        await this.adapter.sendText(target, this.t.compactDone);
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

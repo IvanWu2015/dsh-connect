@@ -9,11 +9,13 @@ Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**D
 - **Work arrangement**: pushes a result-summary card when a task ends; `ctx.connect.notify()` lets goals/jobs hooks push progress proactively.
 - **Task-end stats**: when a task finishes, a card reports the model used, input/output/cached tokens, step count, duration and context usage, with a `/compact` suggestion when the context is ≥ 75% full.
 - **Notification levels**: `full` (stream everything) / `important` (key milestones, default) / `result` (answer only) — switchable per chat via the settings menu or `/notify`, persisted across restarts.
+- **Instant feedback + proactive progress**: every task is acknowledged the moment it is received (“✅ 已收到，开始处理”), key milestones (thinking, tool calls, questions, permissions) react live, and a configurable watchdog sends a standalone status card when a turn has been silent for too long (default 5 min, per-chat adjustable via `/progress` or `/settings`).
+- **User choices & permission approvals in chat**: when the agent asks a question (`ask_user_question`) or requests a permission approval (sandbox escalation etc.), an interactive card with buttons appears right in Feishu — answer by tapping or by replying with text (number or option label); no need to open the Web GUI.
 - **Security**: groups require @mention by default; user/chat allowlists; Feishu credentials via environment variables or config.
 - **Interactive menus**: `/menu` offers hierarchical point-and-click navigation (workdir / chats / settings / plugins / compact, …) — the same card updates in place, supports back/exit, and stays usable across consecutive actions.
 - **Smart image & file handling**: images sent to the bot are downloaded automatically; if the main model supports vision it sees them directly, otherwise a vision-model sub-task describes them and the description is injected — so a text-only main model never stalls on images. Attached files/audio/video are also downloaded into the workdir.
 - **Web mirror**: each chat can mirror its DSH session into the DSH Web GUI (`/mirror`, or automatic via `autoMirror`), sharing the same conversation with mutual-exclusion locking.
-- **Local commands** (no model tokens): `/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/schedule` `/model` `/notify` `/mirror` `/new` `/clear` `/stop` `/settings` `/help`.
+- **Local commands** (no model tokens): `/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/schedule` `/model` `/notify` `/progress` `/mirror` `/new` `/clear` `/stop` `/settings` `/help`.
 - **Extensible**: `dsh-connect` (channel-agnostic core) + `dsh-connect-feishu` (Feishu adapter) are layered; adding DingTalk only requires one more adapter package.
 
 ## Repository layout
@@ -72,6 +74,7 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | `/settings` (`/set`) | Settings: switch model / reasoning effort / notification level / config overview |
 | `/model` | Show the current model, tap to switch |
 | `/notify` (`/notice`) | Choose the notification level: `full` / `important` / `result` (takes effect immediately) |
+| `/progress` | Choose how long a silent task may run before a proactive progress card is sent (default 5 min; `关闭` disables) |
 | `/mirror [--timeout N]` | Create (or show) the Web mirror session for this chat; optional lock timeout in minutes |
 | `/status` | Session status, model, workdir, queue length, **context tokens**, session ID |
 | `/task` (`/tasks` `/todo`) | Show the current task list |
@@ -108,6 +111,7 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | `autoMirror` | `true` | Automatically create a Web mirror session for every new chat |
 | `streamHeartbeatMs` | `60000` | Streaming-card liveness heartbeat (ms); `0` disables it |
 | `notifyLevel` | `important` | Default notification level: `full` (stream everything) / `important` (key milestones) / `result` (answer only); per-chat override via `/settings` or `/notify` |
+| `progressTimeoutMs` | `300000` | Proactive progress-notice interval (ms): when a turn has sent nothing for this long, a standalone status card is pushed; `0` disables; per-chat override via `/settings` or `/progress` |
 
 ### dsh-connect-feishu (Feishu)
 
@@ -127,6 +131,8 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 - **Agent create/resume**: reuses the standard DSH driving pattern (see `dsh-headless`) — `ctx.agents.create({ meta:{cwd, agentPreset}, agentOptions:{provider,model}, setup })`; resume goes through `ctx.agents.resume`. Model selection per session is owned by the DSH api-proxy (`selectionFor`), so switching models in the Web GUI applies to the bound sessions.
 - **Preset mounting**: `setup` mounts the configured agent preset (`ctx.agentPresets.mount`), giving bound sessions the standard toolset (bash/fs/…).
 - **Streaming**: `assistant/chunk` events (reasoning/text deltas, block starts/ends) on `session/event` are bridged via `createAsyncQueue` into the Feishu streaming card; blocks are separated by blank lines, reasoning is streamed live, tool calls show a status line, and a configurable heartbeat keeps the card alive during long silent phases. `turn/end` decides the turn outcome and posts the task-stats card.
+- **Proactive progress**: each message is acknowledged immediately; if no standalone card/text has been sent for `progressTimeoutMs`, a status card reports the latest milestone (thinking / last tool call) so a long turn never looks frozen.
+- **Interactive choices & approvals**: the plugin acts as an in-process client of the host api-proxy (`ctx.apiProxy`): it subscribes to the same mux stream the Web GUI uses, renders `question/requested` / `approval/requested` frames for connect-bound sessions as Feishu cards with buttons, and feeds the user's answer back through `apiProxy.respond` — the Web GUI stays fully functional, first answer wins.
 - **Serialization**: one `AgentRunner` per chatKey — messages are queued and executed serially; `agent.followup` naturally queues.
 
 ## Testing

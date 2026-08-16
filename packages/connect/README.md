@@ -109,6 +109,7 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under each plu
 | `autoMirror` | `true` | Automatically create a Web GUI mirror for every new session |
 | `streamHeartbeatMs` | `60000` | Liveness heartbeat interval (ms) for the streaming card; `0` disables it |
 | `notifyLevel` | `important` | Default notification level: `full` (stream everything) / `important` (key milestones) / `result` (answer only); per-chat override via settings menu or `/notify` |
+| `progressTimeoutMs` | `300000` | Proactive progress-notice interval (ms): when a turn has sent no standalone card/text for this long, a status card reports the latest milestone; `0` disables; per-chat override via settings menu or `/progress` |
 
 ### `dsh-connect-feishu` (adapter)
 

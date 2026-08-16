@@ -1,6 +1,6 @@
 {
   "name": "dsh-connect-feishu",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Feishu/Lark channel adapter for dsh-connect: long-connection event intake, message normalization, streaming replies, and work summary cards",
   "type": "module",
   "main": "lib/index.js",
@@ -43,7 +43,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "dsh-connect": "^0.5.1"
+    "dsh-connect": "^0.5.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

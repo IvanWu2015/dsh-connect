@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, toolCallSummary, resolveConnectConfig } from "../lib/index.js";
+import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer } from "../lib/index.js";
 
 test("parseCommand passes through plain messages", () => {
   assert.deepEqual(parseCommand("帮我跑测试"), { kind: "message", text: "帮我跑测试" });
@@ -301,6 +301,12 @@ test("parseCommand recognizes /notify", () => {
   assert.deepEqual(parseCommand("/notice"), { kind: "notify" });
 });
 
+test("parseCommand recognizes /progress", () => {
+  assert.deepEqual(parseCommand("/progress"), { kind: "progress" });
+  assert.deepEqual(parseCommand("/remind-interval"), { kind: "progress" });
+  assert.deepEqual(parseCommand("/progress 5"), { kind: "progress" });
+});
+
 test("messages expose notification levels and task stats in both languages", () => {
   const zh = messages("zh");
   const en = messages("en");
@@ -318,6 +324,35 @@ test("resolveConnectConfig defaults notifyLevel to important", () => {
   const defaults = resolveConnectConfig({});
   assert.equal(defaults.notifyLevel, "important");
   assert.equal(defaults.streamHeartbeatMs, 60000);
+  assert.equal(defaults.progressTimeoutMs, 300000);
   const explicit = resolveConnectConfig({ notifyLevel: "full" });
   assert.equal(explicit.notifyLevel, "full");
+  const noProgress = resolveConnectConfig({ progressTimeoutMs: 0 });
+  assert.equal(noProgress.progressTimeoutMs, 0);
+});
+
+test("questionTextOf extracts the first ask_user_question question", () => {
+  assert.equal(
+    questionTextOf('{"questions": [{"id": "a", "question": "选哪个方案？", "options": [{"label": "A"}]}]}'),
+    "选哪个方案？",
+  );
+  assert.equal(questionTextOf('{"questions": []}'), "");
+  assert.equal(questionTextOf("not json"), "");
+  assert.equal(questionTextOf(undefined), "");
+  // Whitespace is folded and long questions are truncated.
+  const long = `{"questions": [{"id": "a", "question": "${"很长的".repeat(40)}"}]}`;
+  assert.ok(questionTextOf(long).length <= 61);
+});
+
+test("decodeTextAnswer maps labels, numbers, and free text", () => {
+  const q = { id: "a", question: "?", options: [{ label: "方案A" }, { label: "方案B" }, { label: "方案C" }] };
+  assert.deepEqual(decodeTextAnswer(q, "方案B"), { selected: ["方案B"] });
+  assert.deepEqual(decodeTextAnswer(q, "2"), { selected: ["方案B"] });
+  assert.deepEqual(decodeTextAnswer(q, "  3  "), { selected: ["方案C"] });
+  assert.deepEqual(decodeTextAnswer(q, "自定义内容"), { selected: [], custom: "自定义内容" });
+  const multi = { ...q, multiSelect: true };
+  assert.deepEqual(decodeTextAnswer(multi, "1,3"), { selected: ["方案A", "方案C"] });
+  assert.deepEqual(decodeTextAnswer(multi, "方案A、方案C"), { selected: ["方案A", "方案C"] });
+  // A question without options is answered by free text.
+  assert.deepEqual(decodeTextAnswer({ id: "b", question: "?" }, "任意回复"), { selected: [], custom: "任意回复" });
 });

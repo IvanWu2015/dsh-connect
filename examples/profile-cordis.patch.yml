@@ -21,6 +21,7 @@
         # stateDir: .dsh-connect     # Directory for the binding route bindings.json
         # streamHeartbeatMs: 60000   # Streaming-card liveness heartbeat ms (0 = off)
         # notifyLevel: important  # Streaming detail: full | important (default) | result
+        # progressTimeoutMs: 300000  # Proactive progress-notice interval ms (0 = off; default 300000 = 5 min)
 
     - id: connect-feishu
       name: dsh-connect-feishu
