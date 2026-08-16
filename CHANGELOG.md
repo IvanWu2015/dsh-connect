@@ -1,73 +1,77 @@
-# 更新日志
+# Changelog
 
-本项目的变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 约定。
+All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### 修复
+### Added
 
-- **修复飞书图片下载失败（HTTP 400）**：下载用户消息内的图片改用「获取消息中的资源文件」接口（`im.v1.messageResource.get`，带 message_id + type=image）。旧代码走 `im.v1.image.get`（下载图片），飞书文档明确该接口只能下载机器人自己上传的图片，导致用户发图始终报 HTTP 400。同时把真实的飞书错误码/详情附到聊天提示里，方便排查权限（`99991672`）等问题。
+- **Menu card polish**: the main menu is now grouped into sections ("Workspace / Session / Task / System") with titles and separators; the "❌ Exit" button uses a red danger style; an operation hint is shown at the card footer; the menu header theme color switched to a more prominent indigo. Choice menus now support optional `sections` (grouping) and `footer` (footer hint) rendering.
+
+### Fixed
+
+- **Fixed Feishu image download failure (HTTP 400)**: images in user messages are now downloaded via the "get resource file from message" endpoint (`im.v1.messageResource.get`, with message_id + type=image). The old code used `im.v1.image.get` (download image), which per the Feishu docs can only download images uploaded by the bot itself, so user-sent images always failed with HTTP 400. The real Feishu error code/detail is also attached to the chat notice to help diagnose permission (`99991672`) and other issues.
 
 ## [0.4.0] - 2026-08-15
 
-### 新增
+### Added
 
-- **图片智能处理**：飞书发送图片会自动下载；主模型支持视觉（`inputModalities` 含 image）则直接看图，否则自动调用「视觉模型」子任务描述图片内容，再把描述注入主模型继续工作——避免主模型不支持图片导致整个任务卡死。
-- **图片落盘到工作目录**：收到的图片会复制到 `工作目录/.dsh-connect-images/` 并把完整路径告知 Agent，即使没有视觉模型，Agent 也能用工具定位图片。
-- **模型能力识别**：自动探测每个模型是否支持图片；`/settings` 切换模型时展示带视觉能力的模型。
-- **visionModel 配置**：`dsh-connect` 新增 `visionModel: { provider, model }`，可手动指定图片子任务的视觉模型；不指定时自动探测第一个支持图片的模型。
-- **添加新模型**：通过 DSH Web 的模型设置添加任意 provider / 模型后，插件自动读取并识别其能力（含视觉）。
+- **Smart image handling**: images sent via Feishu are downloaded automatically; if the main model supports vision (`inputModalities` includes image) it sees them directly, otherwise a "vision model" sub-task is invoked to describe the image content, and the description is injected into the main model — so a main model without image support no longer stalls the whole task.
+- **Images staged into the workdir**: received images are copied to `<workdir>/.dsh-connect-images/` and the full paths are given to the agent, so even without a vision model the agent can locate the images with its tools.
+- **Model capability detection**: automatically probes whether each model supports images; `/settings` model switching shows vision-capable models.
+- **`visionModel` config**: `dsh-connect` gains `visionModel: { provider, model }` to pin the vision model for the image sub-task; when unset, the first image-capable model is auto-detected.
+- **Adding new models**: models added via the DSH Web model settings are picked up automatically with their capabilities (including vision).
 
 ## [0.3.0] - 2026-08-15
 
-### 新增
+### Added
 
-- **token 统计**：`/status` 显示当前会话的上下文 token 与会话 token（基于 DSH `tokenMeter`）。
-- **定时提醒**：`/schedule`（`/reminders`）列出本会话的定时提醒；对 Agent 说「5 分钟后提醒我…」即可创建提醒（需在 profile 挂载 `@deepseek-ai/dsh-schedule`）。
-- **飞书一键接入**：不配置 `appId`/`appSecret` 时自动进入引导模式，打印接入链接（约 10 分钟有效），用飞书扫码或点击链接确认后自动创建机器人应用、预置权限与事件订阅，凭据自动保存复用（`$DSH_HOME/.dsh-connect/feishu-credentials.json`）。
-- 各包补充 README（npm 包页面不再提示「没有 README」）。
+- **Token stats**: `/status` shows the current session's context tokens and session tokens (based on DSH `tokenMeter`).
+- **Scheduled reminders**: `/schedule` (`/reminders`) lists scheduled reminders for this session; telling the agent "remind me in 5 minutes…" creates one (requires mounting `@deepseek-ai/dsh-schedule` in the profile).
+- **Feishu one-click onboarding**: without `appId`/`appSecret`, the plugin enters onboarding mode and prints an onboarding link (valid ~10 minutes); scan it with Feishu or click and confirm, and the bot app is created automatically with permissions and event subscriptions preset. Credentials are saved for reuse (`$DSH_HOME/.dsh-connect/feishu-credentials.json`).
+- READMEs added for both packages (npm package pages no longer show "no README").
 
-### 修复
+### Fixed
 
-- 修复 npm 包页面无 README 的问题（0.2.1 内容并入本版）。
-- 修复依赖重装时 Windows 下 pnpm 硬链接 EPERM 的问题（构建环境改用 copy 导入方式，不影响运行时）。
+- Fixed the missing README on npm package pages (0.2.1 content merged into this release).
+- Fixed pnpm hardlink EPERM on Windows during dependency reinstall (build environment switched to copy import; runtime unaffected).
 
 ## [0.2.0] - 2026-08-15
 
-### 新增
+### Added
 
-- **交互式菜单系统**（`/menu`）：层级点选（工作目录 / 对话 / 设置 / 插件 / 压缩等），同一张卡片**原地更新**，支持「🔙 返回」「❌ 退出」，动作完成后自动回到主菜单，可连续操作，不再每次弹新卡片。
-- **设置菜单**（`/settings`）：
-  - 切换模型：列出 DSH 已注册的全部模型，点选切换（写入 `agentDefaultModel`）。
-  - 推理强度：默认 / 低 / 中 / 高。
-  - 通知设置：流式输出、结束摘要开关。
-  - 配置总览：模型、推理强度、预设、工作目录、工作区、白名单等。
-- **新指令**：`/plugins`（查看插件清单）、`/workspace <路径>`（新建工作区）、`/workspaces`（列出所有工作区）、`/compact`（压缩上下文）、`/history [条数]`（查看最近消息）、`/goals`（查看目标）、`/model`（查看 / 切换模型）。
-- 工作目录默认值改为「DSH 第一个工作区」（原为进程启动目录，会误指到 `C:\Users\...` 这类位置）。
-- 模型思考阶段显示「🤔 深度思考中…」提示，不再长时间卡在 Thinking 占位。
-- 菜单超时（60 秒）自动把卡片更新为「菜单已过期」，不再静默挂起。
-- 飞书按钮统一为 **3 列等宽网格**（`column_set` 分栏），不足 3 个自动补空列；按钮文字按显示宽度（中文 2 格 / 英文 1 格，排除 emoji 零宽字符）用全角空格补位对齐。
+- **Interactive menu system** (`/menu`): hierarchical point-and-click (workdir / chats / settings / plugins / compact, …); the same card **updates in place**, supports "🔙 Back" / "❌ Exit", returns to the main menu automatically after an action — continuous operation with no more new cards every time.
+- **Settings menu** (`/settings`):
+  - Switch model: lists all models registered in DSH, tap to switch (writes to `agentDefaultModel`).
+  - Reasoning effort: default / low / medium / high.
+  - Notification settings: streaming output, end-of-turn summary toggles.
+  - Config overview: model, reasoning effort, preset, workdir, workspaces, allowlists, etc.
+- **New commands**: `/plugins` (list plugins), `/workspace <path>` (create a workspace), `/workspaces` (list all workspaces), `/compact` (compact context), `/history [count]` (recent messages), `/goals` (view goals), `/model` (view / switch model).
+- Workdir default changed to "the first DSH workspace" (previously the process start directory, which could wrongly point at locations like `C:\Users\...`).
+- The model's thinking phase now shows a "🤔 Deep thinking…" hint instead of sitting on the Thinking placeholder for a long time.
+- Menu timeout (60 s) now updates the card to "menu expired" instead of silently hanging.
+- Feishu buttons unified into a **3-column equal-width grid** (`column_set`), with empty columns auto-padded when there are fewer than 3; button labels are padded with full-width spaces to align by display width (CJK = 2 cells / ASCII = 1, excluding emoji zero-width chars).
 
-### 变更
+### Changed
 
-- 所有 `/` 指令均由插件本地执行，不消耗模型。
-- 会话管理升级：一个聊天可维护**多个对话**（切换 / 新建 / 清空），记录在 `bindings.json`，重启后仍可列出并恢复。
+- All `/` commands are executed locally by the plugin and consume no model tokens.
+- Session management upgraded: one chat can hold **multiple conversations** (switch / create / clear), recorded in `bindings.json`, still listable and resumable after restart.
 
-### 修复
+### Fixed
 
-- 修复菜单卡片「只能使用一次」：点选后原地更新同一张卡片，可连续操作。
-- 修复飞书长连接回调中 `ctx.agents` / `ctx.sessions` 属性访问报 `cannot get property "agents" without inject` 的问题（统一改用 `ctx.get()`）。
-- 修复 `/dir` 未列出 DSH 已有工作区的问题（接入 `workspaceRegistry`）。
-- 修复 Agent 恢复（resume）失败时未记录新会话路由的问题。
+- Fixed menu cards being "usable only once": tapping now updates the same card in place for continuous operation.
+- Fixed `cannot get property "agents" without inject` when accessing `ctx.agents` / `ctx.sessions` in Feishu long-connection callbacks (switched to `ctx.get()`).
+- Fixed `/dir` not listing DSH's existing workspaces (now wired to `workspaceRegistry`).
+- Fixed new session routing not being recorded when agent resume fails.
 
 ## [0.1.0] - 2026-08-15
 
-### 新增
+### Added
 
-- 首个发布版本：把 DeepSeek Harness（DSH）Agent 接入飞书 / Lark。
-- 双向消息同步：飞书消息 → DSH Agent（`agent.followup`），回复流式回写飞书（打字机卡片）。
-- 多轮上下文：每个飞书会话绑定一个 DSH `Session`，进程重启后自动恢复。
-- 工作安排：任务结束主动推送结果摘要卡片；`ctx.connect.notify()` 供 goals/jobs 钩子主动推送。
-- 基础本地指令：`/new` `/clear` `/stop` `/status` `/help`。
-- 安全：群聊默认需 @机器人、用户 / 群白名单、凭据走环境变量或配置。
-- 分层架构：`dsh-connect`（渠道无关核心）+ `dsh-connect-feishu`（飞书适配器），为后续钉钉 / 企业微信等渠道预留扩展点。
+- First release: connects DeepSeek Harness (DSH) agents to Feishu / Lark.
+- Bidirectional message sync: Feishu messages → DSH agent (`agent.followup`), replies stream back to Feishu (typewriter cards).
+- Multi-turn context: each Feishu chat is bound to a DSH `Session`, automatically resumed after a process restart.
+- Work arrangement: a result-summary card is pushed when a task ends; `ctx.connect.notify()` lets goals/jobs hooks push proactively.
+- Basic local commands: `/new` `/clear` `/stop` `/status` `/help`.
+- Security: groups require @mention by default, user/chat allowlists, credentials via environment variables or config.
+- Layered architecture: `dsh-connect` (channel-agnostic core) + `dsh-connect-feishu` (Feishu adapter), with extension points reserved for DingTalk / WeCom and other channels.

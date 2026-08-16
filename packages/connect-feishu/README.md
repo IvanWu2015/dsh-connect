@@ -1,16 +1,16 @@
 # dsh-connect-feishu
 
-[dsh-connect](https://www.npmjs.com/package/dsh-connect) 的 **飞书 / Lark 渠道适配器**：通过飞书开放平台**长连接（WebSocket）**接收消息，转发给 DSH Agent 处理，并把回复**流式**回写飞书，支持交互式菜单卡片。
+The **Feishu / Lark channel adapter** for [dsh-connect](https://www.npmjs.com/package/dsh-connect): receives messages over the Feishu Open Platform **long connection (WebSocket)**, forwards them to the DSH agent, and **streams** replies back to Feishu, with interactive menu cards.
 
-## 安装
+## Install
 
 ```sh
 dsh plugin --profile web add dsh-connect dsh-connect-feishu
 ```
 
-## 配置
+## Configuration
 
-在 DSH profile 的 `cordis.patch.yml` 中：
+In the DSH profile's `cordis.patch.yml`:
 
 ```yaml
 - insert:
@@ -26,19 +26,19 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu
         dmMode: open
 ```
 
-| 键 | 默认 | 说明 |
+| Key | Default | Description |
 |---|---|---|
-| `appId` / `appSecret` | 环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书自建应用凭据 |
-| `transport` | `websocket` | 长连接（无需公网）；`webhook` 需公网 HTTPS |
-| `requireMention` | `true` | 群聊需 @机器人 才响应 |
-| `dmMode` | `open` | 单聊策略：open / allowlist / pair / disabled |
+| `appId` / `appSecret` | env `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | Feishu custom app credentials |
+| `transport` | `websocket` | Long connection (no public network needed); `webhook` needs public HTTPS |
+| `requireMention` | `true` | Groups only respond when the bot is @mentioned |
+| `dmMode` | `open` | DM policy: open / allowlist / pair / disabled |
 
-飞书端还需：开通机器人能力、订阅 `im.message.receive_v1` 与 `card.action.trigger` 事件、发布应用版本。详见仓库文档 `docs/feishu-setup.md`。
+On the Feishu side you also need: bot capability enabled, `im.message.receive_v1` and `card.action.trigger` events subscribed, and an app version published. See `docs/feishu-setup.md` in the repository.
 
-## 完整文档
+## Documentation
 
 https://github.com/IvanWu2015/dsh-connect
 
-## 许可
+## License
 
 MIT

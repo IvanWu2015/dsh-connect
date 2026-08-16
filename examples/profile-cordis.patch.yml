@@ -1,28 +1,28 @@
-# 追加到 DSH profile 的 cordis.patch.yml（Host 平面，非 agent preset 内）
+# Append to the DSH profile's cordis.patch.yml (Host plane, not inside an agent preset)
 #
-# 说明：
-# - dsh-connect 与 dsh-connect-feishu 必须挂 Host 平面（进程级单例服务）。
-# - 用 `insert` 段新增插件；`id` 是本地唯一标识，`name` 是 npm 包名。
-# - 凭据也可走环境变量 FEISHU_APP_ID / FEISHU_APP_SECRET，避免写入配置文件。
+# Notes:
+# - dsh-connect and dsh-connect-feishu must live on the Host plane (process-level singleton services).
+# - Use an `insert` block to add plugins; `id` is a local unique identifier, `name` is the npm package name.
+# - Credentials can also come from the environment variables FEISHU_APP_ID / FEISHU_APP_SECRET to keep them out of config files.
 
 - insert:
     - id: connect
       name: dsh-connect
       config:
-        # agentPreset: standard      # 每个绑定会话采用的 Agent 预设（省略=roster 默认）
-        # workDir: D:\your\workdir   # Agent 工作目录（绝对路径）
-        # workspaces:                # /dir 点选时列出的工作目录
+        # agentPreset: standard      # Agent preset used per bound session (omitted = roster default)
+        # workDir: D:\your\workdir   # Agent working directory (absolute path)
+        # workspaces:                # Workdirs listed in the /dir picker
         #   - D:\projects\app-a
         #   - D:\projects\app-b
-        # allowUsers: ['ou_xxx']     # 发送者白名单（空=全部放行）
-        # allowChats: ['oc_xxx']     # 会话白名单（空=全部放行）
-        # stateDir: .dsh-connect     # 绑定路由 bindings.json 目录
+        # allowUsers: ['ou_xxx']     # Sender allowlist (empty = allow all)
+        # allowChats: ['oc_xxx']     # Chat allowlist (empty = allow all)
+        # stateDir: .dsh-connect     # Directory for the binding route bindings.json
 
     - id: connect-feishu
       name: dsh-connect-feishu
       config:
         appId: cli_xxxx
         appSecret: cli_secret_xxxx
-        transport: websocket          # 长连接（推荐）；webhook 需公网 HTTPS
-        requireMention: true          # 群聊需 @机器人 才响应
-        dmMode: open                  # 单聊策略：open / allowlist / pair / disabled
+        transport: websocket          # long connection (recommended); webhook needs public HTTPS
+        requireMention: true          # groups only respond when @mentioned
+        dmMode: open                  # DM policy: open / allowlist / pair / disabled

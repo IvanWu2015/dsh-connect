@@ -1,47 +1,45 @@
 # dsh-connect
 
-[English](#) · 中文
+Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**DSH**) agents to chat platforms — **Feishu / Lark first**, with DingTalk and others to follow. Send tasks from your messaging app, watch the agent execute with live streaming output, keep multi-turn context, and get result summaries pushed back when a task finishes.
 
-把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（**DSH**）的 Agent 接入聊天软件（**飞书/Lark 先行**，后续钉钉、企业微信等），实现**信息同步 + 工作安排**：在飞书里给 DSH 派任务、看它流式执行、多轮带上下文，任务结束主动推送结果卡片。
+## Features
 
-## 特性
+- **Bidirectional messaging**: Feishu messages → DSH agent (`agent.followup`); agent replies stream back to Feishu as typewriter-style cards.
+- **Multi-turn context**: each Feishu chat (DM or group) is bound to a DSH `Session`, automatically `resume`d after a process restart.
+- **Work arrangement**: pushes a result-summary card when a task ends; `ctx.connect.notify()` lets goals/jobs hooks push progress proactively.
+- **Security**: groups require @mention by default; user/chat allowlists; Feishu credentials via environment variables or config.
+- **Interactive menus**: `/menu` offers hierarchical point-and-click navigation (workdir / chats / settings / plugins / compact, …) — the same card updates in place, supports back/exit, and stays usable across consecutive actions.
+- **Smart image handling**: images sent to the bot are downloaded automatically; if the main model supports vision it sees them directly, otherwise a vision-model sub-task describes them and the description is injected — so a text-only main model never stalls on images.
+- **Local commands** (no model tokens): `/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/schedule` `/model` `/new` `/clear` `/stop` `/settings` `/help`.
+- **Extensible**: `dsh-connect` (channel-agnostic core) + `dsh-connect-feishu` (Feishu adapter) are layered; adding DingTalk only requires one more adapter package.
 
-- **双向信息同步**：飞书消息 → DSH Agent（`agent.followup`），Agent 回复流式回写飞书（打字机卡片）。
-- **多轮上下文**：每个飞书会话（单聊/群）绑定一个 DSH `Session`，进程重启后自动 `resume`。
-- **工作安排**：任务跑完主动推送「结果摘要」卡片；`ctx.connect.notify()` 供 goals/jobs 钩子主动推送进度。
-- **安全**：群聊默认需 @机器人；用户/群白名单；飞书凭据走环境变量或加密配置。
-- **交互式菜单**：`/menu` 层级点选（工作目录 / 对话 / 设置 / 插件 / 压缩等），同一张卡片原地更新，可「返回」「退出」，连续操作。
-- **图片智能处理**：发图片给机器人 → 自动下载；主模型支持视觉就直接看图，否则自动用「视觉模型」子任务描述图片内容再交给主模型，避免主模型不支持图片导致任务卡死。
-- **本地指令**（不消耗模型）：`/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/schedule` `/model` `/new` `/clear` `/stop` `/settings` `/help`。
-- **可扩展**：`dsh-connect`（核心，渠道无关）+ `dsh-connect-feishu`（飞书适配器）分层，新增钉钉只需再加一个适配器包。
-
-## 仓库结构
+## Repository layout
 
 ```
 packages/
-  connect/         dsh-connect 核心层：服务、绑定、驱动、流式桥、命令
-  connect-feishu/  dsh-connect-feishu 飞书适配器：createLarkChannel 长连接、归一化、流式回写
+  connect/         dsh-connect core: services, bindings, runner, streaming bridge, commands
+  connect-feishu/  dsh-connect-feishu Feishu adapter: createLarkChannel long connection, normalization, streaming replies
 docs/
-  QUICKSTART.md    分步运行指南（DSH 端 + 飞书端）
-  feishu-setup.md  飞书开放平台配置手册
-  PUBLISHING.md    命名 + GitHub/npm 可发现性指南
+  QUICKSTART.md    step-by-step run guide (DSH side + Feishu side)
+  feishu-setup.md  Feishu Open Platform configuration manual
+  PUBLISHING.md    naming + GitHub/npm discoverability guide
 examples/
   profile-cordis.patch.yml
 ```
 
-## 快速开始
+## Quick start
 
-### 安装
+### Install
 
-已发布到 npm，直接装进你的 DSH profile：
+Published to npm — install straight into your DSH profile:
 
 ```sh
 dsh plugin --profile web add dsh-connect dsh-connect-feishu
 ```
 
-### 配置
+### Configure
 
-在 profile 的 `cordis.patch.yml`（`$DSH_HOME/profiles/web/cordis.patch.yml`）里用 `insert` 追加（Host 平面）：
+Append to the profile's `cordis.patch.yml` (`$DSH_HOME/profiles/web/cordis.patch.yml`) with an `insert` block (Host plane):
 
 ```yaml
 - insert:
@@ -57,87 +55,87 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu
         dmMode: open
 ```
 
-### 启动
+### Run
 
-重启 `dsh web`（Host 插件需重启进程才生效），按 [docs/feishu-setup.md](docs/feishu-setup.md) 完成飞书侧订阅后，即可在飞书里对话。
+Restart `dsh web` (Host plugins require a process restart to load), complete the Feishu-side subscription per [docs/feishu-setup.md](docs/feishu-setup.md), then chat with the bot in Feishu.
 
-> 详细的分步操作（含飞书端设置与验证）见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
+> Detailed step-by-step instructions (including Feishu-side setup and verification) are in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
-## 指令清单
+## Command list
 
-| 指令 | 说明 |
+| Command | Description |
 |---|---|
-| `/menu` | 打开主菜单（层级点选，同一张卡片原地更新，可返回 / 退出） |
-| `/settings`（`/set`） | 设置：切换模型 / 推理强度 / 通知开关 / 配置总览 |
-| `/model` | 查看当前模型，点选切换 |
-| `/status` | 会话状态、模型、工作目录、排队数、**上下文 token**、会话 ID |
-| `/task`（`/tasks` `/todo`） | 查看当前任务清单 |
-| `/schedule`（`/reminders`） | 查看本会话的定时提醒 |
-| `/chat`（`/session` `/sessions`） | 列出对话，点选切换或新建 |
-| `/dir`（`/cd` `/pwd`） | 切换工作目录（点选，或 `/dir <绝对路径>`） |
-| `/workspace <绝对路径>` | 新建工作区 |
-| `/workspaces` | 列出所有工作区 |
-| `/plugins` | 查看插件清单 |
-| `/compact` | 压缩当前会话上下文 |
-| `/history [条数]` | 查看最近会话消息 |
-| `/goals` | 查看当前目标 |
-| `/new`（`/reset`） | 开启新对话 |
-| `/clear` | 清空当前对话 |
-| `/stop`（`/cancel`） | 停止当前任务 |
-| `/help` | 列出全部命令 |
+| `/menu` | Open the main menu (hierarchical point-and-click; the same card updates in place; back / exit supported) |
+| `/settings` (`/set`) | Settings: switch model / reasoning effort / notification toggles / config overview |
+| `/model` | Show the current model, tap to switch |
+| `/status` | Session status, model, workdir, queue length, **context tokens**, session ID |
+| `/task` (`/tasks` `/todo`) | Show the current task list |
+| `/schedule` (`/reminders`) | Show scheduled reminders for this session |
+| `/chat` (`/session` `/sessions`) | List chats; tap to switch or create a new one |
+| `/dir` (`/cd` `/pwd`) | Switch workdir (tap to pick, or `/dir <absolute path>`) |
+| `/workspace <absolute path>` | Create a new workspace |
+| `/workspaces` | List all workspaces |
+| `/plugins` | List installed plugins |
+| `/compact` | Compact the current session context |
+| `/history [count]` | Show recent session messages |
+| `/goals` | Show current goals |
+| `/new` (`/reset`) | Start a new conversation |
+| `/clear` | Clear the current conversation |
+| `/stop` (`/cancel`) | Stop the current task |
+| `/help` | List all commands |
 
-> 所有 `/` 指令都由插件本地执行，不消耗模型；其余文本作为任务发送给 DSH Agent。
+> All `/` commands are executed locally by the plugin and consume no model tokens; any other text is sent to the DSH agent as a task.
 
-## 配置
+## Configuration
 
-### dsh-connect（核心）
+### dsh-connect (core)
 
-| 键 | 默认 | 说明 |
+| Key | Default | Description |
 |---|---|---|
-| `agentPreset` | 未设置=roster 默认 | 每个绑定会话采用的 Agent 预设（如 `standard`） |
-| `workDir` | DSH 第一个工作区 | Agent 工作目录（绝对路径，可显式指定） |
-| `workspaces` | `[]` | `/dir` 交互式选择里列出的工作目录列表 |
-| `visionModel` | 自动探测 | 图片子任务用的视觉模型 `{provider, model}`；未指定时自动找第一个支持图片的模型 |
-| `allowUsers` | `[]` | 发送者白名单（空=全部放行） |
-| `allowChats` | `[]` | 会话白名单（空=全部放行） |
-| `stateDir` | `./.dsh-connect` | 绑定路由 `bindings.json` 存放目录 |
-| `notifyStream` / `notifySummary` | 运行时可调 | `/settings` 里可切换的流式 / 摘要通知开关 |
+| `agentPreset` | unset = roster default | Agent preset used for each bound session (e.g. `standard`) |
+| `workDir` | first DSH workspace | Agent working directory (absolute path, can be set explicitly) |
+| `workspaces` | `[]` | Workdirs listed in the `/dir` interactive picker |
+| `visionModel` | auto-detected | Vision model `{provider, model}` for the image sub-task; when unset, the first image-capable model is auto-detected |
+| `allowUsers` | `[]` | Sender allowlist (empty = allow all) |
+| `allowChats` | `[]` | Chat allowlist (empty = allow all) |
+| `stateDir` | `./.dsh-connect` | Directory for the binding route `bindings.json` |
+| `notifyStream` / `notifySummary` | runtime-adjustable | Streaming / summary notification toggles switchable from `/settings` |
 
-### dsh-connect-feishu（飞书）
+### dsh-connect-feishu (Feishu)
 
-| 键 | 默认 | 说明 |
+| Key | Default | Description |
 |---|---|---|
-| `appId` / `appSecret` | 环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，或**一键接入**自动生成 | 应用凭据（不配置时自动进入一键接入，扫码创建应用） |
-| `transport` | `websocket` | 长连接（推荐）；`webhook` 需公网 HTTPS |
-| `verificationToken` / `encryptKey` | 空 | 仅 webhook 模式需要 |
-| `requireMention` | `true` | 群聊需 @机器人 才响应 |
-| `dmMode` | `open` | 单聊策略：`open` 接收 / `closed` 忽略 |
+| `appId` / `appSecret` | env `FEISHU_APP_ID` / `FEISHU_APP_SECRET`, or **one-click onboarding** | App credentials (when unset, onboarding mode starts and creates the app via QR scan) |
+| `transport` | `websocket` | Long connection (recommended); `webhook` needs a public HTTPS URL |
+| `verificationToken` / `encryptKey` | empty | Only needed for webhook mode |
+| `requireMention` | `true` | Groups only respond when the bot is @mentioned |
+| `dmMode` | `open` | DM policy: `open` receive / `closed` ignore |
 
-> **一键接入**：不填 `appId`/`appSecret` 启动插件，会在日志打印一个接入链接（约 10 分钟有效），用飞书扫码或点击链接确认，自动创建机器人应用并预置权限与事件订阅，凭据自动保存（`$DSH_HOME/.dsh-connect/feishu-credentials.json`）。
+> **One-click onboarding**: start the plugin without `appId`/`appSecret` and it prints an onboarding link (valid ~10 minutes). Scan it with Feishu (or click and confirm) and the bot app is created automatically with permissions and event subscriptions preset; credentials are saved to `$DSH_HOME/.dsh-connect/feishu-credentials.json`.
 
-## 原理
+## How it works
 
-- **Agent 创建/恢复**：复用 DSH 官方驱动范式（见 `dsh-headless`）——`ctx.agents.create({ meta:{cwd, agentPreset}, agentOptions:{provider,model}, setup })`；恢复走 `ctx.agents.resume`。
-- **预设挂载**：`setup` 里 `installModelSelection` + `ctx.agentPresets.mount(agentCtx, presetId)`，让绑定会话获得标准工具集（bash/fs/…）。
-- **流式**：监听 `session/event` 的 `assistant/chunk`（text-delta），经 `createAsyncQueue` 桥接进飞书 `channel.stream()` 的打字机卡片；`turn/end` 判定回合结果。
-- **串行**：每个 chatKey 一个 `AgentRunner`，消息入队串行执行，`agent.followup` 天然排队。
+- **Agent create/resume**: reuses the standard DSH driving pattern (see `dsh-headless`) — `ctx.agents.create({ meta:{cwd, agentPreset}, agentOptions:{provider,model}, setup })`; resume goes through `ctx.agents.resume`.
+- **Preset mounting**: `setup` runs `installModelSelection` + `ctx.agentPresets.mount(agentCtx, presetId)`, giving bound sessions the standard toolset (bash/fs/…).
+- **Streaming**: `assistant/chunk` (text-delta) events on `session/event` are bridged via `createAsyncQueue` into the Feishu `channel.stream()` typewriter card; `turn/end` decides the turn outcome.
+- **Serialization**: one `AgentRunner` per chatKey — messages are queued and executed serially; `agent.followup` naturally queues.
 
-## 测试
+## Testing
 
 ```sh
-pnpm build        # 先构建（生成 lib/）
-pnpm test         # 单元测试（纯逻辑）+ 冒烟测试（Cordis 运行时加载契约）
+pnpm build        # build first (generates lib/)
+pnpm test         # unit tests (pure logic) + smoke test (Cordis runtime load contract)
 ```
 
-- `packages/connect/test/unit.test.mjs`：命令解析、绑定持久化、异步队列、回合结果推导。
-- `packages/connect/test/smoke.mjs`：把两个插件加载进真实 Cordis 上下文，验证 `ctx.connect` 服务注册、适配器注册、白名单授权、`notify` 主动推送与飞书适配器构造。
+- `packages/connect/test/unit.test.mjs`: command parsing, binding persistence, async queue, turn outcome derivation.
+- `packages/connect/test/smoke.mjs`: loads both plugins into a real Cordis context, verifying `ctx.connect` service registration, adapter registration, allowlist authorization, proactive `notify` push, and Feishu adapter construction.
 
-## 文档
+## Documentation
 
-- [飞书开放平台配置](docs/feishu-setup.md)
-- [命名与 GitHub/npm 可发现性](docs/PUBLISHING.md)
-- [示例配置](examples/profile-cordis.patch.yml)
+- [Feishu Open Platform configuration](docs/feishu-setup.md)
+- [Naming and GitHub/npm discoverability](docs/PUBLISHING.md)
+- [Example configuration](examples/profile-cordis.patch.yml)
 
-## 许可
+## License
 
 MIT

@@ -1,83 +1,83 @@
-# 命名与可发现性指南
+# Naming & Discoverability Guide
 
-本文回答两个问题：**叫什么名字**，以及**怎么让 DSH 用户找到这个仓库**。
+This document answers two questions: **what is it called**, and **how do DSH users find this repository**.
 
-## 1. 命名
+## 1. Naming
 
-| 对象 | 名称 | 说明 |
+| Object | Name | Notes |
 |---|---|---|
-| GitHub 仓库 | `dsh-connect` | 总仓库（monorepo） |
-| 核心包 | `dsh-connect` | 渠道无关核心层 |
-| 飞书适配器 | `dsh-connect-feishu` | 飞书/Lark 渠道 |
-| 后续钉钉 | `dsh-connect-dingtalk` | 命名规则：`dsh-connect-<channel>` |
+| GitHub repo | `dsh-connect` | The monorepo |
+| Core package | `dsh-connect` | Channel-agnostic core |
+| Feishu adapter | `dsh-connect-feishu` | Feishu/Lark channel |
+| Future DingTalk | `dsh-connect-dingtalk` | Naming rule: `dsh-connect-<channel>` |
 
-**为什么这样命名：**
+**Why this naming:**
 
-- `dsh-` 前缀对齐 DSH 官方生态（`@deepseek-ai/dsh-*`），用户在 npm/GitHub 搜 `dsh` 时能命中。
-- `connect` 直白地描述了这个产品做的事：把 DSH 与聊天渠道连接起来，实现双向消息同步与工作安排。
-- `-feishu` 后缀让「飞书 + dsh」这类搜索词也能命中。
+- The `dsh-` prefix aligns with the DSH ecosystem (`@deepseek-ai/dsh-*`), so users searching for `dsh` on npm/GitHub will hit it.
+- `connect` says plainly what the product does: connect DSH to chat channels for bidirectional message sync and work arrangement.
+- The `-feishu` suffix makes searches like "feishu + dsh" hit too.
 
-> 发布时建议**不占用 `@deepseek-ai` 官方 scope**（那是 DeepSeek 官方的）。用无 scope 名 `dsh-connect` / `dsh-connect-feishu`（最易发现）；若被占用，改用你自己的 scope，如 `@你的组织/dsh-connect`。
+> For publishing, avoid taking the official `@deepseek-ai` scope (that belongs to DeepSeek). Use the unscoped names `dsh-connect` / `dsh-connect-feishu` (most discoverable); if those are taken, use your own scope, e.g. `@your-org/dsh-connect`.
 
-## 2. GitHub 可发现性（让 DSH 用户能找到）
+## 2. GitHub discoverability (so DSH users can find it)
 
-GitHub 搜索主要靠 **仓库名 + 描述 + About 区 + Topics + README 首段**。逐项做齐：
+GitHub search mainly relies on **repo name + description + About section + topics + README opening paragraph**. Do them all:
 
-### 2.1 创建仓库
+### 2.1 Create the repo
 
-1. 新建仓库，名字 `dsh-connect`（与 npm 包名一致）。
-2. 仓库 **Description**（第一句最关键，含关键词）：
+1. Create a new repository named `dsh-connect` (matching the npm package name).
+2. Repo **Description** (the first sentence matters most — include keywords):
    > Bridge DeepSeek Harness (DSH) agents to Feishu/Lark & DingTalk — chat, stream replies, and arrange work from your messaging app.
 
-### 2.2 About 区
+### 2.2 About section
 
-在仓库页右侧 **About → 齿轮图标** 里填：
-- **Website / 文档链接**：README 或 docs 的 URL。
-- **Topics**（GitHub 搜 tag 的核心）：
+On the repo page's right-hand **About → gear icon**, fill in:
+- **Website / documentation link**: the README or docs URL.
+- **Topics** (the core of GitHub tag search):
 
 ```
 deepseek-harness  dsh  dsh-plugin  feishu  lark  dingtalk  ai-agent  chatbot  cordis
 ```
 
-### 2.3 README 首段（决定搜索相关性）
+### 2.3 README opening paragraph (drives search relevance)
 
-首段必须自然包含可检索词，参考本仓库 `README.md` 已写好的开头：
-> 把 DeepSeek Harness（DSH）的 Agent 接入聊天软件（飞书/Lark 先行…），实现信息同步 + 工作安排…
+The first paragraph must naturally include searchable terms — see the opening of this repo's `README.md`:
+> Connect DeepSeek Harness (DSH) agents to chat platforms — Feishu / Lark first, with DingTalk and others to follow…
 
-### 2.4 加徽章 + 截图
+### 2.4 Add badges + screenshots
 
-- 顶部加 build/license 徽章（提高可信度，间接利于排序）。
-- 放一张「飞书里对话 + 流式回复」的截图（demo 截图能显著提升点击率）。
+- Add build/license badges at the top (builds credibility, indirectly helps ranking).
+- Add a screenshot of "chatting in Feishu with streaming replies" (demo screenshots noticeably lift click-through).
 
-## 3. npm 发布（让 `dsh plugin add` 可用）
+## 3. npm publishing (so `dsh plugin add` works)
 
-DSH 的插件安装命令是 `dsh plugin --profile web add <包名>`（底层转发 pnpm），所以**发布到 npm 是被 DSH 用户「一键安装」的前提**。
+DSH's plugin install command is `dsh plugin --profile web add <package>` (it forwards to pnpm underneath), so **publishing to npm is the prerequisite for DSH users to install with one command**.
 
 ```sh
-# 在 packages/connect 与 packages/connect-feishu 分别：
+# In packages/connect and packages/connect-feishu respectively:
 pnpm --filter dsh-connect publish --access public
 pnpm --filter dsh-connect-feishu publish --access public
 ```
 
-发布前把 package.json 里占位的 `"name"`/`"version"` 确认好，`description`、`keywords`、`repository`、`license` 补全。**npm 的 `keywords` 字段**同样参与 npm 搜索：
+Before publishing, confirm the placeholder `"name"`/`"version"` in package.json and fill in `description`, `keywords`, `repository`, `license`. npm's **`keywords` field** also participates in npm search:
 
 ```json
 "keywords": ["dsh", "deepseek-harness", "feishu", "lark", "dingtalk", "cordis", "ai-agent", "chatbot"]
 ```
 
-## 4. 生态内扩散（最有效的一步）
+## 4. Spread within the ecosystem (the most effective step)
 
-仅靠搜索引擎不够，主动让「用 DSH 的人」看到：
+Search engines aren't enough — proactively get in front of "people who use DSH":
 
-1. **DSH 官方仓库**：在 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 提 Issue / Discussion，说明「dsh-connect：把 DSH 接入飞书」，附链接；若官方有社区插件目录/awesome 列表，提交 PR 收录。
-2. **awesome 列表**：搜 `awesome-deepseek-harness`、`awesome-feishu`、`awesome-ai-agents` 等，提交 PR 收录。
-3. **中文社区**：在飞书/Lark、AI Agent 相关讨论（掘金、知乎、V2EX 等）介绍「把 DSH 接入飞书」并附仓库链接。
-4. **关键搜索词占位**：README 和描述里同时出现中英文词（`飞书` `钉钉` `Feishu` `Lark` `DeepSeek Harness` `DSH`），覆盖中文与英文检索。
+1. **The official DSH repo**: file an Issue/Discussion on [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) introducing "dsh-connect: connect DSH to Feishu" with a link; if the project keeps a community plugin directory / awesome list, submit a PR to be listed.
+2. **Awesome lists**: search for `awesome-deepseek-harness`, `awesome-feishu`, `awesome-ai-agents`, etc., and submit PRs to be listed.
+3. **Communities**: in Feishu/Lark and AI-agent communities, introduce "connect DSH to Feishu" with the repo link.
+4. **Keyword coverage**: include both English and Chinese terms in the README and descriptions (Feishu / Lark / DeepSeek Harness / DSH), covering both English and Chinese search.
 
-## 5. 最小可发现性清单（照着做即可）
+## 5. Minimum discoverability checklist (just follow it)
 
-- [ ] GitHub 仓库名 `dsh-connect`，Description 含关键词
-- [ ] About Topics 填齐（见 2.2）
-- [ ] README 首段含「DeepSeek Harness / 飞书」
-- [ ] npm 发布两个包，`keywords` 补全
-- [ ] 在 DSH 官方仓库 + 至少一个 awesome 列表留痕
+- [ ] GitHub repo named `dsh-connect`, Description contains keywords
+- [ ] About topics filled in (see 2.2)
+- [ ] README opening paragraph contains "DeepSeek Harness / Feishu"
+- [ ] Both packages published to npm with `keywords` filled in
+- [ ] Leave traces in the official DSH repo + at least one awesome list

@@ -1,51 +1,51 @@
-# 飞书开放平台配置手册
+# Feishu Open Platform Configuration Manual
 
-本插件默认使用飞书「**长连接（WebSocket）事件订阅**」模式 —— 无需公网 IP / 域名 / 内网穿透，本地即可接收事件回调。
+This plugin uses Feishu's **long-connection (WebSocket) event subscription** mode by default — no public IP / domain / tunnel is required, and events are received locally.
 
-## 1. 创建自建应用
+## 1. Create a custom app
 
-1. 打开 [飞书开放平台](https://open.feishu.cn/) → 「开发者后台」→「创建企业自建应用」。
-2. 填应用名称、图标（如 `DSH 助手`）。
-3. 进入应用 → 「凭证与基础信息」：
-   - 记下 **App ID**（`cli_xxx`）与 **App Secret**。
-   - 这两个值填入插件配置的 `appId` / `appSecret`（或环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`）。
+1. Open the [Feishu Open Platform](https://open.feishu.cn/) → Developer Console → **Create enterprise self-built app**.
+2. Fill in the app name and icon (e.g. `DSH Assistant`).
+3. Inside the app → **Credentials & Basic Info**:
+   - Note the **App ID** (`cli_xxx`) and **App Secret**.
+   - Put these into the plugin config as `appId` / `appSecret` (or the environment variables `FEISHU_APP_ID` / `FEISHU_APP_SECRET`).
 
-## 2. 开通机器人能力
+## 2. Enable the bot capability
 
-- 「添加应用能力」→ 添加「**机器人**」。
+- **Add App Capabilities** → add **Bot**.
 
-## 3. 配置权限
+## 3. Configure permissions
 
-在「权限管理」里开通并发布以下权限（至少前三条）：
+Enable and release the following permissions in **Permission Management** (at least the first three):
 
-| 权限 | 用途 |
+| Permission | Purpose |
 |---|---|
-| `im:message` | 获取消息内容（单聊+群聊） |
-| `im:message.p2p_msg:readonly` 或 `im:message.p2p_msg` | 读取单聊消息 |
-| `im:message.group_msg` | 读取群消息（若需「群聊全响应」需管理员审批；仅 @bot 响应也建议开通 group_at） |
-| `im:message:send_as_bot` | 以机器人身份发消息 |
-| **`im:resource`** | **下载用户发送的图片 / 文件 / 音视频（接收图片必需，不开则图片下载失败）** |
+| `im:message` | Read message content (DMs + groups) |
+| `im:message.p2p_msg:readonly` or `im:message.p2p_msg` | Read DM messages |
+| `im:message.group_msg` | Read group messages (requires admin approval for full group reads; for @mention-only responses `im:message.group_at_msg` is enough) |
+| `im:message:send_as_bot` | Send messages as the bot |
+| `im:message` (already covered above) | Also enables downloading images/files/audio/video that users send — image reception fails without it |
 
-> 提示：`im:message.group_msg` 的「读取群聊全部消息」需要管理员审批；只做「@机器人触发」用 `im:message.group_at_msg` 即可。
+> Note: `im:message.group_msg` (reading all group messages) requires admin approval. For an "@mention triggers response" bot, `im:message.group_at_msg` is sufficient.
 
-## 4. 事件订阅（长连接模式）
+## 4. Event subscription (long-connection mode)
 
-1. 「事件与回调」→「事件配置」→「订阅方式」选择「**使用长连接接收事件**」。
-2. 添加事件：**`im.message.receive_v1`**（接收消息）。
-3. **添加事件：`card.action.trigger`（卡片按钮回调）** —— 交互式菜单（`/menu`、`/dir`、`/chat`、`/settings` 的按钮点选）靠它回传，**不订阅则按钮点了没反应**。
-4. 无需填写「请求地址」——长连接模式由 SDK 主动建连，不需要公网 URL，也不需要 verification token / encrypt key（这两个仅 webhook 模式使用）。
-5. 保存。
+1. **Events & Callbacks** → **Event Configuration** → Subscription Method → choose **"Use long connection to receive events"**.
+2. Add event: **`im.message.receive_v1`** (receive messages).
+3. **Add event: `card.action.trigger` (card button callback)** — the interactive menus (`/menu`, `/dir`, `/chat`, `/settings` button picks) rely on it; **without it, tapping buttons does nothing**.
+4. No need to fill in a **Request URL** — in long-connection mode the SDK connects outbound, so no public URL, verification token, or encrypt key is needed (those are only for webhook mode).
+5. Save.
 
-## 5. 创建版本并发布
+## 5. Create a version and release
 
-1. 「版本管理与发布」→「创建版本」，把上面的权限、机器人、事件订阅一起打包。
-2. 提交 → 由企业管理员审核发布。
-3. 发布后，把 bot 添加到目标群 / 与 bot 单聊即可。
+1. **Version Management & Release** → **Create Version**, packaging the permissions, bot capability, and event subscriptions above.
+2. Submit → reviewed and released by the enterprise admin.
+3. After release, add the bot to the target group / DM it.
 
-## 6. 运行
+## 6. Run
 
 ```yaml
-# profile 的 cordis.patch.yml
+# the profile's cordis.patch.yml
 - id: connect
   name: dsh-connect
 - id: connect-feishu
@@ -53,21 +53,21 @@
   config:
     appId: cli_xxxx
     appSecret: cli_secret_xxxx
-    transport: websocket          # 长连接
-    requireMention: true          # 群聊需 @机器人
-    dmMode: open                  # 单聊开放
+    transport: websocket          # long connection
+    requireMention: true          # groups need @mention
+    dmMode: open                  # DMs open
 ```
 
-启动 `dsh web` 后，日志出现连接成功即可在飞书对话。
+Start `dsh web`; once the log shows a successful connection you can chat in Feishu.
 
-## 7. 常见问题
+## 7. FAQ
 
-- **收不到消息**：确认版本已发布；群聊需 @机器人（或关闭 `requireMention`）；确认订阅了 `im.message.receive_v1`。
-- **点卡片按钮没反应**：确认订阅了 `card.action.trigger` 事件并重新发版。
-- **收不到图片（提示「图片下载失败」）**：
-  - **旧版本 bug**：旧代码用 `im.v1.image.get`（下载图片）下载用户消息里的图片，但飞书文档明确该接口**只能下载机器人自己上传的图片**；下载用户消息图片必须用「获取消息中的资源文件」`im.v1.messageResource.get`（带 message_id + type=image），否则返回 **HTTP 400**。请升级到修复后的版本。
-  - **权限**：`messageResource.get` 需要 `im:message`（或 `im:message:readonly` / `im:message.history:readonly`）任一开通（官方接口文档的「权限要求」一节，没有 `im:resource` 这个权限）。缺权限时飞书返回业务错误码 `99991672`，响应体里的 `error.permission_violations[]` 会直接列出到底缺哪个权限，以它为准。到「权限管理」开通后，再到「版本管理与发布」**创建版本并发布**（企业自建应用需管理员审核通过）。可在 [API 调试台](https://open.feishu.cn/api-explorer) 用「获取消息中的资源文件」接口直接复现验证。
-  - **真实错误码在哪看**：运行 `dsh web` 的进程控制台日志中 `connect-feishu: 图片下载失败 (...)` 一行；聊天提示里也会附带（修复版）。其他错误码（资源过期、file_key 无效等）参见[飞书错误码排查 FAQ](https://open.feishu.cn/document/faq/trouble-shooting/how-to-fix-the-99991672-error) 及接口文档。
-- **3 秒超时重推**：长连接模式下事件需在 3 秒内 ACK；SDK 内部已处理，业务侧保持 `handleInbound` 快速返回（本插件把消息入队即返回，Agent 处理在队列里异步进行，不受此限制）。
-- **多实例**：长连接为集群模式，同一应用多客户端只有随机一个收到消息（本插件按单进程设计）。
-- **webhook 模式**：如需公网回调，把 `transport: webhook` 并配 `verificationToken` / `encryptKey`，同时需要一个本地 HTTP 服务承接 SDK 的 express 适配器（本阶段未内置 HTTP 服务，优先用长连接）。
+- **Messages not received**: confirm the version is released; groups need @mention (or disable `requireMention`); confirm `im.message.receive_v1` is subscribed.
+- **Card buttons don't respond**: confirm `card.action.trigger` is subscribed and release a new version.
+- **Images not received (shows "image download failed")**:
+  - **Old-version bug**: the old code used `im.v1.image.get` (download image) to fetch images from user messages, but the Feishu docs state that endpoint **can only download images uploaded by the bot itself**. Images in user messages must be fetched with "get resource file from message" — `im.v1.messageResource.get` (with message_id + type=image) — otherwise it returns **HTTP 400**. Upgrade to the fixed version.
+  - **Permissions**: `messageResource.get` requires any one of `im:message` (or `im:message:readonly` / `im:message.history:readonly`) — see the "Permission Requirements" section of the official API docs; there is **no `im:resource` permission**. When a permission is missing, Feishu returns business error `99991672`, and the `error.permission_violations[]` array in the response body lists exactly which permission is missing — trust that. Enable the listed permission in **Permission Management**, then **Create Version and Release** in **Version Management & Release** (enterprise self-built apps need admin approval). You can reproduce and verify directly in the [API Debug Console](https://open.feishu.cn/api-explorer) with the "get resource file from message" endpoint.
+  - **Where to see the real error code**: look for the `connect-feishu: 图片下载失败 (...)` line (currently localized; means "image download failed") in the `dsh web` process console log — the chat message also includes the detail (in the fixed version). For other error codes (resource expired, invalid file_key, etc.) see the [Feishu error-code FAQ](https://open.feishu.cn/document/faq/trouble-shooting/how-to-fix-the-99991672-error) and the API docs.
+- **3-second timeout redelivery**: in long-connection mode events must be ACKed within 3 seconds; the SDK handles this internally. Keep `handleInbound` fast on the business side (this plugin enqueues the message and returns immediately; agent processing happens asynchronously in the queue, unaffected).
+- **Multiple instances**: the long connection is cluster-mode — with multiple clients on the same app only one randomly receives each message (this plugin is designed single-process).
+- **Webhook mode**: for public callbacks, set `transport: webhook` with `verificationToken` / `encryptKey`, and you also need a local HTTP service to host the SDK's express adapter (an HTTP service is not built in at this stage — prefer long connection).
