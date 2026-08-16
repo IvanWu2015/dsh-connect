@@ -24,6 +24,7 @@
 | `im:message.p2p_msg:readonly` 或 `im:message.p2p_msg` | 读取单聊消息 |
 | `im:message.group_msg` | 读取群消息（若需「群聊全响应」需管理员审批；仅 @bot 响应也建议开通 group_at） |
 | `im:message:send_as_bot` | 以机器人身份发消息 |
+| **`im:resource`** | **下载用户发送的图片 / 文件 / 音视频（接收图片必需，不开则图片下载失败）** |
 
 > 提示：`im:message.group_msg` 的「读取群聊全部消息」需要管理员审批；只做「@机器人触发」用 `im:message.group_at_msg` 即可。
 

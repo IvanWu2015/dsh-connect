@@ -155,33 +155,41 @@ export class FeishuAdapter implements ChannelAdapter {
     this.handler = handler;
   }
 
-  /** Download attached images to local temp files and return their paths. */
-  private async downloadImages(msg: NormalizedMsg): Promise<string[]> {
+  /** Download attached images to local temp files and return their paths (and any failure). */
+  private async downloadImages(msg: NormalizedMsg): Promise<{ images: string[]; error?: string }> {
     const resources = msg.resources?.filter((r) => r.type === "image") ?? [];
-    if (resources.length === 0) return [];
+    if (resources.length === 0) return { images: [] };
     const dir = join(tmpdir(), "dsh-connect-images");
     try {
       mkdirSync(dir, { recursive: true });
-    } catch {
-      return [];
+    } catch (error) {
+      return { images: [], error: `无法创建临时目录：${String(error)}` };
     }
     const paths: string[] = [];
+    let failed = 0;
     for (const r of resources) {
       try {
         const buf = await this.channel.downloadResource(r.fileKey, "image");
         const file = join(dir, `${msg.messageId}-${r.fileKey.replace(/[^a-zA-Z0-9]/g, "_")}`);
         writeFileSync(file, buf);
         paths.push(file);
-      } catch {
-        // Skip a failed download.
+      } catch (error) {
+        failed += 1;
+        this.logger?.warn?.(`connect-feishu: 图片下载失败 (${r.fileKey}): ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    return paths;
+    if (paths.length === 0 && failed > 0) {
+      return {
+        images: [],
+        error: `有 ${failed} 张图片下载失败，请确认飞书应用已开通「im:resource」（读取图片/文件资源）权限并重新发版`,
+      };
+    }
+    return { images: paths };
   }
 
   async start(): Promise<void> {
     this.channel.on("message", async (msg: NormalizedMsg) => {
-      const images = await this.downloadImages(msg);
+      const dl = await this.downloadImages(msg);
       await this.handler?.({
         channel: "feishu",
         chatKey: msg.chatId,
@@ -189,7 +197,8 @@ export class FeishuAdapter implements ChannelAdapter {
         senderKey: msg.senderId,
         text: msg.content,
         replyRef: msg.messageId,
-        ...(images.length > 0 ? { images } : {}),
+        ...(dl.images.length > 0 ? { images: dl.images } : {}),
+        ...(dl.error === undefined ? {} : { imageError: dl.error }),
       });
     });
 

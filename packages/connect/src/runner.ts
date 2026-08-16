@@ -439,7 +439,12 @@ export class AgentRunner {
   private async buildUserContent(msg: InboundMessage): Promise<ContentBlock[]> {
     const content: ContentBlock[] = [{ type: "text", text: msg.text }];
     const rawImages = msg.images;
-    if (rawImages === undefined || rawImages.length === 0) return content;
+    if (rawImages === undefined || rawImages.length === 0) {
+      if (msg.imageError !== undefined) {
+        content.push({ type: "text", text: `[用户发送了图片，但下载失败：${msg.imageError}]` });
+      }
+      return content;
+    }
 
     // Copy images into the agent's work directory so its tools can access them.
     const paths = await this.stageImages(rawImages);

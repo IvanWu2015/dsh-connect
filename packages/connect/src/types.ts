@@ -22,6 +22,8 @@ export interface InboundMessage {
   readonly replyRef?: string;
   /** Local file paths of images attached to the message (downloaded by the adapter). */
   readonly images?: readonly string[];
+  /** Set when image download failed (e.g. missing im:resource permission). */
+  readonly imageError?: string;
 }
 
 /** Where an outbound message goes. */
