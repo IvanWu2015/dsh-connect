@@ -1,6 +1,6 @@
 {
   "name": "dsh-connect",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Channel-agnostic messaging bridge core for DeepSeek Harness (DSH): binds chat channels to DSH agents, streams replies, and pushes work summaries",
   "type": "module",
   "main": "lib/index.js",
@@ -26,6 +26,15 @@
     "messaging"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IvanWu2015/dsh-connect.git",
+    "directory": "packages/connect"
+  },
+  "homepage": "https://github.com/IvanWu2015/dsh-connect",
+  "bugs": {
+    "url": "https://github.com/IvanWu2015/dsh-connect/issues"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"

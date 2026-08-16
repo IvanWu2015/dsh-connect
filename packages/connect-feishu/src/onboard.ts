@@ -67,7 +67,7 @@ export async function onboardFeishu(
             "im:message:send_as_bot",
             "im:message.p2p_msg:readonly",
             "im:message.group_at_msg:readonly",
-            "im:resource",
+            "im:message.history:readonly",
           ],
         },
         events: { items: { tenant: ["im.message.receive_v1"] } },
