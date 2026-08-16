@@ -45,6 +45,8 @@ export const Config = z.object({
   workDir: z.string(),
   /** Optional workspace directories offered by the `/dir` chooser. */
   workspaces: z.array(z.string()),
+  /** Vision-capable model used to describe images when the main model can't see them. */
+  visionModel: z.object({ provider: z.string(), model: z.string() }),
   /** Sender allowlist; empty = all senders allowed. */
   allowUsers: z.array(z.string()),
   /** Chat allowlist; empty = all chats allowed. */

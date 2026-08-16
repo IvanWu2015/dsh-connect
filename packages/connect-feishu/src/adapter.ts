@@ -5,6 +5,9 @@
  * @module dsh-connect-feishu/adapter
  */
 import { createLarkChannel, LoggerLevel, type CardActionEvent } from "@larksuiteoapi/node-sdk";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   ChannelAdapter,
   ChoiceOption,
@@ -104,6 +107,7 @@ interface NormalizedMsg {
   chatType: "p2p" | "group";
   senderId: string;
   content: string;
+  resources?: { type: string; fileKey: string }[];
 }
 
 interface PendingChoice {
@@ -151,8 +155,33 @@ export class FeishuAdapter implements ChannelAdapter {
     this.handler = handler;
   }
 
+  /** Download attached images to local temp files and return their paths. */
+  private async downloadImages(msg: NormalizedMsg): Promise<string[]> {
+    const resources = msg.resources?.filter((r) => r.type === "image") ?? [];
+    if (resources.length === 0) return [];
+    const dir = join(tmpdir(), "dsh-connect-images");
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      return [];
+    }
+    const paths: string[] = [];
+    for (const r of resources) {
+      try {
+        const buf = await this.channel.downloadResource(r.fileKey, "image");
+        const file = join(dir, `${msg.messageId}-${r.fileKey.replace(/[^a-zA-Z0-9]/g, "_")}`);
+        writeFileSync(file, buf);
+        paths.push(file);
+      } catch {
+        // Skip a failed download.
+      }
+    }
+    return paths;
+  }
+
   async start(): Promise<void> {
     this.channel.on("message", async (msg: NormalizedMsg) => {
+      const images = await this.downloadImages(msg);
       await this.handler?.({
         channel: "feishu",
         chatKey: msg.chatId,
@@ -160,6 +189,7 @@ export class FeishuAdapter implements ChannelAdapter {
         senderKey: msg.senderId,
         text: msg.content,
         replyRef: msg.messageId,
+        ...(images.length > 0 ? { images } : {}),
       });
     });
 

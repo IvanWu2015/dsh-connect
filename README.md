@@ -11,7 +11,8 @@
 - **工作安排**：任务跑完主动推送「结果摘要」卡片；`ctx.connect.notify()` 供 goals/jobs 钩子主动推送进度。
 - **安全**：群聊默认需 @机器人；用户/群白名单；飞书凭据走环境变量或加密配置。
 - **交互式菜单**：`/menu` 层级点选（工作目录 / 对话 / 设置 / 插件 / 压缩等），同一张卡片原地更新，可「返回」「退出」，连续操作。
-- **本地指令**（不消耗模型）：`/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/model` `/new` `/clear` `/stop` `/settings` `/help`。
+- **图片智能处理**：发图片给机器人 → 自动下载；主模型支持视觉就直接看图，否则自动用「视觉模型」子任务描述图片内容再交给主模型，避免主模型不支持图片导致任务卡死。
+- **本地指令**（不消耗模型）：`/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/schedule` `/model` `/new` `/clear` `/stop` `/settings` `/help`。
 - **可扩展**：`dsh-connect`（核心，渠道无关）+ `dsh-connect-feishu`（飞书适配器）分层，新增钉钉只需再加一个适配器包。
 
 ## 仓库结构
@@ -96,6 +97,7 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu
 | `agentPreset` | 未设置=roster 默认 | 每个绑定会话采用的 Agent 预设（如 `standard`） |
 | `workDir` | DSH 第一个工作区 | Agent 工作目录（绝对路径，可显式指定） |
 | `workspaces` | `[]` | `/dir` 交互式选择里列出的工作目录列表 |
+| `visionModel` | 自动探测 | 图片子任务用的视觉模型 `{provider, model}`；未指定时自动找第一个支持图片的模型 |
 | `allowUsers` | `[]` | 发送者白名单（空=全部放行） |
 | `allowChats` | `[]` | 会话白名单（空=全部放行） |
 | `stateDir` | `./.dsh-connect` | 绑定路由 `bindings.json` 存放目录 |

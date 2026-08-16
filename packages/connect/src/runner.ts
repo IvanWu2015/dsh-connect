@@ -6,11 +6,12 @@
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import { SessionId, SessionStore, type Session, type SessionEvent, type TodoItem } from "@deepseek-ai/dsh-session";
 import { AgentRegistry, installModelSelection, type Agent, type AgentHandle, type ModelSelection } from "@deepseek-ai/dsh-agent";
-import { createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, ReasoningEffortId, type ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { ChannelAdapter, ChoiceOption, InboundMessage, OutboundTarget, SummaryCard, TurnOutcome, TurnReason } from "./types.js";
 import { createAsyncQueue } from "./stream.js";
 import { HELP_TEXT, parseCommand, type Command } from "./commands.js";
@@ -23,6 +24,8 @@ export interface ConnectConfig {
   workDir?: string;
   /** Optional workspace directories offered by the `/dir` chooser. */
   workspaces?: string[];
+  /** Vision-capable model used to describe images when the main model can't. */
+  visionModel?: { provider: string; model: string };
   allowUsers?: string[];
   allowChats?: string[];
   stateDir?: string;
@@ -32,6 +35,7 @@ export interface ResolvedConnectConfig {
   agentPreset?: string;
   workDir?: string;
   workspaces: string[];
+  visionModel?: { provider: string; model: string };
   allowUsers: string[];
   allowChats: string[];
   stateDir?: string;
@@ -42,6 +46,7 @@ export function resolveConnectConfig(config: ConnectConfig): ResolvedConnectConf
     agentPreset: config.agentPreset,
     workDir: config.workDir,
     workspaces: config.workspaces ?? [],
+    visionModel: config.visionModel,
     allowUsers: config.allowUsers ?? [],
     allowChats: config.allowChats ?? [],
     stateDir: config.stateDir,
@@ -167,6 +172,15 @@ function foldReminders(events: readonly SessionEvent[]): ReminderView[] {
     }
   }
   return [...active.values()];
+}
+
+/** Sniff an image's media type from its magic bytes (defaults to PNG). */
+function detectImageMediaType(buf: Buffer): "image/png" | "image/jpeg" | "image/webp" | "image/gif" {
+  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.length >= 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  if (buf.length >= 6 && buf.toString("ascii", 0, 3) === "GIF") return "image/gif";
+  return "image/png";
 }
 
 type MenuId = "root" | "workspace" | "chat" | "settings" | "model" | "reasoning" | "notify";
@@ -383,13 +397,12 @@ export class AgentRunner {
 
   private async driveAgent(agent: Agent, msg: InboundMessage): Promise<TurnOutcome> {
     const firstSeq = agent.session.seq;
+    const userMessage = async (): Promise<ReturnType<typeof createUserMessage>> => {
+      const content = await this.buildUserContent(msg);
+      return createUserMessage({ content, source: { kind: "user" } });
+    };
     if (!this.streamEnabled) {
-      agent.followup(
-        createUserMessage({
-          content: [{ type: "text", text: msg.text }],
-          source: { kind: "user" },
-        }),
-      );
+      agent.followup(await userMessage());
       await agent.whenIdle();
       await this.sessions.flush(agent.session);
       const outcome = summarizeTurn(agent.session.events, firstSeq);
@@ -404,12 +417,7 @@ export class AgentRunner {
 
     const streamPromise = this.adapter.streamText(this.target(msg), chunks);
 
-    agent.followup(
-      createUserMessage({
-        content: [{ type: "text", text: msg.text }],
-        source: { kind: "user" },
-      }),
-    );
+    agent.followup(await userMessage());
 
     await agent.whenIdle();
     await this.sessions.flush(agent.session);
@@ -420,6 +428,147 @@ export class AgentRunner {
     const text = outcome.text !== "" ? outcome.text : this.turn.lastText;
     this.turn = undefined;
     return { ...outcome, text };
+  }
+
+  /**
+   * Build the user content for one inbound message. When the message carries
+   * images, either pass them directly to the main model (if it supports
+   * vision) or run a vision sub-task with a capable model and inject its
+   * description as text — so a text-only main model never stalls on images.
+   */
+  private async buildUserContent(msg: InboundMessage): Promise<ContentBlock[]> {
+    const content: ContentBlock[] = [{ type: "text", text: msg.text }];
+    const paths = msg.images;
+    if (paths === undefined || paths.length === 0) return content;
+
+    const mainVision = await this.modelSupportsVision(this.agent?.options.provider, this.agent?.options.model);
+    if (mainVision) {
+      const imageBlocks = await this.imageBlocks(paths);
+      if (imageBlocks.length > 0) {
+        return [{ type: "text", text: msg.text }, ...imageBlocks];
+      }
+      return content;
+    }
+
+    const description = await this.describeImages(paths);
+    if (description !== "") {
+      content.push({ type: "text", text: `[用户发送了图片，图片内容说明：\n${description}\n]` });
+    } else {
+      content.push({ type: "text", text: "[用户发送了图片，但未能分析图片内容]" });
+    }
+    return content;
+  }
+
+  private async imageBlocks(paths: readonly string[]): Promise<ContentBlock[]> {
+    const attachments = this.ctx.get("attachments") as
+      | { saveImage?: (input: { data: Uint8Array; mediaType: string; name?: string }) => Promise<unknown> }
+      | undefined;
+    if (attachments?.saveImage === undefined) return [];
+    const blocks: ContentBlock[] = [];
+    for (const path of paths) {
+      try {
+        const buf = await readFile(path);
+        const mediaType = detectImageMediaType(buf);
+        const ref = await attachments.saveImage({ data: new Uint8Array(buf), mediaType });
+        blocks.push({ type: "image", attachment: ref } as ContentBlock);
+      } catch {
+        // Skip unreadable / unsupported images.
+      }
+    }
+    return blocks;
+  }
+
+  private async describeImages(paths: readonly string[]): Promise<string> {
+    const vision = await this.findVisionModel();
+    if (vision === null) return "";
+    const attachments = this.ctx.get("attachments") as
+      | { saveImage?: (input: { data: Uint8Array; mediaType: string }) => Promise<unknown> }
+      | undefined;
+    const llm = this.ctx.get("llm") as
+      | {
+          stream?: (options: {
+            provider: string;
+            model: string;
+            messages: unknown[];
+            maxTokens?: number;
+            signal?: AbortSignal;
+          }) => AsyncIterable<{ type: string; text?: string }>;
+        }
+      | undefined;
+    if (attachments?.saveImage === undefined || llm?.stream === undefined) return "";
+
+    const refs: unknown[] = [];
+    for (const path of paths) {
+      try {
+        const buf = await readFile(path);
+        refs.push(await attachments.saveImage({ data: new Uint8Array(buf), mediaType: detectImageMediaType(buf) }));
+      } catch {
+        // Skip unreadable images.
+      }
+    }
+    if (refs.length === 0) return "";
+
+    const messages = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "请详细描述这些图片的内容（物体、场景、文字、布局、氛围等），供一个无法直接查看图片的主模型理解。" },
+          ...refs.map((ref) => ({ type: "image", attachment: ref })),
+        ],
+      },
+    ];
+    try {
+      let text = "";
+      const stream = llm.stream({ provider: vision.provider, model: vision.model, messages, maxTokens: 2048 });
+      for await (const chunk of stream) {
+        if (chunk.type === "text-delta" && typeof chunk.text === "string") text += chunk.text;
+      }
+      return text.trim();
+    } catch {
+      return "";
+    }
+  }
+
+  private async modelSupportsVision(provider?: string, model?: string): Promise<boolean> {
+    if (provider === undefined || model === undefined) return false;
+    const llm = this.ctx.get("llm") as
+      | { resolveModelInfo?: (p: string, m: string) => Promise<{ inputModalities?: readonly string[] }> }
+      | undefined;
+    try {
+      const info = await llm?.resolveModelInfo?.(provider, model);
+      return info?.inputModalities?.includes("image") ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  private async findVisionModel(): Promise<{ provider: string; model: string } | null> {
+    if (this.config.visionModel !== undefined) return this.config.visionModel;
+    const llm = this.ctx.get("llm") as
+      | {
+          listProviders?: () => { id: string }[];
+          listModels?: (p: string) => Promise<{ id: string }[]>;
+          resolveModelInfo?: (p: string, m: string) => Promise<{ inputModalities?: readonly string[] }>;
+        }
+      | undefined;
+    if (llm?.listProviders === undefined || llm.resolveModelInfo === undefined) return null;
+    for (const p of llm.listProviders() ?? []) {
+      let models: { id: string }[] = [];
+      try {
+        models = (await llm.listModels?.(p.id)) ?? [];
+      } catch {
+        continue;
+      }
+      for (const m of models) {
+        try {
+          const info = await llm.resolveModelInfo(p.id, m.id);
+          if (info.inputModalities?.includes("image")) return { provider: p.id, model: m.id };
+        } catch {
+          // Try the next model.
+        }
+      }
+    }
+    return null;
   }
 
   private readTodos(): TodoItem[] {

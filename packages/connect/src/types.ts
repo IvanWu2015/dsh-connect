@@ -20,6 +20,8 @@ export interface InboundMessage {
   readonly text: string;
   /** Opaque reference to the triggering message, for replying in-thread. */
   readonly replyRef?: string;
+  /** Local file paths of images attached to the message (downloaded by the adapter). */
+  readonly images?: readonly string[];
 }
 
 /** Where an outbound message goes. */
