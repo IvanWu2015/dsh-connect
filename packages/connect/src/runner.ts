@@ -488,8 +488,10 @@ export class AgentRunner {
     if (mainVision) {
       const imageBlocks = await this.imageBlocks(paths);
       if (imageBlocks.length > 0) {
+        this.log(`connect: main model supports vision — passing ${imageBlocks.length} image block(s) directly`);
         return [{ type: "text", text: msg.text }, ...imageBlocks];
       }
+      this.log("connect: main model supports vision but image blocks failed to attach — falling back to paths");
       return content;
     }
 
@@ -541,7 +543,10 @@ export class AgentRunner {
 
   private async describeImages(paths: readonly string[]): Promise<string> {
     const vision = await this.findVisionModel();
-    if (vision === null) return "";
+    if (vision === null) {
+      this.log("connect: describeImages skipped — no vision model available");
+      return "";
+    }
     const attachments = this.ctx.get("attachments") as
       | { saveImage?: (input: { data: Uint8Array; mediaType: string }) => Promise<unknown> }
       | undefined;
@@ -556,18 +561,26 @@ export class AgentRunner {
           }) => AsyncIterable<{ type: string; text?: string }>;
         }
       | undefined;
-    if (attachments?.saveImage === undefined || llm?.stream === undefined) return "";
+    if (attachments?.saveImage === undefined || llm?.stream === undefined) {
+      this.log(`connect: describeImages skipped — attachments.saveImage=${attachments?.saveImage !== undefined}, llm.stream=${llm?.stream !== undefined}`);
+      return "";
+    }
 
     const refs: unknown[] = [];
     for (const path of paths) {
       try {
         const buf = await readFile(path);
         refs.push(await attachments.saveImage({ data: new Uint8Array(buf), mediaType: detectImageMediaType(buf) }));
-      } catch {
-        // Skip unreadable images.
+      } catch (error) {
+        this.log(`connect: saveImage failed for ${path}: ${String(error)}`);
       }
     }
-    if (refs.length === 0) return "";
+    if (refs.length === 0) {
+      this.log("connect: describeImages skipped — no image could be attached");
+      return "";
+    }
+
+    this.log(`connect: describing ${refs.length} image(s) with ${vision.provider}/${vision.model}`);
 
     const messages = [
       {
@@ -584,8 +597,10 @@ export class AgentRunner {
       for await (const chunk of stream) {
         if (chunk.type === "text-delta" && typeof chunk.text === "string") text += chunk.text;
       }
+      this.log(`connect: vision description produced ${text.length} char(s)`);
       return text.trim();
-    } catch {
+    } catch (error) {
+      this.log(`connect: vision description call failed: ${error instanceof Error ? error.message : String(error)}`);
       return "";
     }
   }
@@ -597,14 +612,20 @@ export class AgentRunner {
       | undefined;
     try {
       const info = await llm?.resolveModelInfo?.(provider, model);
-      return info?.inputModalities?.includes("image") ?? false;
-    } catch {
+      const supports = info?.inputModalities?.includes("image") ?? false;
+      this.log(`connect: main model vision check ${provider}/${model} -> ${supports} (inputModalities=${JSON.stringify(info?.inputModalities)})`);
+      return supports;
+    } catch (error) {
+      this.log(`connect: main model vision check ${provider}/${model} failed: ${String(error)}`);
       return false;
     }
   }
 
   private async findVisionModel(): Promise<{ provider: string; model: string } | null> {
-    if (this.config.visionModel !== undefined) return this.config.visionModel;
+    if (this.config.visionModel !== undefined) {
+      this.log(`connect: vision model configured: ${this.config.visionModel.provider}/${this.config.visionModel.model}`);
+      return this.config.visionModel;
+    }
     const llm = this.ctx.get("llm") as
       | {
           listProviders?: () => { id: string }[];
@@ -612,24 +633,40 @@ export class AgentRunner {
           resolveModelInfo?: (p: string, m: string) => Promise<{ inputModalities?: readonly string[] }>;
         }
       | undefined;
-    if (llm?.listProviders === undefined || llm.resolveModelInfo === undefined) return null;
-    for (const p of llm.listProviders() ?? []) {
+    if (llm?.listProviders === undefined || llm.resolveModelInfo === undefined) {
+      this.log("connect: vision auto-detection unavailable — llm service lacks listProviders/resolveModelInfo");
+      return null;
+    }
+    const providers = llm.listProviders() ?? [];
+    this.log(`connect: vision auto-detection scanning ${providers.length} provider(s): ${providers.map((p) => p.id).join(", ") || "(none)"}`);
+    for (const p of providers) {
       let models: { id: string }[] = [];
       try {
         models = (await llm.listModels?.(p.id)) ?? [];
-      } catch {
+      } catch (error) {
+        this.log(`connect: listModels(${p.id}) failed: ${String(error)}`);
         continue;
       }
+      this.log(`connect: provider ${p.id} advertises ${models.length} model(s)`);
       for (const m of models) {
         try {
           const info = await llm.resolveModelInfo(p.id, m.id);
-          if (info.inputModalities?.includes("image")) return { provider: p.id, model: m.id };
-        } catch {
-          // Try the next model.
+          this.log(`connect:   ${p.id}/${m.id} inputModalities=${JSON.stringify(info.inputModalities)}`);
+          if (info.inputModalities?.includes("image")) {
+            this.log(`connect: vision model selected: ${p.id}/${m.id}`);
+            return { provider: p.id, model: m.id };
+          }
+        } catch (error) {
+          this.log(`connect:   resolveModelInfo(${p.id}/${m.id}) failed: ${String(error)}`);
         }
       }
     }
+    this.log("connect: no image-capable model found via auto-detection");
     return null;
+  }
+
+  private log(message: string): void {
+    (this.ctx.get("logger") as { info?: (...args: unknown[]) => void } | undefined)?.info?.(message);
   }
 
   private readTodos(): TodoItem[] {
