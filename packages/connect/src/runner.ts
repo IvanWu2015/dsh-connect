@@ -5,17 +5,17 @@
  * @module dsh-connect/runner
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { copyFile, readFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import { SessionId, SessionStore, type Session, type SessionEvent, type TodoItem } from "@deepseek-ai/dsh-session";
-import { AgentRegistry, installModelSelection, type Agent, type AgentHandle, type ModelSelection } from "@deepseek-ai/dsh-agent";
+import { AgentRegistry, type Agent, type AgentHandle, type ModelSelection } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, ReasoningEffortId, type ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { ChannelAdapter, ChoiceOption, InboundMessage, OutboundTarget, SummaryCard, TurnOutcome, TurnReason } from "./types.js";
 import { createAsyncQueue } from "./stream.js";
 import { helpText, parseCommand, type Command } from "./commands.js";
-import type { BindingStore, ChatSessionRecord } from "./binding.js";
+import type { BindingStore, ChatBinding, ChatSessionRecord } from "./binding.js";
 import { messages, type Language, type Messages } from "./i18n.js";
 
 export interface ConnectConfig {
@@ -32,6 +32,12 @@ export interface ConnectConfig {
   allowUsers?: string[];
   allowChats?: string[];
   stateDir?: string;
+  /** Automatically create Web mirror for new sessions (default: true). */
+  autoMirror?: boolean;
+  /** Liveness heartbeat interval ms for the streaming card; 0 disables it (default: 60000). */
+  streamHeartbeatMs?: number;
+  /** Default notification level for streaming replies (default: `important`). */
+  notifyLevel?: NotifyLevel;
 }
 
 export interface ResolvedConnectConfig {
@@ -43,6 +49,9 @@ export interface ResolvedConnectConfig {
   allowUsers: string[];
   allowChats: string[];
   stateDir?: string;
+  autoMirror: boolean;
+  streamHeartbeatMs: number;
+  notifyLevel: NotifyLevel;
 }
 
 export function resolveConnectConfig(config: ConnectConfig): ResolvedConnectConfig {
@@ -55,6 +64,9 @@ export function resolveConnectConfig(config: ConnectConfig): ResolvedConnectConf
     allowUsers: config.allowUsers ?? [],
     allowChats: config.allowChats ?? [],
     stateDir: config.stateDir,
+    autoMirror: config.autoMirror ?? true, // Enabled by default
+    streamHeartbeatMs: config.streamHeartbeatMs ?? 60_000,
+    notifyLevel: config.notifyLevel ?? "important",
   };
 }
 
@@ -63,6 +75,178 @@ interface ActiveTurn {
   chunks: ReturnType<typeof createAsyncQueue<string>>;
   lastText: string;
   reasoning: boolean;
+  /** Whether the thinking hint has been emitted for this turn. */
+  hintPushed: boolean;
+  /** Block index of the last content pushed into the chunk queue. */
+  lastIndex: number | undefined;
+  /** Whether any content has been pushed into the chunk queue. */
+  pushedAny: boolean;
+  /** Turn wall-clock start (for the liveness heartbeat). */
+  startedAt: number;
+  /** Last time a chunk/status line was pushed (for the liveness heartbeat). */
+  lastPushAt: number;
+}
+
+/** Per-turn streaming assembly state mutated by {@link applyStreamChunk}. */
+export interface StreamState {
+  chunks: { push(text: string): void };
+  lastText: string;
+  reasoning: boolean;
+  hintPushed: boolean;
+  lastIndex: number | undefined;
+  pushedAny: boolean;
+  lastPushAt: number;
+}
+
+/**
+ * How much of the agent's live progress the streaming card shows.
+ * - `full` — everything: reasoning text, tool calls, heartbeats, answer.
+ * - `important` — key milestones only: thinking hint, tool calls, heartbeats, answer (no reasoning text).
+ * - `result` — only the final answer.
+ */
+export type NotifyLevel = "full" | "important" | "result";
+
+/** One assistant chunk event of interest to the streaming bridge. */
+export interface StreamChunkLike {
+  type: string;
+  index?: number;
+  text?: string;
+  block?: { type?: string; text?: string };
+}
+
+/**
+ * Assemble one `assistant/chunk` event into the streaming queue with visible
+ * structure. DSH streams one block per LLM content block and block boundaries
+ * carry no newline of their own, so without separators every block (and the
+ * reasoning phase vs the final answer) would be glued together in the chat
+ * card. This inserts a blank line between blocks and before the answer, keeps
+ * the thinking hint once per turn, expands reasoning soft breaks (Feishu's
+ * streaming card collapses single `\n`), and falls back to whole-block text
+ * for blocks that arrived only via `block-end`. Every push refreshes
+ * `lastPushAt` so the liveness heartbeat knows the card is still moving.
+ * @param state - the turn's mutable assembly state.
+ * @param thinkingHint - localized hint text pushed at the first reasoning delta.
+ * @param chunk - the assistant chunk event's `chunk` payload.
+ */
+/** Every line-break run becomes a paragraph break (Feishu's streaming card collapses single `\n`). */
+function expandLineBreaks(text: string): string {
+  return text.replace(/\r\n?/g, "\n").replace(/\n+/g, "\n\n");
+}
+
+export function applyStreamChunk(state: StreamState, thinkingHint: string, chunk: StreamChunkLike, level: NotifyLevel = "full"): void {
+  if (chunk.type === "text-delta" || chunk.type === "reasoning-delta") {
+    const isReasoning = chunk.type === "reasoning-delta";
+    // Reasoning content is only streamed in `full` mode; `important` shows
+    // just the thinking hint and `result` shows nothing until the answer.
+    if (isReasoning && level !== "full") {
+      if (level === "important" && !state.hintPushed) {
+        state.hintPushed = true;
+        state.chunks.push(thinkingHint);
+        state.pushedAny = true;
+        state.lastPushAt = Date.now();
+      }
+      return;
+    }
+    if (state.pushedAny) {
+      const newBlock = chunk.index !== undefined && state.lastIndex !== undefined && chunk.index !== state.lastIndex;
+      const reasoningToAnswer = !isReasoning && state.reasoning;
+      if (newBlock || reasoningToAnswer) state.chunks.push("\n\n");
+    }
+    if (isReasoning) {
+      if (!state.hintPushed) {
+        state.hintPushed = true;
+        state.chunks.push(thinkingHint);
+      }
+      const text = chunk.text ?? "";
+      if (text !== "") {
+        state.chunks.push(expandLineBreaks(text));
+      }
+      state.reasoning = true;
+    } else {
+      const text = chunk.text ?? "";
+      state.chunks.push(text);
+      state.lastText += text;
+      state.reasoning = false;
+    }
+    state.lastIndex = chunk.index;
+    state.pushedAny = true;
+    state.lastPushAt = Date.now();
+    return;
+  }
+  if (chunk.type === "block-end") {
+    // Short blocks may arrive whole here with no preceding delta chunks.
+    // Fall back to the block text when this index never streamed deltas, so
+    // no content is silently dropped (guarded by index against duplication;
+    // each step restarts block indices, and a tool call resets `lastIndex`,
+    // so a same-index block-end after streamed deltas is reliably detected).
+    const index = chunk.index;
+    const blockType = chunk.block?.type;
+    const text = chunk.block?.text;
+    if (blockType === "reasoning" && level !== "full") {
+      // Reasoning block text is never streamed outside `full` mode.
+      if (level === "important" && !state.hintPushed) {
+        state.hintPushed = true;
+        state.chunks.push(thinkingHint);
+        state.pushedAny = true;
+        state.lastPushAt = Date.now();
+      }
+      return;
+    }
+    if (typeof text === "string" && text.length > 0 && (index === undefined || index !== state.lastIndex)) {
+      if (state.pushedAny) state.chunks.push("\n\n");
+      if (blockType === "reasoning" && !state.hintPushed) {
+        state.hintPushed = true;
+        state.chunks.push(thinkingHint);
+      }
+      state.chunks.push(blockType === "reasoning" ? expandLineBreaks(text) : text);
+      if (blockType !== "reasoning") state.lastText += text;
+      state.lastIndex = index;
+      state.pushedAny = true;
+      state.reasoning = blockType === "reasoning";
+      state.lastPushAt = Date.now();
+    }
+  }
+}
+
+/**
+ * Push a localized tool-call status line into the streaming queue so long
+ * tool-execution stretches stay visibly alive (the Web GUI shows tool calls;
+ * the chat card should too). Ends the reasoning phase and drops the block
+ * index so the next content block gets its own separator instead of stacking
+ * one on top of the tool line's own blank lines.
+ * @param state - the turn's mutable assembly state.
+ * @param label - the localized status line, e.g. "🔧 调用工具 `pwsh` — …".
+ */
+export function applyToolCall(state: StreamState, label: string): void {
+  state.chunks.push(`\n\n${label}\n\n`);
+  state.reasoning = false;
+  state.lastIndex = undefined;
+  state.pushedAny = true;
+  state.lastPushAt = Date.now();
+}
+
+/** Pull a short human summary out of a tool call's `arguments` JSON (whitespace folded to one line). */
+export function toolCallSummary(argumentsJson: unknown): string | undefined {
+  if (typeof argumentsJson !== "string") return undefined;
+  const fold = (value: string): string => value.replace(/\s+/g, " ").trim();
+  try {
+    const parsed = JSON.parse(argumentsJson);
+    const description = parsed?.description;
+    if (typeof description === "string" && description !== "") {
+      const folded = fold(description);
+      return folded.length > 60 ? `${folded.slice(0, 60)}…` : folded;
+    }
+    for (const key of ["file_path", "path"]) {
+      const value = parsed?.[key];
+      if (typeof value === "string" && value !== "") {
+        const folded = fold(value);
+        return folded.length > 60 ? `${folded.slice(0, 60)}…` : folded;
+      }
+    }
+  } catch {
+    // Not JSON — no summary.
+  }
+  return undefined;
 }
 
 function mapReason(kind: string): TurnReason {
@@ -85,14 +269,38 @@ export function summarizeTurn(events: readonly SessionEvent[], firstSeq: number)
   let reason: TurnReason = "unknown";
   let code: string | undefined;
   let message: string | undefined;
+  let model: string | undefined;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let contextSize: number | undefined;
+  let contextWindow: number | undefined;
+  let steps = 0;
+  let turnStartTime: number | undefined;
+  let turnEndTime: number | undefined;
   for (const event of events) {
     if (event.seq < firstSeq) continue;
     if (event.type === "turn/start") {
       started = true;
+      turnStartTime = typeof event.time === "number" ? event.time : undefined;
       continue;
     }
     if (!started) continue;
+    if (event.type === "step/start") steps += 1;
+    if (event.type === "request/context") {
+      const provider = typeof event.data.provider === "string" ? event.data.provider : undefined;
+      const m = typeof event.data.model === "string" ? event.data.model : undefined;
+      if (provider !== undefined && m !== undefined) model = `${provider}/${m}`;
+      if (typeof event.data.contextWindow === "number") contextWindow = event.data.contextWindow;
+    }
     if (event.type === "assistant/message") {
+      const usage = event.data.usage;
+      if (usage !== undefined) {
+        inputTokens += typeof usage.inputTokens === "number" ? usage.inputTokens : 0;
+        outputTokens += typeof usage.outputTokens === "number" ? usage.outputTokens : 0;
+        cacheReadTokens += typeof usage.cacheReadTokens === "number" ? usage.cacheReadTokens : 0;
+        if (typeof usage.inputTokens === "number") contextSize = usage.inputTokens;
+      }
       const joined = event.data.message.content
         .filter((block) => block.type === "text")
         .map((block) => block.text)
@@ -100,6 +308,7 @@ export function summarizeTurn(events: readonly SessionEvent[], firstSeq: number)
       if (joined !== "") text = joined;
     }
     if (event.type === "turn/end") {
+      turnEndTime = typeof event.time === "number" ? event.time : undefined;
       reason = mapReason(event.data.reason.kind);
       if (event.data.reason.kind === "error") {
         code = event.data.reason.error.code;
@@ -107,11 +316,32 @@ export function summarizeTurn(events: readonly SessionEvent[], firstSeq: number)
       }
     }
   }
-  return { reason, text, ...(code === undefined ? {} : { code }), ...(message === undefined ? {} : { message }) };
+  const elapsedMs = turnStartTime !== undefined && turnEndTime !== undefined && turnEndTime >= turnStartTime
+    ? turnEndTime - turnStartTime
+    : undefined;
+  return {
+    reason,
+    text,
+    ...(code === undefined ? {} : { code }),
+    ...(message === undefined ? {} : { message }),
+    ...(model === undefined ? {} : { model }),
+    ...(inputTokens > 0 ? { inputTokens } : {}),
+    ...(outputTokens > 0 ? { outputTokens } : {}),
+    ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
+    ...(contextSize === undefined ? {} : { contextSize }),
+    ...(contextWindow === undefined ? {} : { contextWindow }),
+    ...(steps > 0 ? { steps } : {}),
+    ...(elapsedMs === undefined ? {} : { elapsedMs }),
+  };
 }
 
 function truncate(text: string, max = 500): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+/** Thousands-separated token count for display. */
+function fmtTokens(n: number): string {
+  return n.toLocaleString("en-US");
 }
 
 function textOf(message: { content: readonly { type?: string; text?: string }[] } | undefined): string {
@@ -178,7 +408,7 @@ function detectImageMediaType(buf: Buffer): "image/png" | "image/jpeg" | "image/
   return "image/png";
 }
 
-type MenuId = "root" | "workspace" | "chat" | "settings" | "model" | "reasoning" | "notify";
+type MenuId = "root" | "workspace" | "chat" | "settings" | "model" | "reasoning" | "notify" | "language";
 
 interface MenuItem {
   id: string;
@@ -198,7 +428,9 @@ export class AgentRunner {
   private workDir: string;
   private streamEnabled = true;
   private summaryEnabled = true;
-  private readonly t: Messages;
+  private language: Language;
+  private notifyLevel: NotifyLevel;
+  private t: Messages;
 
   constructor(
     private readonly ctx: Context,
@@ -208,9 +440,14 @@ export class AgentRunner {
     private readonly chatType: "p2p" | "group",
     private readonly adapter: ChannelAdapter,
     private readonly bindings: BindingStore,
+    private readonly adapters?: Map<string, ChannelAdapter>,
   ) {
     this.workDir = config.workDir ?? this.resolveDefaultWorkDir();
-    this.t = messages(config.language);
+    // A per-chat language override (set via the settings menu) wins over config.
+    const stored = this.bindings.get(channel, chatKey);
+    this.language = stored?.language ?? config.language ?? "zh";
+    this.notifyLevel = stored?.notifyLevel ?? config.notifyLevel;
+    this.t = messages(this.language);
   }
 
   private menuTitle(menuId: MenuId): string {
@@ -229,15 +466,17 @@ export class AgentRunner {
         return this.t.menuReasoning;
       case "notify":
         return this.t.menuNotify;
+      case "language":
+        return this.t.menuSettingsLanguage;
     }
   }
 
-  private rootMenuSections(): readonly { title: string; ids: readonly string[] }[] {
+  private rootMenuSections(): readonly { title: string; ids: readonly string[]; columnsPerRow?: number }[] {
     return [
-      { title: this.t.rootSectionWorkspace, ids: ["workspace"] },
-      { title: this.t.rootSectionChat, ids: ["chat", "history"] },
-      { title: this.t.rootSectionTask, ids: ["task", "goals", "schedule"] },
-      { title: this.t.rootSectionSystem, ids: ["status", "plugins", "compact", "settings"] },
+      { title: this.t.rootSectionWorkspace, ids: ["workspace"], columnsPerRow: 1 },
+      { title: this.t.rootSectionChat, ids: ["chat", "history"], columnsPerRow: 1 },
+      { title: this.t.rootSectionTask, ids: ["task", "goals", "schedule"], columnsPerRow: 2 },
+      { title: this.t.rootSectionSystem, ids: ["status", "plugins", "compact", "settings"], columnsPerRow: 2 },
     ];
   }
 
@@ -286,14 +525,19 @@ export class AgentRunner {
     if (this.agent === undefined || session.id !== this.agent.id) return;
     if (event.seq < turn.firstSeq) return;
     if (event.type === "assistant/chunk") {
-      const chunk = event.data.chunk;
-      if (chunk.type === "text-delta") {
-        turn.chunks.push(chunk.text);
-        turn.lastText += chunk.text;
-      } else if (chunk.type === "reasoning-delta" && !turn.reasoning) {
-        turn.reasoning = true;
-        turn.chunks.push(this.t.thinkingHint);
-      }
+      applyStreamChunk(turn, this.t.thinkingHint, event.data.chunk as unknown as StreamChunkLike, this.notifyLevel);
+      return;
+    }
+    if (event.type === "tool/call") {
+      const name = event.data.name as string | undefined;
+      if (typeof name !== "string" || name === "") return;
+      // `result` mode shows nothing until the final answer; `important` shows
+      // the tool name only, `full` also carries the one-line summary.
+      if (this.notifyLevel === "result") return;
+      const label = this.notifyLevel === "full"
+        ? this.t.toolCalling(name, toolCallSummary(event.data.arguments))
+        : this.t.toolCalling(name, undefined);
+      applyToolCall(turn, label);
     }
   }
 
@@ -320,14 +564,49 @@ export class AgentRunner {
   }
 
   private async runTurn(msg: InboundMessage): Promise<void> {
+    // Check session lock - only allow if this channel owns the lock or no lock exists
+    const currentChannel: "feishu" | "web" = this.channel === "feishu" ? "feishu" : "web";
+    
+    // Check timeout before attempting to acquire
+    this.checkAndReleaseTimeoutLock();
+    
+    if (!this.acquireLock(currentChannel)) {
+      const binding = this.bindings.get(this.channel, this.chatKey);
+      const lockedBy = binding?.lockOwner ?? "unknown";
+      
+      // If from Web channel, queue the message instead of rejecting
+      if (currentChannel === "web") {
+        const position = this.queueMessage(msg);
+        await this.adapter
+          .sendText(this.target(msg), this.t.messageQueued(position))
+          .catch(() => undefined);
+      } else {
+        // Feishu gets immediate feedback
+        await this.adapter
+          .sendText(this.target(msg), this.t.sessionLockedBy(lockedBy))
+          .catch(() => undefined);
+      }
+      return;
+    }
+
     try {
       const agent = await this.ensureAgent(msg);
       const outcome = await this.driveAgent(agent, msg);
       this.touchBinding(msg);
+      
+      // Task-end stats: model, tokens, elapsed, and a compaction suggestion.
+      await this.sendTurnStats(msg, outcome);
+
+      // Release lock after task completion
+      this.releaseLock();
+      
       if (outcome.reason !== "completed" && this.summaryEnabled) {
         await this.sendSummary(msg, outcome);
       }
     } catch (error) {
+      // Release lock even on error
+      this.releaseLock();
+      
       const detail = error instanceof Error ? error.message : String(error);
       await this.adapter
         .sendText(this.target(msg), this.t.processingFailed(truncate(detail)))
@@ -342,6 +621,10 @@ export class AgentRunner {
     const live = binding === undefined ? undefined : this.agents.get(SessionId(binding.sessionId));
     if (live !== undefined) {
       this.agent = live;
+      // The live agent may have been recreated outside the runner (e.g. by
+      // the Web GUI's api-proxy) since we last saw it — make sure we are
+      // listening to the current instance so streaming can't silently die.
+      this.watchAgent(live);
       return live;
     }
 
@@ -358,6 +641,13 @@ export class AgentRunner {
         this.handle = handle;
         this.agent = handle.agent;
         this.watchAgent(handle.agent);
+        
+        // Ensure Web mirror exists for resumed sessions
+        this.autoCreateWebMirror(binding.sessionId, msg.senderKey);
+        
+        // Ensure the session shows up under its workspace in the Web GUI
+        void this.attachToWorkspace(binding.sessionId);
+        
         return handle.agent;
       } catch (error) {
         (this.ctx.get("logger") as { warn?: (...args: unknown[]) => void } | undefined)?.warn?.(`connect: resume of ${binding.sessionId} failed, creating fresh session: ${String(error)}`);
@@ -378,7 +668,32 @@ export class AgentRunner {
     this.agent = handle.agent;
     this.watchAgent(handle.agent);
     this.recordSession(String(sessionId), truncate(msg.text, 40), msg.senderKey);
+    
+    // Auto-create Web mirror for new sessions (if enabled)
+    this.autoCreateWebMirror(String(sessionId), msg.senderKey);
+    
+    // Ensure the new session shows up under its workspace in the Web GUI
+    void this.attachToWorkspace(String(sessionId));
+    
     return handle.agent;
+  }
+
+  /**
+   * Attach a session to the DSH workspace matching its work directory so the
+   * Web GUI groups it under the same workspace the Feishu side uses.
+   * Best-effort: without a workspace registry this is a no-op.
+   */
+  private async attachToWorkspace(sessionId: string): Promise<void> {
+    const registry = this.ctx.get("workspaceRegistry") as
+      | { resolveByPath?: (path: string) => Promise<{ attachSession?(id: string): Promise<void> } | undefined> }
+      | undefined;
+    if (registry?.resolveByPath === undefined) return;
+    try {
+      const ws = await registry.resolveByPath(this.workDir);
+      await ws?.attachSession?.(sessionId as never);
+    } catch (error) {
+      this.log(`connect: attachToWorkspace(${sessionId}) skipped: ${String(error)}`);
+    }
   }
 
   // Service lookups must go through ctx.get(): property access (ctx.agents) is
@@ -396,7 +711,22 @@ export class AgentRunner {
     return service?.currentSelection?.() ?? { provider: "", model: "" };
   }
 
-  private async composeSetup(selection: ModelSelection): Promise<{
+  /**
+   * Compose the preset-only agent setup.
+   *
+   * Deliberately does NOT install a static model selection on the agent. The
+   * DSH Web GUI switches models through the host api-proxy's session-scoped
+   * selection (`selectionFor` + `installModelSelection`), which is installed
+   * lazily when a session's model directory is loaded and wins the
+   * `agent/request` waterfall. A static selection captured here at create /
+   * resume time would take precedence over that and silently pin every request
+   * to the default model captured at composition — so a model the user picks
+   * in the Web GUI would appear to succeed (the seat and `session.models`
+   * report it) while the actual LLM requests keep using the old default.
+   * The default model still seeds the agent through `agentOptions` in
+   * `ensureAgent`, which `buildRequest` uses as its fallback route.
+   */
+  private async composeSetup(_selection: ModelSelection): Promise<{
     agentPreset?: string;
     setup: (agentCtx: Context) => void | Promise<void>;
   }> {
@@ -406,9 +736,7 @@ export class AgentRunner {
 
     if (presets === undefined) {
       return {
-        setup: (agentCtx) => {
-          installModelSelection(agentCtx, { current: selection, assembled: undefined });
-        },
+        setup: () => undefined,
       };
     }
 
@@ -416,14 +744,21 @@ export class AgentRunner {
     return {
       agentPreset: resolved.id,
       setup: async (agentCtx) => {
-        installModelSelection(agentCtx, { current: selection, assembled: undefined });
         await presets.mount(agentCtx, resolved.id);
       },
     };
   }
 
+  /** Agents this runner has already attached a `session/event` listener to. */
+  private readonly watchedAgents = new WeakSet<Agent>();
+
   private watchAgent(agent: Agent): void {
-    // Scope-filtered: receives only this agent's session events.
+    // Scope-filtered: receives only this agent's session events. Deduplicated
+    // by object so a re-resumed agent (possibly recreated outside the runner,
+    // e.g. by the Web GUI's api-proxy) is re-watched without double-firing on
+    // a still-live agent.
+    if (this.watchedAgents.has(agent)) return;
+    this.watchedAgents.add(agent);
     agent.ctx.on("session/event", (session, event) => {
       this.onSessionEvent(session, event);
     });
@@ -447,16 +782,40 @@ export class AgentRunner {
     }
 
     const chunks = createAsyncQueue<string>();
-    this.turn = { firstSeq, chunks, lastText: "", reasoning: false };
+    const now = Date.now();
+    this.turn = {
+      firstSeq, chunks, lastText: "",
+      reasoning: false, hintPushed: false, lastIndex: undefined, pushedAny: false,
+      startedAt: now, lastPushAt: now,
+    };
 
-    const streamPromise = this.adapter.streamText(this.target(msg), chunks);
+    // Liveness heartbeat: while the agent is working, keep the streaming card
+    // visibly alive even through long reasoning or tool-execution stretches
+    // (a card that sits on "Thinking…" for minutes looks frozen). Configurable
+    // via `streamHeartbeatMs`; 0 disables it.
+    const heartbeatMs = this.config.streamHeartbeatMs;
+    const heartbeat = heartbeatMs > 0 && this.notifyLevel !== "result"
+      ? setInterval(() => {
+          const turn = this.turn;
+          if (turn === undefined) return;
+          const elapsed = Date.now() - turn.lastPushAt;
+          if (elapsed < heartbeatMs) return;
+          turn.lastPushAt = Date.now();
+          const minutes = Math.max(1, Math.round((turn.lastPushAt - turn.startedAt) / 60_000));
+          turn.chunks.push(`\n\n${this.t.processingHeartbeat(minutes)}\n\n`);
+        }, heartbeatMs)
+      : undefined;
 
-    agent.followup(await userMessage());
-
-    await agent.whenIdle();
-    await this.sessions.flush(agent.session);
-    chunks.end();
-    await streamPromise;
+    try {
+      const streamPromise = this.adapter.streamText(this.target(msg), chunks);
+      agent.followup(await userMessage());
+      await agent.whenIdle();
+      await this.sessions.flush(agent.session);
+      chunks.end();
+      await streamPromise;
+    } finally {
+      if (heartbeat !== undefined) clearInterval(heartbeat);
+    }
 
     const outcome = summarizeTurn(agent.session.events, firstSeq);
     const text = outcome.text !== "" ? outcome.text : this.turn.lastText;
@@ -498,12 +857,47 @@ export class AgentRunner {
     const description = await this.describeImages(paths);
     const note = this.t.imagesStaged(locationText, description);
     content.push({ type: "text", text: note });
+
+    // Non-image attachments (files / audio / video): stage them into the work
+    // directory and hand the agent the paths — it can open them with its tools.
+    const rawFiles = msg.files;
+    if (rawFiles !== undefined && rawFiles.length > 0) {
+      const stagedFiles = await this.stageFiles(rawFiles);
+      content.push({
+        type: "text",
+        text: this.t.filesStaged(stagedFiles.length, stagedFiles.map((p) => `- ${p}`).join("\n")),
+      });
+    }
+    if (msg.fileError !== undefined) {
+      content.push({ type: "text", text: this.t.fileDownloadFailed(msg.fileError) });
+    }
     return content;
   }
 
   /** Copy images into `<workDir>/.dsh-connect-images` so the agent's tools can reach them. */
   private async stageImages(paths: readonly string[]): Promise<string[]> {
     const dir = join(this.workDir, ".dsh-connect-images");
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      return [...paths];
+    }
+    const staged: string[] = [];
+    for (const p of paths) {
+      const target = join(dir, basename(p));
+      try {
+        await copyFile(p, target);
+        staged.push(target);
+      } catch {
+        staged.push(p);
+      }
+    }
+    return staged;
+  }
+
+  /** Copy non-image attachments into `<workDir>/.dsh-connect-files` so the agent's tools can reach them. */
+  private async stageFiles(paths: readonly string[]): Promise<string[]> {
+    const dir = join(this.workDir, ".dsh-connect-files");
     try {
       mkdirSync(dir, { recursive: true });
     } catch {
@@ -694,6 +1088,33 @@ export class AgentRunner {
     await this.adapter.sendCard(this.target(msg), card).catch(() => undefined);
   }
 
+  /** Context-window usage at or above this percentage suggests compaction. */
+  private static readonly COMPACT_THRESHOLD_PCT = 75;
+
+  /**
+   * Send a compact task-end card: the model used, input/output tokens, elapsed
+   * time, and whether compaction is advisable given context-window usage.
+   */
+  private async sendTurnStats(msg: InboundMessage, outcome: TurnOutcome): Promise<void> {
+    if (outcome.model === undefined && outcome.inputTokens === undefined && outcome.outputTokens === undefined) return;
+    const lines: string[] = [
+      this.t.taskStatsHeader(outcome.elapsedMs === undefined ? "—" : this.t.taskDuration(outcome.elapsedMs)),
+    ];
+    if (outcome.model !== undefined) lines.push(this.t.taskStatsModel(outcome.model));
+    if (outcome.inputTokens !== undefined) {
+      lines.push(this.t.taskStatsTokensIn(fmtTokens(outcome.inputTokens), outcome.cacheReadTokens !== undefined ? fmtTokens(outcome.cacheReadTokens) : undefined));
+    }
+    if (outcome.outputTokens !== undefined) lines.push(this.t.taskStatsTokensOut(fmtTokens(outcome.outputTokens)));
+    if (outcome.steps !== undefined) lines.push(this.t.taskStatsSteps(outcome.steps));
+    if (outcome.contextSize !== undefined && outcome.contextWindow !== undefined && outcome.contextWindow > 0) {
+      const pct = Math.round((outcome.contextSize / outcome.contextWindow) * 100);
+      lines.push(this.t.taskStatsContext(`${pct}`, fmtTokens(outcome.contextWindow)));
+      lines.push(pct >= AgentRunner.COMPACT_THRESHOLD_PCT ? this.t.taskStatsCompactSuggest : this.t.taskStatsCompactOk);
+    }
+    const card: SummaryCard = { markdown: lines.join("\n") };
+    await this.adapter.sendCard(this.target(msg), card).catch(() => undefined);
+  }
+
   private async handleCommand(command: Command, msg: InboundMessage): Promise<void> {
     const target = this.target(msg);
     switch (command.kind) {
@@ -788,8 +1209,28 @@ export class AgentRunner {
         await this.openMenu(target, msg, "model", ["root"]);
         break;
       }
+      case "notify": {
+        await this.openNotifyPicker(target, msg);
+        break;
+      }
       case "workspaces": {
         await this.showAllWorkspaces(target);
+        break;
+      }
+      case "mirror": {
+        await this.handleMirror(target, msg);
+        break;
+      }
+      case "unlock": {
+        await this.handleUnlock(target);
+        break;
+      }
+      case "renew": {
+        await this.handleRenewLock(target);
+        break;
+      }
+      case "export": {
+        await this.handleExport(target, command.format);
         break;
       }
       case "help": {
@@ -831,6 +1272,41 @@ export class AgentRunner {
       lastActiveAt: Date.now(),
       sessions,
     });
+  }
+
+  /**
+   * Automatically create a Web mirror for the session.
+   * This enables DSH Web GUI to view and interact with the conversation
+   * without requiring manual `/mirror` command.
+   */
+  private autoCreateWebMirror(sessionId: string, ownerKey: string): void {
+    // Check if auto-mirror is enabled in config
+    if (!this.config.autoMirror) return;
+    
+    // Only auto-create for Feishu channel (not for Web itself)
+    if (this.channel !== "feishu") return;
+    
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding === undefined) return;
+    
+    // Check if mirror already exists
+    if (binding.webMirrorSessionId !== undefined) {
+      return; // Mirror already configured
+    }
+    
+    // Auto-create mirror with default settings
+    const defaultTimeoutMs = 5 * 60 * 1000; // 5 minutes
+    
+    this.bindings.put({
+      ...binding,
+      webMirrorSessionId: sessionId,
+      lockOwner: "feishu", // Feishu owns the lock initially
+      lockAcquiredAt: Date.now(),
+      lockTimeoutMs: defaultTimeoutMs,
+      lastActiveAt: Date.now(),
+    });
+    
+    this.log(`connect: auto-created Web mirror for session ${sessionId}`);
   }
 
   private async newChat(msg: InboundMessage): Promise<void> {
@@ -883,11 +1359,17 @@ export class AgentRunner {
     const options: ChoiceOption[] = items.map((i) => ({ id: i.id, label: i.label }));
     options.push({ id: "menu:exit", label: this.t.menuExit });
     if (stack.length > 0) options.push({ id: "menu:back", label: this.t.menuBack });
+    
+    // Determine columns per row based on menu type
+    // Workspace and chat lists use 1 column (full width), others use 2 columns
+    const columnsPerRow = (menuId === "workspace" || menuId === "chat") ? 1 : 2;
+    
     const { choice, messageId } = await this.adapter.promptChoice(
       target,
       {
         title: this.menuTitle(menuId),
         options,
+        columnsPerRow,
         ...(menuId === "root" ? { sections: this.rootMenuSections(), footer: this.t.rootMenuFooter } : {}),
       },
       cardId,
@@ -942,14 +1424,23 @@ export class AgentRunner {
         const binding = this.bindings.get(this.channel, this.chatKey);
         const sessions = binding?.sessions ?? [];
         const active = binding?.sessionId;
-        const items: MenuItem[] = sessions.map((s) => ({
-          id: `session:${s.sessionId}`,
-          label: `${s.sessionId === active ? "●" : "○"} ${s.title || s.sessionId}`,
-          leaf: true,
-          onSelect: async (t, m) => {
-            await this.switchTo(s.sessionId, m.senderKey);
-          },
-        }));
+        const hasWebMirror = binding?.webMirrorSessionId !== undefined;
+        
+        const items: MenuItem[] = sessions.map((s) => {
+          // Check if this session is mirrored to Web
+          const isMirrored = hasWebMirror && binding.webMirrorSessionId === s.sessionId;
+          const mirrorIndicator = isMirrored ? ` ${this.t.webMirrorIndicator}` : "";
+          const activeIndicator = s.sessionId === active ? "●" : "○";
+          
+          return {
+            id: `session:${s.sessionId}`,
+            label: `${activeIndicator} ${s.title || s.sessionId}${mirrorIndicator}`,
+            leaf: true,
+            onSelect: async (t, m) => {
+              await this.switchTo(s.sessionId, m.senderKey);
+            },
+          };
+        });
         items.push({
           id: "action:new",
           label: this.t.menuNewChat,
@@ -965,31 +1456,41 @@ export class AgentRunner {
           { id: "model", label: this.t.menuSettingsModel, onSelect: (t, m, cardId) => this.openMenu(t, m, "model", ["settings", "root"], cardId) },
           { id: "reasoning", label: this.t.menuSettingsReasoning, onSelect: (t, m, cardId) => this.openMenu(t, m, "reasoning", ["settings", "root"], cardId) },
           { id: "notify", label: this.t.menuSettingsNotify, onSelect: (t, m, cardId) => this.openMenu(t, m, "notify", ["settings", "root"], cardId) },
+          { id: "language", label: this.t.menuSettingsLanguage, onSelect: (t, m, cardId) => this.openMenu(t, m, "language", ["settings", "root"], cardId) },
           { id: "overview", label: this.t.menuSettingsOverview, leaf: true, onSelect: async (t) => { await this.showSettings(t); } },
+        ];
+      case "language":
+        return [
+          {
+            id: "lang:zh",
+            label: `${this.language === "zh" ? "● " : ""}${this.t.languageZh}`,
+            leaf: true,
+            onSelect: async (t, m) => { await this.setLanguage("zh", t, m); },
+          },
+          {
+            id: "lang:en",
+            label: `${this.language === "en" ? "● " : ""}${this.t.languageEn}`,
+            leaf: true,
+            onSelect: async (t, m) => { await this.setLanguage("en", t, m); },
+          },
         ];
       case "model":
         return await this.modelMenuItems();
       case "reasoning":
         return this.reasoningMenuItems();
       case "notify":
-        return [
-          {
-            id: "stream",
-            label: this.t.streamLabel(this.streamEnabled),
-            leaf: true,
-            onSelect: async () => {
-              this.streamEnabled = !this.streamEnabled;
-            },
+        return ([
+          { id: "full", label: this.t.notifyFull },
+          { id: "important", label: this.t.notifyImportant },
+          { id: "result", label: this.t.notifyResult },
+        ] as const).map((o) => ({
+          id: `notify:${o.id}`,
+          label: `${this.notifyLevel === o.id ? "● " : ""}${o.label}`,
+          leaf: true,
+          onSelect: async (t: OutboundTarget, m: InboundMessage) => {
+            await this.setNotifyLevel(o.id, t, m);
           },
-          {
-            id: "summary",
-            label: this.t.summaryLabel(this.summaryEnabled),
-            leaf: true,
-            onSelect: async () => {
-              this.summaryEnabled = !this.summaryEnabled;
-            },
-          },
-        ];
+        }));
     }
   }
 
@@ -999,15 +1500,42 @@ export class AgentRunner {
       await this.adapter.sendText(target, this.t.statusNoSession(this.workDir));
       return;
     }
-    const label = agent.status === "running" ? this.t.statusRunning : this.t.statusIdle;
+
+    // Determine detailed execution state
+    let statusLabel: string;
+    if (agent.status === "running") {
+      statusLabel = this.t.statusExecuting;
+    } else if (this.queue.length > 0) {
+      statusLabel = this.t.statusWaiting;
+    } else {
+      statusLabel = this.t.statusIdle;
+    }
+
     const model = `${agent.options.provider ?? "-"}/${agent.options.model ?? "-"}`;
     const lines = [
-      this.t.statusField(label),
+      this.t.statusField(statusLabel),
       this.t.modelField(model),
       this.t.workdirField(this.workDir),
-      this.t.queuedField(this.queue.length),
-      this.t.sessionField(agent.id),
     ];
+
+    // Queue status with detail
+    if (this.queue.length === 0) {
+      lines.push(`${this.t.queuedField(0)} ${this.t.queueEmpty}`);
+    } else {
+      lines.push(`${this.t.queuedField(this.queue.length)} ${this.t.queueDetail(this.queue.length)}`);
+    }
+
+    // Last turn completion info
+    const lastTurn = this.getLastTurnInfo(agent);
+    if (lastTurn !== undefined) {
+      lines.push(this.t.lastTurnReason(this.reasonLabel(lastTurn.reason)));
+      lines.push(this.t.lastTurnTime(lastTurn.completedAt));
+    } else {
+      lines.push(this.t.noTurnHistory);
+    }
+
+    lines.push(this.t.sessionField(agent.id));
+
     const tokenMeter = this.ctx.get("tokenMeter") as
       | { measure?: (s: unknown) => { totalTokens: number; surfaceTokens: number } }
       | undefined;
@@ -1018,6 +1546,21 @@ export class AgentRunner {
       // Token meter unavailable: skip.
     }
     await this.adapter.sendText(target, lines.join("\n"));
+  }
+
+  /** Extract the most recent turn's completion info from session events. */
+  private getLastTurnInfo(agent: Agent): { reason: TurnReason; completedAt: string } | undefined {
+    const events = agent.session.events;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      if (event.type === "turn/end") {
+        const reason = mapReason(event.data.reason.kind);
+        // Use the event's timestamp if available, otherwise approximate
+        const completedAt = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        return { reason, completedAt };
+      }
+    }
+    return undefined;
   }
 
   private async showTasks(target: OutboundTarget): Promise<void> {
@@ -1150,6 +1693,72 @@ export class AgentRunner {
       ...(effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) }),
     });
     await this.newChat(msg);
+  }
+
+  /** Switch the user-facing language for this chat, persisted in its binding. */
+  private async setLanguage(lang: Language, target: OutboundTarget, msg: InboundMessage): Promise<void> {
+    if (lang === this.language) return;
+    this.language = lang;
+    this.t = messages(lang);
+    // Persist into the chat's binding (create one if the chat has no session yet).
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding !== undefined) {
+      this.bindings.put({ ...binding, language: lang, lastActiveAt: Date.now() });
+    } else {
+      this.bindings.put({
+        channel: this.channel,
+        chatKey: this.chatKey,
+        chatType: this.chatType,
+        sessionId: "",
+        ownerKey: msg.senderKey,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        language: lang,
+        sessions: [],
+      });
+    }
+    await this.adapter.sendText(target, this.t.languageSet(lang === "zh" ? this.t.languageZh : this.t.languageEn));
+  }
+
+  /**
+   * Switch the notification level for this chat (persisted in its binding and
+   * effective immediately for the next streaming reply).
+   */
+  private async setNotifyLevel(level: NotifyLevel, target: OutboundTarget, msg: InboundMessage): Promise<void> {
+    this.notifyLevel = level;
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding !== undefined) {
+      this.bindings.put({ ...binding, notifyLevel: level, lastActiveAt: Date.now() });
+    } else {
+      this.bindings.put({
+        channel: this.channel,
+        chatKey: this.chatKey,
+        chatType: this.chatType,
+        sessionId: "",
+        ownerKey: msg.senderKey,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        notifyLevel: level,
+        sessions: [],
+      });
+    }
+    const label = level === "full" ? this.t.notifyFull : level === "important" ? this.t.notifyImportant : this.t.notifyResult;
+    const desc = level === "full" ? this.t.notifyFullDesc : level === "important" ? this.t.notifyImportantDesc : this.t.notifyResultDesc;
+    await this.adapter.sendText(target, this.t.notifySet(label, desc));
+  }
+
+  /** Show the three-level notification picker (used by the `/notify` command). */
+  private async openNotifyPicker(target: OutboundTarget, msg: InboundMessage): Promise<void> {
+    const options: ChoiceOption[] = [
+      { id: "notify:full", label: this.t.notifyFull },
+      { id: "notify:important", label: this.t.notifyImportant },
+      { id: "notify:result", label: this.t.notifyResult },
+    ];
+    const { choice } = await this.adapter.promptChoice(target, { title: this.t.menuNotify, options });
+    if (choice === undefined) return;
+    const level = choice.startsWith("notify:") ? (choice.slice("notify:".length) as NotifyLevel) : undefined;
+    if (level !== "full" && level !== "important" && level !== "result") return;
+    await this.setNotifyLevel(level, target, msg);
   }
 
   private async showPlugins(target: OutboundTarget): Promise<void> {
@@ -1345,5 +1954,394 @@ export class AgentRunner {
       return `${i + 1}. ${w.title}${w.title !== w.path ? `  (${w.path})` : ""}${sess}`;
     });
     await this.adapter.sendText(target, this.t.workspacesCount(all.length, lines.join("\n")));
+  }
+
+  /**
+   * Create or show Web mirror session for this chat.
+   * The mirror shares the same DSH session but enforces mutual exclusion:
+   * when Feishu is executing a task, Web is read-only, and vice versa.
+   */
+  private async handleMirror(target: OutboundTarget, msg: InboundMessage): Promise<void> {
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    
+    // Check timeout before showing status
+    this.checkAndReleaseTimeoutLock();
+    
+    // Reload binding after potential timeout release
+    const updatedBinding = this.bindings.get(this.channel, this.chatKey);
+    
+    // Check if mirror already exists
+    if (updatedBinding?.webMirrorSessionId !== undefined) {
+      const queuedCount = updatedBinding.queuedMessages?.length ?? 0;
+      const timeoutMin = updatedBinding.lockTimeoutMs ? Math.round(updatedBinding.lockTimeoutMs / 60000) : undefined;
+      await this.adapter.sendText(
+        target, 
+        this.t.mirrorStatus(updatedBinding.webMirrorSessionId, updatedBinding.lockOwner, timeoutMin, queuedCount)
+      );
+      return;
+    }
+
+    // Create new mirror session (reuse current session)
+    const agent = this.agent;
+    if (agent === undefined) {
+      await this.adapter.sendText(target, this.t.mirrorNotConfigured);
+      return;
+    }
+
+    // The mirror uses the same session ID - it's a shared view
+    const mirrorSessionId = agent.id;
+    
+    // Use custom timeout if provided, otherwise default to 5 minutes
+    const command = parseCommand(msg.text);
+    const customTimeoutMin = command.kind === "mirror" ? command.timeoutMin : undefined;
+    const defaultTimeoutMs = (customTimeoutMin ?? 5) * 60 * 1000;
+    
+    // Update binding with mirror info and set initial lock to feishu
+    const newBinding: ChatBinding = updatedBinding !== undefined
+      ? { 
+          ...updatedBinding, 
+          webMirrorSessionId: mirrorSessionId, 
+          lockOwner: "feishu",
+          lockAcquiredAt: Date.now(),
+          lockTimeoutMs: defaultTimeoutMs,
+        }
+      : {
+          channel: this.channel,
+          chatKey: this.chatKey,
+          chatType: this.chatType,
+          sessionId: mirrorSessionId,
+          ownerKey: msg.senderKey,
+          createdAt: Date.now(),
+          lastActiveAt: Date.now(),
+          webMirrorSessionId: mirrorSessionId,
+          lockOwner: "feishu",
+          lockAcquiredAt: Date.now(),
+          lockTimeoutMs: defaultTimeoutMs,
+          sessions: [],
+        };
+    
+    this.bindings.put(newBinding);
+    
+    const timeoutMsg = customTimeoutMin !== undefined ? `（超时时间：${customTimeoutMin} 分钟）` : "";
+    await this.adapter.sendText(target, this.t.mirrorCreated(mirrorSessionId) + timeoutMsg);
+  }
+
+  /**
+   * Manually release session lock.
+   */
+  private async handleUnlock(target: OutboundTarget): Promise<void> {
+    // Check timeout first
+    this.checkAndReleaseTimeoutLock();
+    
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding?.lockOwner === undefined) {
+      await this.adapter.sendText(target, this.t.unlockNoLock);
+      return;
+    }
+    
+    // Process any queued messages before releasing
+    const queuedCount = binding.queuedMessages?.length ?? 0;
+    
+    this.releaseLock();
+    
+    let message = this.t.unlockSuccess;
+    if (queuedCount > 0) {
+      message += `\n${this.t.queueProcessed(queuedCount)}`;
+    }
+    
+    await this.adapter.sendText(target, message);
+  }
+
+  /**
+   * Renew the current session lock timeout.
+   * Extends the lock by another full timeout period from now.
+   */
+  private async handleRenewLock(target: OutboundTarget): Promise<void> {
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding?.lockOwner === undefined) {
+      await this.adapter.sendText(target, this.t.unlockNoLock);
+      return;
+    }
+    
+    const currentChannel: "feishu" | "web" = this.channel === "feishu" ? "feishu" : "web";
+    if (binding.lockOwner !== currentChannel) {
+      await this.adapter.sendText(target, this.t.sessionLockedBy(binding.lockOwner));
+      return;
+    }
+    
+    // Renew the lock by resetting the acquisition time
+    const timeoutMs = binding.lockTimeoutMs ?? 5 * 60 * 1000;
+    this.bindings.put({ 
+      ...binding, 
+      lockAcquiredAt: Date.now(),
+      lastActiveAt: Date.now() 
+    });
+    
+    const timeoutMin = Math.round(timeoutMs / 60000);
+    await this.adapter.sendText(target, this.t.lockRenewed(timeoutMin));
+  }
+
+  /**
+   * Export conversation history to Markdown or PDF.
+   */
+  private async handleExport(target: OutboundTarget, format?: "markdown" | "pdf"): Promise<void> {
+    const agent = this.agent;
+    if (agent === undefined) {
+      await this.adapter.sendText(target, this.t.exportNoSession);
+      return;
+    }
+
+    // Default to markdown if not specified
+    const exportFormat = format ?? "markdown";
+    
+    if (exportFormat === "pdf") {
+      await this.adapter.sendText(target, this.t.exportPdfNotSupported);
+      return;
+    }
+
+    try {
+      const markdown = this.generateMarkdown(agent);
+      const fileName = `conversation-${agent.id}-${Date.now()}.md`;
+      const filePath = join(this.workDir, fileName);
+      
+      // Write to file
+      writeFileSync(filePath, markdown, "utf8");
+      
+      await this.adapter.sendText(target, this.t.exportMarkdown(filePath));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.adapter.sendText(target, this.t.exportFailed(truncate(detail)));
+    }
+  }
+
+  /**
+   * Generate Markdown representation of the conversation history.
+   */
+  private generateMarkdown(agent: Agent): string {
+    const events = agent.session.events;
+    const lines: string[] = [];
+    
+    // Header
+    lines.push(`# Conversation History`);
+    lines.push(``);
+    lines.push(`- **Session ID**: ${agent.id}`);
+    lines.push(`- **Exported At**: ${new Date().toISOString()}`);
+    lines.push(`- **Total Events**: ${events.length}`);
+    lines.push(``);
+    lines.push(`---`);
+    lines.push(``);
+    
+    // Messages
+    for (const event of events) {
+      if (event.type === "user/message") {
+        const text = textOf(event.data);
+        if (text) {
+          lines.push(`**👤 User**:`);
+          lines.push(``);
+          lines.push(text);
+          lines.push(``);
+        }
+      } else if (event.type === "assistant/message") {
+        const text = textOf(event.data.message);
+        if (text) {
+          lines.push(`**🤖 Assistant**:`);
+          lines.push(``);
+          lines.push(text);
+          lines.push(``);
+        }
+      } else if (event.type === "turn/start") {
+        lines.push(`*Turn started at ${new Date().toLocaleTimeString()}*`);
+        lines.push(``);
+      } else if (event.type === "turn/end") {
+        const reason = mapReason(event.data.reason.kind);
+        lines.push(`*Turn ended: ${this.reasonLabel(reason)}*`);
+        lines.push(``);
+        lines.push(`---`);
+        lines.push(``);
+      }
+    }
+    
+    return lines.join("\n");
+  }
+
+  /**
+   * Check if the current channel has write access to the session.
+   * Returns true if allowed to send messages, false if read-only.
+   */
+  private canWrite(channel: "feishu" | "web"): boolean {
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding?.lockOwner === undefined) return true; // No lock, free access
+    
+    // Check timeout
+    if (this.isLockTimedOut(binding)) {
+      this.releaseTimeoutLock(binding);
+      return true;
+    }
+    
+    return binding.lockOwner === channel;
+  }
+
+  /**
+   * Acquire session lock for the given channel.
+   * Returns true if lock acquired, false if already locked by another channel.
+   */
+  private acquireLock(channel: "feishu" | "web"): boolean {
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding === undefined) return true;
+    
+    // Check timeout before acquiring
+    if (this.isLockTimedOut(binding)) {
+      this.releaseTimeoutLock(binding);
+      // After timeout release, try to acquire again
+      const refreshed = this.bindings.get(this.channel, this.chatKey);
+      if (refreshed !== undefined && (refreshed.lockOwner === undefined || refreshed.lockOwner === channel)) {
+        const defaultTimeoutMs = refreshed.lockTimeoutMs ?? 5 * 60 * 1000;
+        this.bindings.put({ 
+          ...refreshed, 
+          lockOwner: channel, 
+          lockAcquiredAt: Date.now(),
+          lockTimeoutMs: defaultTimeoutMs,
+          lastActiveAt: Date.now() 
+        });
+        return true;
+      }
+    }
+    
+    if (binding.lockOwner === undefined || binding.lockOwner === channel) {
+      // Lock is free or already owned by this channel
+      const timeoutMs = binding.lockTimeoutMs ?? 5 * 60 * 1000;
+      this.bindings.put({ 
+        ...binding, 
+        lockOwner: channel, 
+        lockAcquiredAt: Date.now(),
+        lockTimeoutMs: timeoutMs,
+        lastActiveAt: Date.now() 
+      });
+      return true;
+    }
+    
+    // Locked by other channel - queue the message if from Web
+    return false;
+  }
+
+  /**
+   * Queue a message for later execution when lock is released.
+   * Returns the position in queue.
+   */
+  private queueMessage(msg: InboundMessage): number {
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding === undefined) return -1;
+    
+    const queued = binding.queuedMessages ?? [];
+    queued.push({ 
+      text: msg.text, 
+      senderKey: msg.senderKey, 
+      timestamp: Date.now(),
+      replyRef: msg.replyRef,
+      images: msg.images,
+      files: msg.files,
+    });
+    
+    this.bindings.put({ ...binding, queuedMessages: queued });
+    return queued.length;
+  }
+
+  /**
+   * Process all queued messages after lock release.
+   * Re-enqueues them into the runner's message queue for actual execution.
+   */
+  private async processQueuedMessages(): Promise<void> {
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding === undefined || !binding.queuedMessages || binding.queuedMessages.length === 0) {
+      return;
+    }
+    
+    const messages = [...binding.queuedMessages];
+    const count = messages.length;
+    
+    // Clear queue immediately to prevent duplicate processing
+    this.bindings.put({ ...binding, queuedMessages: [] });
+    
+    // Notify about queued messages being processed
+    if (count > 0) {
+      const adapter = this.adapters?.get(this.channel);
+      if (adapter) {
+        await adapter.sendText(
+          { chatKey: this.chatKey, chatType: this.chatType },
+          this.t.queueProcessed(count)
+        ).catch(() => undefined);
+      }
+      
+      // Re-enqueue messages into the runner's processing queue
+      // Construct minimal InboundMessage objects from queued data
+      for (const queued of messages) {
+        const inboundMsg: InboundMessage = {
+          channel: "web", // Queued messages are from Web channel
+          chatKey: this.chatKey,
+          chatType: this.chatType,
+          senderKey: queued.senderKey,
+          text: queued.text,
+          replyRef: queued.replyRef,
+          images: queued.images,
+          files: queued.files,
+        };
+        // Add to the runner's internal queue for processing
+        this.queue.push(inboundMsg);
+      }
+      
+      // Trigger processing if not already running
+      void this.drain();
+    }
+  }
+
+  /** Release session lock. */
+  private releaseLock(): void {
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding !== undefined && binding.lockOwner !== undefined) {
+      // Process queued messages before releasing
+      void this.processQueuedMessages();
+      
+      this.bindings.put({ ...binding, lockOwner: undefined, lockAcquiredAt: undefined });
+    }
+  }
+
+  /** Check if lock has timed out. */
+  private isLockTimedOut(binding: ChatBinding): boolean {
+    if (binding.lockOwner === undefined || binding.lockAcquiredAt === undefined) {
+      return false;
+    }
+    
+    const timeoutMs = binding.lockTimeoutMs ?? 5 * 60 * 1000; // Default 5 minutes
+    const elapsed = Date.now() - binding.lockAcquiredAt;
+    return elapsed > timeoutMs;
+  }
+
+  /** Check and release timed-out locks. */
+  private checkAndReleaseTimeoutLock(): void {
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding && this.isLockTimedOut(binding)) {
+      this.releaseTimeoutLock(binding);
+    }
+  }
+
+  /** Release a timed-out lock and notify. */
+  private releaseTimeoutLock(binding: ChatBinding): void {
+    const timeoutMin = Math.round((binding.lockTimeoutMs ?? 5 * 60 * 1000) / 60000);
+    const lockedBy = binding.lockOwner;
+    
+    this.bindings.put({ 
+      ...binding, 
+      lockOwner: undefined, 
+      lockAcquiredAt: undefined 
+    });
+    
+    // Notify users about timeout release
+    const adapter = this.adapters?.get(this.channel);
+    if (adapter && lockedBy) {
+      void adapter.sendText(
+        { chatKey: this.chatKey, chatType: this.chatType },
+        this.t.lockTimeoutReleased(timeoutMin)
+      ).catch(() => undefined);
+    }
   }
 }

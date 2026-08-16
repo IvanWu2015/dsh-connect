@@ -32,6 +32,7 @@ In the DSH profile's `cordis.patch.yml`:
 | `transport` | `websocket` | Long connection (no public network needed); `webhook` needs public HTTPS |
 | `requireMention` | `true` | Groups only respond when the bot is @mentioned |
 | `dmMode` | `open` | DM policy: open / allowlist / pair / disabled |
+| `language` | `zh` | User-facing message language: `zh` / `en` |
 
 On the Feishu side you also need: bot capability enabled, `im.message.receive_v1` and `card.action.trigger` events subscribed, and an app version published. See `docs/feishu-setup.md` in the repository.
 

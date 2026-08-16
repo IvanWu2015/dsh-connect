@@ -1,0 +1,152 @@
+# dsh-connect Project Rules
+
+## Version Management Policy
+
+**Rule**: Unless explicitly requested by the user, version numbers must only auto-increment the **patch** (last) segment.
+
+### Semantic Versioning Format: `MAJOR.MINOR.PATCH`
+
+- **MAJOR**: Breaking changes (requires explicit user approval)
+- **MINOR**: New features, backward-compatible (requires explicit user approval)  
+- **PATCH**: Bug fixes, minor improvements (auto-increment allowed)
+
+### Examples
+
+✅ **Allowed (auto):**
+- `0.5.0` → `0.5.1` (patch bump)
+- `0.5.1` → `0.5.2` (patch bump)
+
+❌ **Requires explicit user request:**
+- `0.5.0` → `0.6.0` (minor bump)
+- `0.5.0` → `1.0.0` (major bump)
+- Any change to MAJOR or MINOR segments
+
+### Implementation
+
+**Preferred method**: Use the automated script:
+```powershell
+# Patch bump (default, safe): 0.5.0 → 0.5.1
+.\scripts\bump-version.ps1
+
+# Minor bump (requires explicit request): 0.5.1 → 0.6.0
+.\scripts\bump-version.ps1 -Type minor
+
+# Major bump (requires explicit request): 0.6.0 → 1.0.0
+.\scripts\bump-version.ps1 -Type major
+
+# Set exact version
+.\scripts\bump-version.ps1 -Set "1.0.0"
+```
+
+**Manual method** (only if script unavailable):
+1. Read current version from all relevant `package.json` files
+2. Parse as semver: `MAJOR.MINOR.PATCH`
+3. Increment only PATCH by default: `PATCH + 1`
+4. Update all packages consistently (connect and connect-feishu should share same version)
+5. Only bump MAJOR/MINOR if user explicitly says so (e.g., "bump minor version" or "release v1.0")
+
+### Affected Files
+
+- `packages/connect/package.json`
+- `packages/connect-feishu/package.json`
+- Root `package.json` (workspace, usually stays at 1.0.0)
+
+### AI Assistant Behavior
+
+When the user asks to "update version", "bump version", or "release":
+- **Default action**: Run `.\scripts\bump-version.ps1` (patch-only increment)
+- **Never** change MAJOR or MINOR without explicit user instruction
+- If user says "minor release" or "feature release": use `-Type minor`
+- If user says "major release" or "breaking change": use `-Type major`
+- Always confirm the new version number before proceeding
+
+---
+
+## Code Style Guidelines
+
+### TypeScript
+
+- Use strict mode (`"strict": true` in tsconfig.json)
+- Prefer interfaces over types for object shapes
+- Use explicit return types for public APIs
+- Avoid `any`; use `unknown` when type is truly uncertain
+
+### File Naming
+
+- Source files: `*.ts` (PascalCase for classes, camelCase for modules)
+- Test files: `*.test.ts` or `*.spec.ts`
+- Configuration: lowercase with hyphens (e.g., `tsconfig.json`)
+
+### Imports
+
+- Group imports: Node.js built-ins → third-party → local modules
+- Use `.js` extension in import paths (TypeScript ESM requirement)
+- Prefer named exports over default exports for better tree-shaking
+
+### Error Handling
+
+- Always handle async errors with try/catch or `.catch()`
+- Log errors with context (file key, operation name, etc.)
+- Provide user-friendly error messages in i18n tables
+
+---
+
+## i18n Policy
+
+- All user-facing strings MUST be in `packages/*/src/i18n.ts`
+- Support both `zh` (Chinese) and `en` (English)
+- Default language: `zh`
+- Public documentation/comments: English only
+- Error messages: Include technical details for debugging + friendly hint for users
+
+---
+
+## Testing Requirements
+
+- Unit tests for pure functions (sanitization, formatting, parsing)
+- Smoke tests for integration points (adapter ↔ runner communication)
+- Test edge cases: empty inputs, special characters, network failures
+- Run `pnpm test` before committing
+
+---
+
+## Commit Message Convention
+
+Format: `<type>(<scope>): <description>`
+
+Types:
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation only
+- `style`: Formatting, no code change
+- `refactor`: Code restructuring, no behavior change
+- `test`: Adding/updating tests
+- `chore`: Build process, dependencies, tooling
+
+Examples:
+```
+feat(connect): add file/audio/video download support
+fix(feishu): correct im:message permission scope
+docs: update README with language switching guide
+chore: bump version to 0.5.1
+```
+
+---
+
+## Security Guidelines
+
+- Never commit secrets (appId, appSecret, tokens) to git
+- Use environment variables for credentials
+- Sanitize file names before writing to disk
+- Validate all user inputs (paths, IDs, etc.)
+- Log sensitive data at WARN level only (not INFO)
+
+---
+
+## Performance Considerations
+
+- Stream large responses instead of buffering
+- Use async queues for message processing
+- Cache expensive operations (model info, vision detection)
+- Limit concurrent subagent spawns
+- Clean up temporary files after use

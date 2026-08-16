@@ -7,10 +7,13 @@ Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**D
 - **Bidirectional messaging**: Feishu messages → DSH agent (`agent.followup`); agent replies stream back to Feishu as typewriter-style cards.
 - **Multi-turn context**: each Feishu chat (DM or group) is bound to a DSH `Session`, automatically `resume`d after a process restart.
 - **Work arrangement**: pushes a result-summary card when a task ends; `ctx.connect.notify()` lets goals/jobs hooks push progress proactively.
+- **Task-end stats**: when a task finishes, a card reports the model used, input/output/cached tokens, step count, duration and context usage, with a `/compact` suggestion when the context is ≥ 75% full.
+- **Notification levels**: `full` (stream everything) / `important` (key milestones, default) / `result` (answer only) — switchable per chat via the settings menu or `/notify`, persisted across restarts.
 - **Security**: groups require @mention by default; user/chat allowlists; Feishu credentials via environment variables or config.
 - **Interactive menus**: `/menu` offers hierarchical point-and-click navigation (workdir / chats / settings / plugins / compact, …) — the same card updates in place, supports back/exit, and stays usable across consecutive actions.
-- **Smart image handling**: images sent to the bot are downloaded automatically; if the main model supports vision it sees them directly, otherwise a vision-model sub-task describes them and the description is injected — so a text-only main model never stalls on images.
-- **Local commands** (no model tokens): `/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/schedule` `/model` `/new` `/clear` `/stop` `/settings` `/help`.
+- **Smart image & file handling**: images sent to the bot are downloaded automatically; if the main model supports vision it sees them directly, otherwise a vision-model sub-task describes them and the description is injected — so a text-only main model never stalls on images. Attached files/audio/video are also downloaded into the workdir.
+- **Web mirror**: each chat can mirror its DSH session into the DSH Web GUI (`/mirror`, or automatic via `autoMirror`), sharing the same conversation with mutual-exclusion locking.
+- **Local commands** (no model tokens): `/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/schedule` `/model` `/notify` `/mirror` `/new` `/clear` `/stop` `/settings` `/help`.
 - **Extensible**: `dsh-connect` (channel-agnostic core) + `dsh-connect-feishu` (Feishu adapter) are layered; adding DingTalk only requires one more adapter package.
 
 ## Repository layout
@@ -66,8 +69,10 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | Command | Description |
 |---|---|
 | `/menu` | Open the main menu (hierarchical point-and-click; the same card updates in place; back / exit supported) |
-| `/settings` (`/set`) | Settings: switch model / reasoning effort / notification toggles / config overview |
+| `/settings` (`/set`) | Settings: switch model / reasoning effort / notification level / config overview |
 | `/model` | Show the current model, tap to switch |
+| `/notify` (`/notice`) | Choose the notification level: `full` / `important` / `result` (takes effect immediately) |
+| `/mirror [--timeout N]` | Create (or show) the Web mirror session for this chat; optional lock timeout in minutes |
 | `/status` | Session status, model, workdir, queue length, **context tokens**, session ID |
 | `/task` (`/tasks` `/todo`) | Show the current task list |
 | `/schedule` (`/reminders`) | Show scheduled reminders for this session |
@@ -100,7 +105,9 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | `allowUsers` | `[]` | Sender allowlist (empty = allow all) |
 | `allowChats` | `[]` | Chat allowlist (empty = allow all) |
 | `stateDir` | `./.dsh-connect` | Directory for the binding route `bindings.json` |
-| `notifyStream` / `notifySummary` | runtime-adjustable | Streaming / summary notification toggles switchable from `/settings` |
+| `autoMirror` | `true` | Automatically create a Web mirror session for every new chat |
+| `streamHeartbeatMs` | `60000` | Streaming-card liveness heartbeat (ms); `0` disables it |
+| `notifyLevel` | `important` | Default notification level: `full` (stream everything) / `important` (key milestones) / `result` (answer only); per-chat override via `/settings` or `/notify` |
 
 ### dsh-connect-feishu (Feishu)
 
@@ -117,9 +124,9 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 
 ## How it works
 
-- **Agent create/resume**: reuses the standard DSH driving pattern (see `dsh-headless`) — `ctx.agents.create({ meta:{cwd, agentPreset}, agentOptions:{provider,model}, setup })`; resume goes through `ctx.agents.resume`.
-- **Preset mounting**: `setup` runs `installModelSelection` + `ctx.agentPresets.mount(agentCtx, presetId)`, giving bound sessions the standard toolset (bash/fs/…).
-- **Streaming**: `assistant/chunk` (text-delta) events on `session/event` are bridged via `createAsyncQueue` into the Feishu `channel.stream()` typewriter card; `turn/end` decides the turn outcome.
+- **Agent create/resume**: reuses the standard DSH driving pattern (see `dsh-headless`) — `ctx.agents.create({ meta:{cwd, agentPreset}, agentOptions:{provider,model}, setup })`; resume goes through `ctx.agents.resume`. Model selection per session is owned by the DSH api-proxy (`selectionFor`), so switching models in the Web GUI applies to the bound sessions.
+- **Preset mounting**: `setup` mounts the configured agent preset (`ctx.agentPresets.mount`), giving bound sessions the standard toolset (bash/fs/…).
+- **Streaming**: `assistant/chunk` events (reasoning/text deltas, block starts/ends) on `session/event` are bridged via `createAsyncQueue` into the Feishu streaming card; blocks are separated by blank lines, reasoning is streamed live, tool calls show a status line, and a configurable heartbeat keeps the card alive during long silent phases. `turn/end` decides the turn outcome and posts the task-stats card.
 - **Serialization**: one `AgentRunner` per chatKey — messages are queued and executed serially; `agent.followup` naturally queues.
 
 ## Testing

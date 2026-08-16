@@ -9,8 +9,10 @@ import type { Language } from "dsh-connect";
 export interface FeishuMessages {
   tempDirFailed(error: string): string;
   imageDownloadLog(fileKey: string, detail: string): string;
+  fileDownloadLog(fileKey: string, detail: string): string;
   errorDetail(detail: string): string;
   imageDownloadError(failed: number, detail: string): string;
+  fileDownloadError(failed: number, detail: string): string;
   menuExpired: string;
   menuExpiredHint: string;
   doneHeader: string;
@@ -25,9 +27,12 @@ export interface FeishuMessages {
 const zh: FeishuMessages = {
   tempDirFailed: (error) => `无法创建临时目录：${error}`,
   imageDownloadLog: (fileKey, detail) => `connect-feishu: 图片下载失败 (${fileKey}): ${detail}`,
+  fileDownloadLog: (fileKey, detail) => `connect-feishu: 文件下载失败 (${fileKey}): ${detail}`,
   errorDetail: (detail) => `（错误详情：${detail}）`,
   imageDownloadError: (failed, detail) =>
     `有 ${failed} 张图片下载失败，请按上面的错误详情确认飞书应用权限（下载用户消息图片需要 im:message 系列权限）并重新发版${detail}`,
+  fileDownloadError: (failed, detail) =>
+    `有 ${failed} 个文件下载失败，请按上面的错误详情确认飞书应用权限（下载用户消息文件需要 im:message 系列权限）并重新发版${detail}`,
   menuExpired: "菜单已过期",
   menuExpiredHint: "请重新打开菜单。",
   doneHeader: "✅ 完成",
@@ -42,9 +47,12 @@ const zh: FeishuMessages = {
 const en: FeishuMessages = {
   tempDirFailed: (error) => `Cannot create temp directory: ${error}`,
   imageDownloadLog: (fileKey, detail) => `connect-feishu: image download failed (${fileKey}): ${detail}`,
+  fileDownloadLog: (fileKey, detail) => `connect-feishu: file download failed (${fileKey}): ${detail}`,
   errorDetail: (detail) => ` (error detail: ${detail})`,
   imageDownloadError: (failed, detail) =>
     `Failed to download ${failed} image(s). Check the Feishu app permissions per the error detail above (downloading user-message images requires the im:message family) and release a new version${detail}`,
+  fileDownloadError: (failed, detail) =>
+    `Failed to download ${failed} file(s). Check the Feishu app permissions per the error detail above (downloading user-message files requires the im:message family) and release a new version${detail}`,
   menuExpired: "Menu expired",
   menuExpiredHint: "Please reopen the menu.",
   doneHeader: "✅ Done",

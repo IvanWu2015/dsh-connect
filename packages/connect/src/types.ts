@@ -22,8 +22,12 @@ export interface InboundMessage {
   readonly replyRef?: string;
   /** Local file paths of images attached to the message (downloaded by the adapter). */
   readonly images?: readonly string[];
+  /** Local file paths of non-image attachments (files/audio/video) downloaded by the adapter. */
+  readonly files?: readonly string[];
   /** Set when image download failed (e.g. missing im:resource permission). */
   readonly imageError?: string;
+  /** Set when a non-image attachment download failed. */
+  readonly fileError?: string;
 }
 
 /** Where an outbound message goes. */
@@ -50,6 +54,8 @@ export interface ChoiceSection {
   readonly title?: string;
   /** Option ids belonging to this section, in display order. */
   readonly ids: readonly string[];
+  /** Number of columns per row for this section (overrides prompt default). */
+  readonly columnsPerRow?: number;
 }
 
 /** An interactive single-choice prompt rendered by the channel as buttons. */
@@ -61,6 +67,8 @@ export interface ChoicePrompt {
   readonly sections?: readonly ChoiceSection[];
   /** Optional footnote rendered at the bottom of the card. */
   readonly footer?: string;
+  /** Number of columns per row for button grid (default: 2). Use 1 for full-width items. */
+  readonly columnsPerRow?: number;
 }
 
 /** Result of an interactive choice: the picked option and the card's message id. */
@@ -87,6 +95,22 @@ export interface TurnOutcome {
   readonly text: string;
   readonly code?: string;
   readonly message?: string;
+  /** `provider/model` used by the turn's last LLM request. */
+  readonly model?: string;
+  /** Total input tokens (sum of every request) across the turn. */
+  readonly inputTokens?: number;
+  /** Total output tokens across the turn. */
+  readonly outputTokens?: number;
+  /** Total cache-read tokens across the turn. */
+  readonly cacheReadTokens?: number;
+  /** Input tokens of the turn's last request (≈ current context size). */
+  readonly contextSize?: number;
+  /** Context window of the turn's last request (for compaction advice). */
+  readonly contextWindow?: number;
+  /** Number of steps executed in the turn. */
+  readonly steps?: number;
+  /** Wall-clock duration of the turn (from `turn/start` to `turn/end`). */
+  readonly elapsedMs?: number;
 }
 
 /** Push-based async iterable bridge: producers push, consumers `for await`. */

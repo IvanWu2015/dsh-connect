@@ -19,6 +19,8 @@
         # allowUsers: ['ou_xxx']     # Sender allowlist (empty = allow all)
         # allowChats: ['oc_xxx']     # Chat allowlist (empty = allow all)
         # stateDir: .dsh-connect     # Directory for the binding route bindings.json
+        # streamHeartbeatMs: 60000   # Streaming-card liveness heartbeat ms (0 = off)
+        # notifyLevel: important  # Streaming detail: full | important (default) | result
 
     - id: connect-feishu
       name: dsh-connect-feishu

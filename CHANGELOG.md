@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] - 2026-08-16
+
+### Added
+
+- **Notification levels** (`notifyLevel`): streaming replies now follow one of three levels — `full` (stream everything), `important` (key milestones; thinking hint + tool-call status + heartbeat + final answer, no reasoning text), `result` (answer only). Per-chat override via the settings menu or `/notify`; the choice is persisted in `bindings.json` and survives restarts. New `notifyLevel` config key (default `important`).
+- **Task-end stats card**: when a task finishes, a card reports the model used, input/output/cached tokens, step count, duration and context usage, and suggests `/compact` when the context is ≥ 75% of the model's window.
+- **Web mirror sessions**: `/mirror [--timeout N]` creates (or shows) a mirror of the chat's DSH session in the DSH Web GUI; the mirror shares the same session with mutual-exclusion locking and an optional lock timeout. New `autoMirror` config (default `true`) auto-creates the mirror for every new chat.
+- **`streamHeartbeatMs` config**: liveness heartbeat for the streaming card during long silent phases (default 60000 ms; `0` disables it).
+- **Feishu file downloads**: the Feishu adapter now downloads attached files/audio/video in addition to images, all via `im.v1.messageResource.get`, with sanitized file names; only stickers remain unsupported.
+- **Configurable button grid**: Feishu choice menus now render 2 columns per row by default (was 3), and each menu section can override the column count.
+- **Shared config file**: `dsh.shared.config.json` at the project root can supply workspace/state/mirror defaults shared between DSH Web and the connect plugins.
+- **`dsh-connect-web` package** (work-in-progress): Web channel adapter that mirrors Feishu conversations to the DSH Web GUI; source committed, not yet published.
+- Version bump helper `scripts/bump-version.ps1` and repository rules (`.cursorrules`).
+
+### Changed
+
+- **Default notification level is now `important`** (key milestones) instead of `full`.
+- Streaming card layout: blocks, the reasoning phase and the final answer are separated by blank lines, and reasoning text streams live instead of a single static hint; tool calls render as status lines.
+- The core README was rewritten to the 9-section spec (Overview / Compatibility / Install & uninstall / Quick start / Configuration / Permissions & data / Troubleshooting / Development / License & security).
+
+### Fixed
+
+- **Model switching from the Web GUI now applies**: the connect runner no longer installs a static model selection that shadowed the api-proxy's per-agent selection, so switching the model in the GUI is actually used by bound sessions instead of silently falling back to the default.
+- **Streaming replies no longer concatenate into one unbroken wall of text** (blank-line separation between chunks).
+- **Long tasks no longer stall on "Thinking..." for many minutes**: reasoning is streamed live, tool calls emit a status line, a heartbeat keeps the card alive during silent phases, and agent listeners are deduplicated with a `WeakSet` so an externally rebuilt agent can't silently stop streaming.
+- Feishu `messageResource.get`-based downloads apply to files/audio/video too (images were already fixed in 0.5.0).
+
 ## [0.5.0] - 2026-08-16
 
 > This is the first release since 0.2.0 on npm. The 0.3.0 and 0.4.0 development milestones were never published; their changes are folded into this release.

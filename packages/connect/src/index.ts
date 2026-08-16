@@ -10,8 +10,8 @@ import { ConnectService } from "./service.js";
 import type { ConnectConfig } from "./runner.js";
 
 export { ConnectService } from "./service.js";
-export { AgentRunner, resolveConnectConfig, summarizeTurn } from "./runner.js";
-export type { ConnectConfig, ResolvedConnectConfig } from "./runner.js";
+export { AgentRunner, applyStreamChunk, applyToolCall, resolveConnectConfig, summarizeTurn, toolCallSummary } from "./runner.js";
+export type { ConnectConfig, NotifyLevel, ResolvedConnectConfig, StreamChunkLike, StreamState } from "./runner.js";
 export { BindingStore } from "./binding.js";
 export type { ChatBinding, ChatSessionRecord } from "./binding.js";
 export { createAsyncQueue } from "./stream.js";
@@ -57,6 +57,10 @@ export const Config = z.object({
   allowChats: z.array(z.string()),
   /** Directory for the bindings.json routing store. */
   stateDir: z.string(),
+  /** Liveness heartbeat interval ms for the streaming card; 0 disables it (default: 60000). */
+  streamHeartbeatMs: z.number(),
+  /** Default notification level for streaming replies (default: `important`). */
+  notifyLevel: z.union([z.const("full"), z.const("important"), z.const("result")]),
 });
 
 declare module "@deepseek-ai/cordis" {

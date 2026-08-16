@@ -36,12 +36,36 @@ export interface Messages {
   rootMenuFooter: string;
 
   thinkingHint: string;
+  toolCalling(name: string, summary: string | undefined): string;
+  processingHeartbeat(minutes: number): string;
   processingFailed(detail: string): string;
+
+  // Notification levels (streaming reply detail).
+  notifyFull: string;
+  notifyImportant: string;
+  notifyResult: string;
+  notifyFullDesc: string;
+  notifyImportantDesc: string;
+  notifyResultDesc: string;
+  notifySet(level: string, description: string): string;
+
+  // Task-end stats card.
+  taskStatsHeader(duration: string): string;
+  taskStatsModel(providerModel: string): string;
+  taskStatsTokensIn(tokens: string, cached: string | undefined): string;
+  taskStatsTokensOut(tokens: string): string;
+  taskStatsSteps(count: number): string;
+  taskStatsContext(usedPct: string, window: string): string;
+  taskStatsCompactOk: string;
+  taskStatsCompactSuggest: string;
+  taskDuration(ms: number): string;
   imageDownloadFailed(imageError: string): string;
+  fileDownloadFailed(fileError: string): string;
   imagesStaged(locations: string, description: string): string;
   imageDescriptionLabel(description: string): string;
   imageNoDescription: string;
   visionPrompt: string;
+  filesStaged(count: number, locations: string): string;
   taskEnded(reasonLabel: string): string;
   errorCode(code: string): string;
   reasonMessage(message: string): string;
@@ -75,16 +99,27 @@ export interface Messages {
   menuSettingsReasoning: string;
   menuSettingsNotify: string;
   menuSettingsOverview: string;
+  menuSettingsLanguage: string;
+  languageZh: string;
+  languageEn: string;
+  languageSet(lang: string): string;
 
   streamLabel(on: boolean): string;
   summaryLabel(on: boolean): string;
   statusNoSession(workdir: string): string;
   statusRunning: string;
   statusIdle: string;
+  statusExecuting: string;
+  statusWaiting: string;
   statusField(status: string): string;
   modelField(model: string): string;
   workdirField(workdir: string): string;
   queuedField(n: number): string;
+  queueEmpty: string;
+  queueDetail(n: number): string;
+  lastTurnReason(reason: string): string;
+  lastTurnTime(time: string): string;
+  noTurnHistory: string;
   sessionField(id: string): string;
   contextField(total: number, surface: number): string;
 
@@ -152,6 +187,27 @@ export interface Messages {
 
   currentDir: string;
 
+  // Mirror / session sharing.
+  mirrorCreated(sessionId: string): string;
+  mirrorAlreadyExists(sessionId: string): string;
+  mirrorNotConfigured: string;
+  sessionLockedBy(channel: string): string;
+  sessionReadOnly: string;
+  lockReleased: string;
+  lockTimeoutReleased(minutes: number): string;
+  unlockSuccess: string;
+  unlockNoLock: string;
+  lockRenewed(minutes: number): string;
+  messageQueued(position: number): string;
+  queueProcessed(count: number): string;
+  exportMarkdown(path: string): string;
+  exportPdfNotSupported: string;
+  exportNoSession: string;
+  exportFailed(error: string): string;
+  mirrorStatus(sessionId: string, lockedBy?: string, timeoutMin?: number, queuedCount?: number): string;
+  webMirrorIndicator: string;
+  sessionAvailableOnWeb: string;
+
   // `/help` command lines.
   helpHeader: string;
   helpMenu: string;
@@ -167,6 +223,7 @@ export interface Messages {
   helpGoals: string;
   helpSchedule: string;
   helpModel: string;
+  helpNotify: string;
   helpWorkspaces: string;
   helpNew: string;
   helpClear: string;
@@ -197,9 +254,29 @@ const zh: Messages = {
   rootSectionSystem: "🛠️ 系统",
   rootMenuFooter: "轻触按钮选择 · 操作后自动返回主菜单 · 60 秒无操作自动关闭",
 
-  thinkingHint: "🤔 深度思考中…\n",
+  thinkingHint: "🤔 深度思考中…\n\n",
+  toolCalling: (name, summary) => `🔧 调用工具 \`${name}\`${summary === undefined || summary === "" ? "" : ` — ${summary}`}`,
+  processingHeartbeat: (minutes) => `⏳ 仍在处理中（已运行约 ${minutes} 分钟）…`,
   processingFailed: (detail) => `⚠️ 处理失败：${detail}`,
+  notifyFull: "尽量输出过程",
+  notifyImportant: "输出重要节点",
+  notifyResult: "只输出结果",
+  notifyFullDesc: "实时推送思考过程、工具调用和最终回答",
+  notifyImportantDesc: "只推送关键节点：思考开始、工具调用、最终回答",
+  notifyResultDesc: "只在任务结束后发送最终结果",
+  notifySet: (level, description) => `通知级别已设置为：${level}\n${description}`,
+  taskStatsHeader: (duration) => `📊 任务完成 · 耗时 ${duration}`,
+  taskStatsModel: (providerModel) => `模型：\`${providerModel}\``,
+  taskStatsTokensIn: (tokens, cached) => `输入：${tokens} tokens${cached === undefined ? "" : `（缓存 ${cached}）`}`,
+  taskStatsTokensOut: (tokens) => `输出：${tokens} tokens`,
+  taskStatsSteps: (count) => `步骤：${count}`,
+  taskStatsContext: (usedPct, window) => `上下文占用：${usedPct}%（窗口 ${window}）`,
+  taskStatsCompactOk: "上下文占用正常，暂无需压缩",
+  taskStatsCompactSuggest: "⚠️ 上下文占用较高，建议发送 /compact 压缩上下文",
+  taskDuration: (ms) =>
+    ms < 60_000 ? `${Math.round(ms / 1000)} 秒` : `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`,
   imageDownloadFailed: (imageError) => `[用户发送了图片，但下载失败：${imageError}]`,
+  fileDownloadFailed: (fileError) => `[用户发送了文件，但下载失败：${fileError}]`,
   imagesStaged: (locations, description) =>
     description !== ""
       ? `[用户发送了图片，图片已保存到以下路径（可用工具查看）：\n${locations}\n图片内容说明：\n${description}]`
@@ -208,6 +285,7 @@ const zh: Messages = {
   imageNoDescription: "（未能自动分析图片内容，请用文件/终端工具查看这些图片。）",
   visionPrompt:
     "请详细描述这些图片的内容（物体、场景、文字、布局、氛围等），供一个无法直接查看图片的主模型理解。",
+  filesStaged: (count, locations) => `[用户发送了 ${count} 个文件，已保存到以下路径（可用工具查看）：\n${locations}]`,
   taskEnded: (reasonLabel) => `**任务结束**：${reasonLabel}`,
   errorCode: (code) => `错误码：\`${code}\``,
   reasonMessage: (message) => `原因：${message}`,
@@ -241,16 +319,27 @@ const zh: Messages = {
   menuSettingsReasoning: "🧠 推理强度",
   menuSettingsNotify: "🔔 通知设置",
   menuSettingsOverview: "📄 配置总览",
+  menuSettingsLanguage: "🌐 语言",
+  languageZh: "中文",
+  languageEn: "English",
+  languageSet: (lang) => `语言已切换为 ${lang}。`,
 
   streamLabel: (on) => `流式输出：${on ? "开" : "关"}`,
   summaryLabel: (on) => `结束摘要：${on ? "开" : "关"}`,
   statusNoSession: (workdir) => `状态：无活动会话\n工作目录：${workdir}`,
-  statusRunning: "🟢 运行中",
+  statusRunning: "🟢 执行中",
   statusIdle: "⚪ 空闲",
+  statusExecuting: "🔄 正在处理任务",
+  statusWaiting: "⏳ 等待新消息",
   statusField: (status) => `状态：${status}`,
   modelField: (model) => `模型：${model}`,
   workdirField: (workdir) => `工作目录：${workdir}`,
   queuedField: (n) => `待处理消息：${n}`,
+  queueEmpty: "（队列空）",
+  queueDetail: (n) => `${n} 条消息排队中`,
+  lastTurnReason: (reason) => `上次任务：${reason}`,
+  lastTurnTime: (time) => `完成时间：${time}`,
+  noTurnHistory: "（尚无任务历史）",
   sessionField: (id) => `会话：${id}`,
   contextField: (total, surface) => `上下文：${total} tokens（会话 ${surface}）`,
 
@@ -319,6 +408,31 @@ const zh: Messages = {
 
   currentDir: "当前目录",
 
+  mirrorCreated: (sessionId) => `✅ Web 镜像会话已创建：${sessionId}\n在 DSH Web 中打开此会话即可查看飞书对话历史。`,
+  mirrorAlreadyExists: (sessionId) => `Web 镜像会话已存在：${sessionId}`,
+  mirrorNotConfigured: "当前会话未配置 Web 镜像。使用 /mirror 命令创建。",
+  sessionLockedBy: (channel) => `⚠️ 会话正被 ${channel === "feishu" ? "飞书" : "Web"} 占用，当前为只读模式`,
+  sessionReadOnly: "🔒 会话锁定中，只能查看不能发送消息",
+  lockReleased: "🔓 会话锁已释放",
+  lockTimeoutReleased: (minutes) => `⏰ 会话锁已超时（${minutes} 分钟无活动），自动释放`,
+  unlockSuccess: "🔓 会话锁已手动释放",
+  unlockNoLock: "当前没有活跃的会话锁",
+  lockRenewed: (minutes) => `🔄 会话锁已续期 ${minutes} 分钟`,
+  messageQueued: (position) => `📥 消息已加入队列（第 ${position} 位），等待锁释放后自动执行`,
+  queueProcessed: (count) => `✅ 已处理队列中的 ${count} 条消息`,
+  exportMarkdown: (path) => `📄 对话历史已导出为 Markdown：\n${path}`,
+  exportPdfNotSupported: "⚠️ PDF 导出暂不支持，请使用 Markdown 格式",
+  exportNoSession: "当前没有活动会话，无法导出",
+  exportFailed: (error) => `❌ 导出失败：${error}`,
+  mirrorStatus: (sessionId, lockedBy, timeoutMin, queuedCount) => {
+    const lockInfo = lockedBy ? `\n锁定方：${lockedBy === "feishu" ? "飞书" : "Web"}` : "";
+    const timeoutInfo = timeoutMin !== undefined ? `\n超时时间：${timeoutMin} 分钟` : "";
+    const queueInfo = queuedCount && queuedCount > 0 ? `\n排队消息：${queuedCount} 条` : "";
+    return `Web 镜像会话：${sessionId}${lockInfo}${timeoutInfo}${queueInfo}`;
+  },
+  webMirrorIndicator: "🌐",
+  sessionAvailableOnWeb: "（同时在 Web 上可用）",
+
   helpHeader: "可用命令（本地执行，不消耗模型）：",
   helpMenu: "打开主菜单（层级点选，可返回）",
   helpSettings: "设置：模型 / 推理强度 / 通知 / 配置总览",
@@ -333,6 +447,7 @@ const zh: Messages = {
   helpGoals: "查看当前目标",
   helpSchedule: "查看本会话的定时提醒",
   helpModel: "查看 / 切换模型",
+  helpNotify: "选择通知程度（完整过程 / 重要节点 / 仅结果）",
   helpWorkspaces: "列出所有工作区",
   helpNew: "开启新对话",
   helpClear: "清空当前对话",
@@ -363,9 +478,29 @@ const en: Messages = {
   rootSectionSystem: "🛠️ System",
   rootMenuFooter: "Tap a button · returns to the main menu after an action · auto-closes after 60 s idle",
 
-  thinkingHint: "🤔 Deep thinking…\n",
+  thinkingHint: "🤔 Deep thinking…\n\n",
+  toolCalling: (name, summary) => `🔧 Calling tool \`${name}\`${summary === undefined || summary === "" ? "" : ` — ${summary}`}`,
+  processingHeartbeat: (minutes) => `⏳ Still processing (~${minutes} min)…`,
   processingFailed: (detail) => `⚠️ Processing failed: ${detail}`,
+  notifyFull: "Full process",
+  notifyImportant: "Key milestones",
+  notifyResult: "Result only",
+  notifyFullDesc: "Stream reasoning, tool calls and the final answer live",
+  notifyImportantDesc: "Only key milestones: thinking start, tool calls, final answer",
+  notifyResultDesc: "Only the final result when the task finishes",
+  notifySet: (level, description) => `Notification level set to: ${level}\n${description}`,
+  taskStatsHeader: (duration) => `📊 Task done · took ${duration}`,
+  taskStatsModel: (providerModel) => `Model: \`${providerModel}\``,
+  taskStatsTokensIn: (tokens, cached) => `Input: ${tokens} tokens${cached === undefined ? "" : ` (cached ${cached})`}`,
+  taskStatsTokensOut: (tokens) => `Output: ${tokens} tokens`,
+  taskStatsSteps: (count) => `Steps: ${count}`,
+  taskStatsContext: (usedPct, window) => `Context usage: ${usedPct}% (window ${window})`,
+  taskStatsCompactOk: "Context usage is fine — no compaction needed",
+  taskStatsCompactSuggest: "⚠️ Context usage is high — consider sending /compact",
+  taskDuration: (ms) =>
+    ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`,
   imageDownloadFailed: (imageError) => `[The user sent an image, but download failed: ${imageError}]`,
+  fileDownloadFailed: (fileError) => `[The user sent a file, but download failed: ${fileError}]`,
   imagesStaged: (locations, description) =>
     description !== ""
       ? `[The user sent images, saved to the following paths (viewable with tools):\n${locations}\nImage description:\n${description}]`
@@ -374,6 +509,7 @@ const en: Messages = {
   imageNoDescription: "(No image analysis available — inspect the files with the file/terminal tools.)",
   visionPrompt:
     "Describe these images in detail (objects, scene, text, layout, atmosphere, etc.) for a main model that cannot view images directly.",
+  filesStaged: (count, locations) => `[The user sent ${count} file(s), saved to the following paths (viewable with tools):\n${locations}]`,
   taskEnded: (reasonLabel) => `**Task ended** — ${reasonLabel}`,
   errorCode: (code) => `Error code: \`${code}\``,
   reasonMessage: (message) => `Reason: ${message}`,
@@ -407,16 +543,27 @@ const en: Messages = {
   menuSettingsReasoning: "🧠 Reasoning effort",
   menuSettingsNotify: "🔔 Notifications",
   menuSettingsOverview: "📄 Config overview",
+  menuSettingsLanguage: "🌐 Language",
+  languageZh: "中文",
+  languageEn: "English",
+  languageSet: (lang) => `Language switched to ${lang}.`,
 
   streamLabel: (on) => `Streaming output: ${on ? "on" : "off"}`,
   summaryLabel: (on) => `End-of-turn summary: ${on ? "on" : "off"}`,
   statusNoSession: (workdir) => `Status: no active session\nWorkdir: ${workdir}`,
-  statusRunning: "🟢 Running",
+  statusRunning: "🟢 Executing",
   statusIdle: "⚪ Idle",
+  statusExecuting: "🔄 Processing task",
+  statusWaiting: "⏳ Waiting for messages",
   statusField: (status) => `Status: ${status}`,
   modelField: (model) => `Model: ${model}`,
   workdirField: (workdir) => `Workdir: ${workdir}`,
   queuedField: (n) => `Queued messages: ${n}`,
+  queueEmpty: "(queue empty)",
+  queueDetail: (n) => `${n} message(s) queued`,
+  lastTurnReason: (reason) => `Last turn: ${reason}`,
+  lastTurnTime: (time) => `Completed: ${time}`,
+  noTurnHistory: "(no turn history yet)",
   sessionField: (id) => `Session: ${id}`,
   contextField: (total, surface) => `Context: ${total} tokens (session ${surface})`,
 
@@ -485,6 +632,31 @@ const en: Messages = {
 
   currentDir: "Current directory",
 
+  mirrorCreated: (sessionId) => `✅ Web mirror session created: ${sessionId}\nOpen this session in DSH Web to view the Feishu conversation history.`,
+  mirrorAlreadyExists: (sessionId) => `Web mirror session already exists: ${sessionId}`,
+  mirrorNotConfigured: "No Web mirror configured for this session. Use /mirror to create one.",
+  sessionLockedBy: (channel) => `⚠️ Session is locked by ${channel === "feishu" ? "Feishu" : "Web"}, currently in read-only mode`,
+  sessionReadOnly: "🔒 Session locked, view-only mode",
+  lockReleased: "🔓 Session lock released",
+  lockTimeoutReleased: (minutes) => `⏰ Session lock timed out (${minutes} minutes of inactivity), auto-released`,
+  unlockSuccess: "🔓 Session lock manually released",
+  unlockNoLock: "No active session lock",
+  lockRenewed: (minutes) => `🔄 Session lock renewed for ${minutes} minutes`,
+  messageQueued: (position) => `📥 Message queued (position ${position}), will execute after lock release`,
+  queueProcessed: (count) => `✅ Processed ${count} queued message(s)`,
+  exportMarkdown: (path) => `📄 Conversation history exported to Markdown:\n${path}`,
+  exportPdfNotSupported: "⚠️ PDF export is not supported yet, please use Markdown format",
+  exportNoSession: "No active session to export",
+  exportFailed: (error) => `❌ Export failed: ${error}`,
+  mirrorStatus: (sessionId, lockedBy, timeoutMin, queuedCount) => {
+    const lockInfo = lockedBy ? `\nLocked by: ${lockedBy === "feishu" ? "Feishu" : "Web"}` : "";
+    const timeoutInfo = timeoutMin !== undefined ? `\nTimeout: ${timeoutMin} minutes` : "";
+    const queueInfo = queuedCount && queuedCount > 0 ? `\nQueued messages: ${queuedCount}` : "";
+    return `Web mirror session: ${sessionId}${lockInfo}${timeoutInfo}${queueInfo}`;
+  },
+  webMirrorIndicator: "🌐",
+  sessionAvailableOnWeb: "(also available on Web)",
+
   helpHeader: "Available commands (run locally, no model tokens):",
   helpMenu: "open the main menu (hierarchical, back supported)",
   helpSettings: "settings: model / reasoning effort / notifications / config overview",
@@ -499,6 +671,7 @@ const en: Messages = {
   helpGoals: "show current goals",
   helpSchedule: "show scheduled reminders for this session",
   helpModel: "view / switch the model",
+  helpNotify: "choose notification level (full process / key milestones / result only)",
   helpWorkspaces: "list all workspaces",
   helpNew: "start a new conversation",
   helpClear: "clear the current conversation",

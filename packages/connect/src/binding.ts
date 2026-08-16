@@ -27,6 +27,27 @@ export interface ChatBinding {
   ownerKey: string;
   createdAt: number;
   lastActiveAt: number;
+  /** Per-chat UI language override (`zh` / `en`); falls back to the plugin config. */
+  language?: "zh" | "en";
+  /** Per-chat notification level for streaming replies; falls back to the plugin config. */
+  notifyLevel?: "full" | "important" | "result";
+  /** Web mirror session id (shared with DSH Web for viewing). */
+  webMirrorSessionId?: string;
+  /** Session lock status: which channel currently owns write access. */
+  lockOwner?: "feishu" | "web";
+  /** Timestamp when the lock was acquired (for timeout detection). */
+  lockAcquiredAt?: number;
+  /** Lock timeout in milliseconds (default 5 minutes). */
+  lockTimeoutMs?: number;
+  /** Queued messages waiting for lock release (Web → Feishu bridge). */
+  queuedMessages?: Array<{ 
+    text: string; 
+    senderKey: string; 
+    timestamp: number;
+    replyRef?: string;
+    images?: readonly string[];
+    files?: readonly string[];
+  }>;
   /** Every conversation ever opened in this chat, oldest last. */
   sessions: ChatSessionRecord[];
 }
@@ -55,9 +76,13 @@ function normalizeSessions(value: unknown): ChatSessionRecord[] {
   return out;
 }
 
+/** Callback type for binding change events. */
+export type BindingChangeCallback = (binding: ChatBinding, changeType: "add" | "update" | "delete") => void;
+
 export class BindingStore {
   private readonly map = new Map<string, ChatBinding>();
   private readonly file: string;
+  private readonly changeListeners = new Set<BindingChangeCallback>();
 
   constructor(stateDir?: string) {
     const dir = stateDir ?? process.env.DSH_CONNECT_STATE_DIR ?? ".dsh-connect";
@@ -65,18 +90,81 @@ export class BindingStore {
     this.load();
   }
 
+  /**
+   * Register a listener for binding changes.
+   * @param callback - Function called when any binding is added, updated, or deleted
+   * @returns Unsubscribe function
+   */
+  onChange(callback: BindingChangeCallback): () => void {
+    this.changeListeners.add(callback);
+    return () => {
+      this.changeListeners.delete(callback);
+    };
+  }
+
+  /**
+   * Emit a change event to all registered listeners.
+   */
+  private emitChange(binding: ChatBinding, changeType: "add" | "update" | "delete"): void {
+    for (const listener of this.changeListeners) {
+      try {
+        listener(binding, changeType);
+      } catch {
+        // Listener errors should not break the store
+      }
+    }
+  }
+
+  /**
+   * Iterate over all bindings in the store.
+   * @returns Iterator of all ChatBinding entries
+   */
+  entries(): IterableIterator<ChatBinding> {
+    return this.map.values();
+  }
+
+  /**
+   * Get all bindings as an array.
+   */
+  list(): ChatBinding[] {
+    return [...this.map.values()];
+  }
+
+  /**
+   * Find bindings by webMirrorSessionId.
+   * @param sessionId - The session ID to search for
+   * @returns Array of bindings that have this sessionId as their webMirrorSessionId
+   */
+  findByWebMirror(sessionId: string): ChatBinding[] {
+    const results: ChatBinding[] = [];
+    for (const binding of this.map.values()) {
+      if (binding.webMirrorSessionId === sessionId) {
+        results.push(binding);
+      }
+    }
+    return results;
+  }
+
   get(channel: string, chatKey: string): ChatBinding | undefined {
     return this.map.get(keyOf(channel, chatKey));
   }
 
   put(binding: ChatBinding): void {
-    this.map.set(keyOf(binding.channel, binding.chatKey), binding);
+    const key = keyOf(binding.channel, binding.chatKey);
+    const existed = this.map.has(key);
+    this.map.set(key, binding);
     this.save();
+    this.emitChange(binding, existed ? "update" : "add");
   }
 
   delete(channel: string, chatKey: string): void {
-    this.map.delete(keyOf(channel, chatKey));
-    this.save();
+    const key = keyOf(channel, chatKey);
+    const binding = this.map.get(key);
+    if (binding !== undefined) {
+      this.map.delete(key);
+      this.save();
+      this.emitChange(binding, "delete");
+    }
   }
 
   private load(): void {
@@ -96,6 +184,15 @@ export class BindingStore {
           ownerKey: typeof b.ownerKey === "string" ? b.ownerKey : "",
           createdAt: typeof b.createdAt === "number" ? b.createdAt : Date.now(),
           lastActiveAt: typeof b.lastActiveAt === "number" ? b.lastActiveAt : Date.now(),
+          ...(b.language === "zh" || b.language === "en" ? { language: b.language } : {}),
+          ...(b.notifyLevel === "full" || b.notifyLevel === "important" || b.notifyLevel === "result" ? { notifyLevel: b.notifyLevel } : {}),
+          ...(typeof b.webMirrorSessionId === "string" ? { webMirrorSessionId: b.webMirrorSessionId } : {}),
+          ...(b.lockOwner === "feishu" || b.lockOwner === "web" ? { lockOwner: b.lockOwner } : {}),
+          ...(typeof b.lockAcquiredAt === "number" ? { lockAcquiredAt: b.lockAcquiredAt } : {}),
+          ...(typeof b.lockTimeoutMs === "number" ? { lockTimeoutMs: b.lockTimeoutMs } : {}),
+          ...(Array.isArray(b.queuedMessages) ? { queuedMessages: b.queuedMessages.filter((m): m is { text: string; senderKey: string; timestamp: number } => 
+            typeof m === "object" && m !== null && typeof (m as any).text === "string" && typeof (m as any).senderKey === "string"
+          ) } : {}),
           sessions: normalizeSessions(b.sessions),
         });
       }

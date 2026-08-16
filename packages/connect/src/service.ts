@@ -4,9 +4,57 @@
  * @module dsh-connect/service
  */
 import { Service, type Context } from "@deepseek-ai/cordis";
+import { readFileSync, existsSync } from "node:fs";
+import { basename, join, dirname } from "node:path";
 import type { ChannelAdapter, InboundMessage } from "./types.js";
 import { AgentRunner, resolveConnectConfig, type ConnectConfig, type ResolvedConnectConfig } from "./runner.js";
 import { BindingStore } from "./binding.js";
+
+/** Minimal workspace registry face used by the connect service (typed loosely to avoid a hard dependency). */
+interface WorkspaceRegistryLike {
+  create?(path: string, title?: string): Promise<unknown>;
+  resolveByPath?(path: string): Promise<{ attachSession?(sessionId: string): Promise<void> } | undefined>;
+}
+
+/** Shared configuration loaded from dsh.shared.config.json */
+interface SharedConfig {
+  workspace?: {
+    defaultWorkDir?: string;
+    additionalWorkspaces?: string[];
+  };
+  state?: {
+    stateDir?: string;
+    bindingsFile?: string;
+    sessionStorePath?: string;
+  };
+  mirror?: {
+    autoCreate?: boolean;
+    defaultTimeoutMinutes?: number;
+    enableLocking?: boolean;
+  };
+  language?: "zh" | "en";
+}
+
+/** Load shared configuration from project root or current directory. */
+function loadSharedConfig(): SharedConfig {
+  const candidates = [
+    join(process.cwd(), "dsh.shared.config.json"),
+    join(dirname(process.cwd()), "dsh.shared.config.json"),
+  ];
+  
+  for (const path of candidates) {
+    if (existsSync(path)) {
+      try {
+        const raw = readFileSync(path, "utf8");
+        return JSON.parse(raw);
+      } catch {
+        // Ignore parse errors, fall back to defaults
+      }
+    }
+  }
+  
+  return {};
+}
 
 function runnerKey(channel: string, chatKey: string): string {
   return `${channel}\u0000${chatKey}`;
@@ -17,11 +65,97 @@ export class ConnectService extends Service {
   private readonly adapters = new Map<string, ChannelAdapter>();
   private readonly runners = new Map<string, AgentRunner>();
   private readonly bindings: BindingStore;
+  private workspacesRegistered = false;
 
   constructor(ctx: Context, config: ConnectConfig = {}) {
     super(ctx, "connect");
-    this.config = resolveConnectConfig(config);
+    
+    // Load shared configuration and merge with provided config
+    const sharedConfig = loadSharedConfig();
+    const mergedConfig: ConnectConfig = {
+      ...config,
+      // Shared config takes precedence for workspace and state settings
+      workDir: sharedConfig.workspace?.defaultWorkDir ?? config.workDir,
+      workspaces: [
+        ...(sharedConfig.workspace?.additionalWorkspaces ?? []),
+        ...(config.workspaces ?? []),
+      ],
+      stateDir: sharedConfig.state?.stateDir ?? config.stateDir,
+      language: sharedConfig.language ?? config.language,
+      autoMirror: sharedConfig.mirror?.autoCreate ?? config.autoMirror,
+    };
+    
+    this.config = resolveConnectConfig(mergedConfig);
     this.bindings = new BindingStore(this.config.stateDir);
+  }
+
+  /** Expose the binding store so adapters (e.g. connect-web) can monitor mirror sessions. */
+  get bindingStore(): BindingStore {
+    return this.bindings;
+  }
+
+  /**
+   * Register every connect work directory as a DSH workspace (idempotent).
+   *
+   * DSH's Web GUI groups sessions by workspace: a session is only visible
+   * under a workspace when its header `cwd` matches the workspace path AND it
+   * is present in the workspace's session account. Without this step the
+   * Feishu-created `connect-*` sessions never appear in the Web GUI's
+   * workspace browser, even though they live in the shared session store.
+   *
+   * This method also back-fills the workspace session account with every
+   * session the bindings file already knows about, so history created before
+   * this feature shows up too.
+   */
+  async ensureWorkspacesRegistered(): Promise<void> {
+    if (this.workspacesRegistered) return;
+    this.workspacesRegistered = true;
+    const registry = this.ctx.get("workspaceRegistry") as WorkspaceRegistryLike | undefined;
+    if (registry?.create === undefined || registry.resolveByPath === undefined) {
+      // No workspace service in this DSH process — Web GUI grouping is unavailable.
+      return;
+    }
+
+    // Deduplicate work dirs (case-insensitive on Windows).
+    const seen = new Set<string>();
+    const paths: string[] = [];
+    for (const p of [this.config.workDir, ...this.config.workspaces]) {
+      if (p === undefined || p === "") continue;
+      const key = p.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      paths.push(p);
+    }
+
+    // 1) Make sure each work dir is a registered workspace.
+    const workDirToWorkspace = new Map<string, { attachSession?(sessionId: string): Promise<void> }>();
+    for (const p of paths) {
+      try {
+        await registry.create(p, basename(p));
+      } catch {
+        // Directory may not exist yet; resolveByPath below will just miss it.
+      }
+    }
+
+    // 2) Attach every known session to the workspace matching its recorded workDir.
+    for (const binding of this.bindings.list()) {
+      const candidates = new Map<string, string>();
+      if (binding.sessionId !== "") candidates.set(binding.sessionId, binding.sessionId);
+      for (const s of binding.sessions ?? []) candidates.set(s.sessionId, s.workDir);
+      for (const [sessionId, workDir] of candidates) {
+        if (workDir === "") continue;
+        try {
+          const ws = await registry.resolveByPath(workDir);
+          if (ws?.attachSession !== undefined) {
+            const prior = workDirToWorkspace.get(workDir.toLowerCase());
+            if (prior === undefined) workDirToWorkspace.set(workDir.toLowerCase(), ws);
+            await ws.attachSession(sessionId as never);
+          }
+        } catch {
+          // Best-effort: a session whose directory disappeared is skipped.
+        }
+      }
+    }
   }
 
   /** Register a channel adapter; its inbound messages route through here. */
@@ -52,6 +186,12 @@ export class ConnectService extends Service {
     const adapter = this.adapters.get(msg.channel);
     if (adapter === undefined) return;
 
+    // Make sure the DSH workspace registry knows about our work dirs and
+    // sessions before the first runner spins up. Awaiting guarantees the
+    // workspace exists before a new session is created and attached to it
+    // (the registry flag makes subsequent calls a no-op).
+    await this.ensureWorkspacesRegistered();
+
     const key = runnerKey(msg.channel, msg.chatKey);
     let runner = this.runners.get(key);
     if (runner === undefined) {
@@ -63,6 +203,7 @@ export class ConnectService extends Service {
         msg.chatType,
         adapter,
         this.bindings,
+        this.adapters,
       );
       this.runners.set(key, runner);
     }

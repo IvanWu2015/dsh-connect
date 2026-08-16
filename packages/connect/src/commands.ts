@@ -22,7 +22,12 @@ export type Command =
   | { readonly kind: "goals" }
   | { readonly kind: "schedule" }
   | { readonly kind: "model" }
+  | { readonly kind: "notify" }
   | { readonly kind: "workspaces" }
+  | { readonly kind: "mirror"; readonly timeoutMin?: number }
+  | { readonly kind: "unlock" }
+  | { readonly kind: "renew" }
+  | { readonly kind: "export"; readonly format?: "markdown" | "pdf" }
   | { readonly kind: "help" }
   | { readonly kind: "message"; readonly text: string };
 
@@ -81,9 +86,39 @@ export function parseCommand(raw: string): Command {
       return { kind: "schedule" };
     case "/model":
       return { kind: "model" };
+    case "/notify":
+    case "/notice":
+      return { kind: "notify" };
     case "/workspaces":
     case "/wslist":
       return { kind: "workspaces" };
+    case "/mirror":
+    case "/web": {
+      // Parse optional --timeout N parameter
+      if (arg !== undefined && arg !== "") {
+        const timeoutMatch = arg.match(/--timeout\s+(\d+)/);
+        if (timeoutMatch) {
+          const timeoutMin = parseInt(timeoutMatch[1], 10);
+          return { kind: "mirror", timeoutMin };
+        }
+      }
+      return { kind: "mirror" };
+    }
+    case "/unlock":
+    case "/release":
+      return { kind: "unlock" };
+    case "/renew":
+    case "/renew-lock":
+      return { kind: "renew" };
+    case "/export": {
+      // Parse optional format parameter: /export markdown or /export pdf
+      if (arg === "markdown" || arg === "md") {
+        return { kind: "export", format: "markdown" };
+      } else if (arg === "pdf") {
+        return { kind: "export", format: "pdf" };
+      }
+      return { kind: "export" };
+    }
     case "/help":
     case "/start":
       return { kind: "help" };
@@ -108,7 +143,12 @@ export function helpText(t: Messages): string {
     "- `/goals` " + t.helpGoals,
     "- `/schedule` " + t.helpSchedule,
     "- `/model` " + t.helpModel,
+    "- `/notify` " + t.helpNotify,
     "- `/workspaces` " + t.helpWorkspaces,
+    "- `/mirror [--timeout N]` create Web mirror session (optional timeout in minutes)",
+    "- `/unlock` manually release session lock",
+    "- `/renew` renew current session lock timeout",
+    "- `/export [markdown|pdf]` export conversation history",
     "- `/new` " + t.helpNew,
     "- `/clear` " + t.helpClear,
     "- `/stop` " + t.helpStop,

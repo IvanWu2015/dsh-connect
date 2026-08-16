@@ -1,0 +1,29 @@
+{
+  "name": "dsh-connect-web",
+  "version": "1.0.0",
+  "description": "Web channel adapter for dsh-connect: mirrors Feishu conversations to DSH Web GUI",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "workspace:*",
+    "@deepseek-ai/schemastery": "workspace:*",
+    "dsh-connect": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.6.3"
+  },
+  "keywords": ["dsh", "deepseek-harness", "web", "mirror", "chatbot"],
+  "license": "MIT"
+}

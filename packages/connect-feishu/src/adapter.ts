@@ -35,7 +35,7 @@ function displayWidth(s: string): number {
 }
 
 /** Pad every label with trailing spaces up to the same display width. */
-function padLabels(options: readonly ChoiceOption[]): ChoiceOption[] {
+export function padLabels(options: readonly ChoiceOption[]): ChoiceOption[] {
   const widths = options.map((o) => displayWidth(o.label));
   const max = Math.max(0, ...widths);
   // Cap the padding target so very long labels don't force wrapping everywhere.
@@ -52,17 +52,17 @@ function padLabels(options: readonly ChoiceOption[]): ChoiceOption[] {
 }
 
 /**
- * Render options as an equal-width button grid: 3 buttons per row via
- * `column_set` (three weighted columns), padding the last row with empty
- * columns so every row is a uniform 3-cell layout. Labels are padded to the
+ * Render options as an equal-width button grid: 2 buttons per row via
+ * `column_set` (two weighted columns), padding the last row with empty
+ * columns so every row is a uniform 2-cell layout. Labels are padded to the
  * same display width so the buttons themselves render uniformly. Destructive
  * actions (labels starting with ❌) render as red danger buttons.
  */
-function buildButtonGrid(options: readonly ChoiceOption[]): unknown[] {
+export function buildButtonGrid(options: readonly ChoiceOption[], columnsPerRow: number = 2): unknown[] {
   const padded = padLabels(options);
   const rows: unknown[] = [];
-  for (let i = 0; i < padded.length; i += 3) {
-    const group = padded.slice(i, i + 3);
+  for (let i = 0; i < padded.length; i += columnsPerRow) {
+    const group = padded.slice(i, i + columnsPerRow);
     const columns = group.map((opt) => ({
       tag: "column",
       width: "weighted",
@@ -77,7 +77,7 @@ function buildButtonGrid(options: readonly ChoiceOption[]): unknown[] {
         },
       ],
     }));
-    while (columns.length < 3) {
+    while (columns.length < columnsPerRow) {
       columns.push({ tag: "column", width: "weighted", weight: 1, vertical_align: "center", elements: [] });
     }
     rows.push({
@@ -96,10 +96,13 @@ function buildButtonGrid(options: readonly ChoiceOption[]): unknown[] {
  * and a divider before it — instead of one flat grid. Options not listed in
  * any section (typically the trailing exit/back buttons) are rendered after
  * the sections, separated by a divider.
+ * 
+ * @param prompt - The choice prompt to render
+ * @param defaultColumns - Default number of columns per row (default: 2)
  */
-function buildChoiceElements(prompt: ChoicePrompt): unknown[] {
+export function buildChoiceElements(prompt: ChoicePrompt, defaultColumns: number = 2): unknown[] {
   const { options, sections } = prompt;
-  if (sections === undefined || sections.length === 0) return buildButtonGrid(options);
+  if (sections === undefined || sections.length === 0) return buildButtonGrid(options, defaultColumns);
   const byId = new Map(options.map((o) => [o.id, o]));
   const listed = new Set(sections.flatMap((s) => s.ids));
   const elements: unknown[] = [];
@@ -112,12 +115,14 @@ function buildChoiceElements(prompt: ChoicePrompt): unknown[] {
     if (section.title !== undefined) {
       elements.push({ tag: "div", text: { tag: "lark_md", content: `**${section.title}**` } });
     }
-    elements.push(...buildButtonGrid(group));
+    // Use section-specific columns if defined, otherwise use prompt default
+    const sectionColumns = section.columnsPerRow ?? defaultColumns;
+    elements.push(...buildButtonGrid(group, sectionColumns));
   }
   const rest = options.filter((o) => !listed.has(o.id));
   if (rest.length > 0) {
     elements.push({ tag: "hr" });
-    elements.push(...buildButtonGrid(rest));
+    elements.push(...buildButtonGrid(rest, defaultColumns));
   }
   return elements;
 }
@@ -132,13 +137,22 @@ function collectStream(stream: NodeJS.ReadableStream): Promise<Buffer> {
   });
 }
 
+/** Strip path separators / control chars from a downloaded file's name. */
+export function sanitizeFileName(name: string): string {
+  const clean = name
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+    .trim()
+    .slice(0, 200);
+  return clean === "" ? "file" : clean;
+}
+
 /**
  * Extract a human-readable error detail. Feishu business errors (missing
  * permission, invalid resource, …) arrive as HTTP 200/400 with the real
  * `{code, msg}` in the response body; prefer that over the axios fallback
  * message like "Request failed with status code 400" that hides the cause.
  */
-function extractErrorDetail(error: unknown): string {
+export function extractErrorDetail(error: unknown): string {
   const raw = error as
     | { response?: { status?: number; data?: { code?: unknown; msg?: unknown; message?: unknown } } }
     | undefined;
@@ -176,7 +190,7 @@ interface NormalizedMsg {
   chatType: "p2p" | "group";
   senderId: string;
   content: string;
-  resources?: { type: string; fileKey: string }[];
+  resources?: { type: string; fileKey: string; fileName?: string }[];
 }
 
 interface PendingChoice {
@@ -226,65 +240,92 @@ export class FeishuAdapter implements ChannelAdapter {
     this.handler = handler;
   }
 
-  /** Download attached images to local temp files and return their paths (and any failure). */
-  private async downloadImages(msg: NormalizedMsg): Promise<{ images: string[]; error?: string }> {
-    const resources = msg.resources?.filter((r) => r.type === "image") ?? [];
-    if (resources.length === 0) return { images: [] };
-    const dir = join(tmpdir(), "dsh-connect-images");
+  /** Resource types downloadable via `im.v1.messageResource.get`. Stickers are not supported by the Feishu API. */
+  private static readonly DOWNLOADABLE_TYPES = new Set(["image", "file", "audio", "video"]);
+
+  /** Download attached images / files into local temp dirs; return their paths (and any failures). */
+  private async downloadResources(msg: NormalizedMsg): Promise<{
+    images: string[];
+    files: string[];
+    imageError?: string;
+    fileError?: string;
+  }> {
+    const resources = msg.resources?.filter((r) => FeishuAdapter.DOWNLOADABLE_TYPES.has(r.type)) ?? [];
+    if (resources.length === 0) return { images: [], files: [] };
+    const imagesDir = join(tmpdir(), "dsh-connect-images");
+    const filesDir = join(tmpdir(), "dsh-connect-files");
     try {
-      mkdirSync(dir, { recursive: true });
+      mkdirSync(imagesDir, { recursive: true });
+      mkdirSync(filesDir, { recursive: true });
     } catch (error) {
-      return { images: [], error: this.t.tempDirFailed(String(error)) };
+      return { images: [], files: [], imageError: this.t.tempDirFailed(String(error)), fileError: this.t.tempDirFailed(String(error)) };
     }
-    const paths: string[] = [];
-    let failed = 0;
-    let firstError: string | undefined;
+    const images: string[] = [];
+    const files: string[] = [];
+    let imageFailed = 0;
+    let fileFailed = 0;
+    let firstImageError: string | undefined;
+    let firstFileError: string | undefined;
     for (const r of resources) {
+      const isImage = r.type === "image";
+      const target = isImage ? images : files;
       try {
-        const buf = await this.downloadMessageImage(msg.messageId, r.fileKey);
-        const file = join(dir, `${msg.messageId}-${r.fileKey.replace(/[^a-zA-Z0-9]/g, "_")}`);
+        const buf = await this.downloadMessageResource(msg.messageId, r.fileKey, r.type);
+        const dir = isImage ? imagesDir : filesDir;
+        const name = isImage
+          ? `${msg.messageId}-${r.fileKey.replace(/[^a-zA-Z0-9]/g, "_")}`
+          : `${msg.messageId}-${sanitizeFileName(r.fileName ?? `${r.type}-${r.fileKey}`)}`;
+        const file = join(dir, name);
         writeFileSync(file, buf);
-        paths.push(file);
+        target.push(file);
       } catch (error) {
-        failed += 1;
         const detail = extractErrorDetail(error);
-        firstError ??= detail;
-        this.logger?.warn?.(this.t.imageDownloadLog(r.fileKey, detail));
+        if (isImage) {
+          imageFailed += 1;
+          firstImageError ??= detail;
+          this.logger?.warn?.(this.t.imageDownloadLog(r.fileKey, detail));
+        } else {
+          fileFailed += 1;
+          firstFileError ??= detail;
+          this.logger?.warn?.(this.t.fileDownloadLog(r.fileKey, detail));
+        }
       }
     }
-    if (paths.length === 0 && failed > 0) {
+    const out: { images: string[]; files: string[]; imageError?: string; fileError?: string } = { images, files };
+    if (images.length === 0 && imageFailed > 0) {
       // Keep the real Feishu error code/detail so the user can pinpoint the
       // actual missing permission instead of a generic hint.
-      const detail = firstError === undefined ? "" : this.t.errorDetail(firstError.slice(0, 200));
-      return {
-        images: [],
-        error: this.t.imageDownloadError(failed, detail),
-      };
+      const detail = firstImageError === undefined ? "" : this.t.errorDetail(firstImageError.slice(0, 200));
+      out.imageError = this.t.imageDownloadError(imageFailed, detail);
     }
-    return { images: paths };
+    if (files.length === 0 && fileFailed > 0) {
+      const detail = firstFileError === undefined ? "" : this.t.errorDetail(firstFileError.slice(0, 200));
+      out.fileError = this.t.fileDownloadError(fileFailed, detail);
+    }
+    return out;
   }
 
   /**
-   * Download an image inside a user message.
+   * Download a resource inside a user message.
    *
-   * Note: do NOT use the SDK's `downloadResource(fileKey, "image")` — it calls
-   * `im.v1.image.get` (download image), and per the Feishu docs that endpoint
-   * **can only download images uploaded by the bot itself**. Images inside
-   * user-sent messages must be fetched with "get resource file from message"
-   * `im.v1.messageResource.get` (with message_id + type=image), otherwise it
-   * returns HTTP 400.
+   * Note: do NOT use the SDK's `downloadResource(fileKey, type)` — it calls
+   * `im.v1.image.get` / `im.v1.file.get` (download image / download file), and
+   * per the Feishu docs those endpoints **can only download resources uploaded
+   * by the bot itself**. Resources inside user-sent messages must be fetched
+   * with "get resource file from message" `im.v1.messageResource.get` (with
+   * message_id + type=image/file/audio/video), otherwise it returns HTTP 400.
    */
-  private async downloadMessageImage(messageId: string, fileKey: string): Promise<Buffer> {
+  private async downloadMessageResource(messageId: string, fileKey: string, type: string): Promise<Buffer> {
     const res = await this.channel.rawClient.im.v1.messageResource.get({
       path: { message_id: messageId, file_key: fileKey },
-      params: { type: "image" },
+      params: { type },
     });
     return await collectStream(res.getReadableStream());
   }
 
   async start(): Promise<void> {
     this.channel.on("message", async (msg: NormalizedMsg) => {
-      const dl = await this.downloadImages(msg);
+      const dl = await this.downloadResources(msg);
       await this.handler?.({
         channel: "feishu",
         chatKey: msg.chatId,
@@ -293,7 +334,9 @@ export class FeishuAdapter implements ChannelAdapter {
         text: msg.content,
         replyRef: msg.messageId,
         ...(dl.images.length > 0 ? { images: dl.images } : {}),
-        ...(dl.error === undefined ? {} : { imageError: dl.error }),
+        ...(dl.files.length > 0 ? { files: dl.files } : {}),
+        ...(dl.imageError === undefined ? {} : { imageError: dl.imageError }),
+        ...(dl.fileError === undefined ? {} : { fileError: dl.fileError }),
       });
     });
 
@@ -352,13 +395,14 @@ export class FeishuAdapter implements ChannelAdapter {
   }
 
   async promptChoice(target: OutboundTarget, prompt: ChoicePrompt, updateMessageId?: string): Promise<ChoiceResult> {
+    const columnsPerRow = prompt.columnsPerRow ?? 2;
     const card = {
       header: { title: { tag: "plain_text", content: prompt.title }, template: "indigo" },
       elements: [
         ...(prompt.description === undefined
           ? []
           : [{ tag: "div", text: { tag: "plain_text", content: prompt.description } }]),
-        ...buildChoiceElements(prompt),
+        ...buildChoiceElements(prompt, columnsPerRow),
         ...(prompt.footer === undefined
           ? []
           : [{ tag: "note", elements: [{ tag: "plain_text", content: prompt.footer }] }]),
