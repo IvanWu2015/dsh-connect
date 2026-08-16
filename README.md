@@ -96,6 +96,7 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | `workDir` | first DSH workspace | Agent working directory (absolute path, can be set explicitly) |
 | `workspaces` | `[]` | Workdirs listed in the `/dir` interactive picker |
 | `visionModel` | auto-detected | Vision model `{provider, model}` for the image sub-task; when unset, the first image-capable model is auto-detected |
+| `language` | `zh` | User-facing message language: `zh` (default) or `en` |
 | `allowUsers` | `[]` | Sender allowlist (empty = allow all) |
 | `allowChats` | `[]` | Chat allowlist (empty = allow all) |
 | `stateDir` | `./.dsh-connect` | Directory for the binding route `bindings.json` |
@@ -110,6 +111,7 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | `verificationToken` / `encryptKey` | empty | Only needed for webhook mode |
 | `requireMention` | `true` | Groups only respond when the bot is @mentioned |
 | `dmMode` | `open` | DM policy: `open` receive / `closed` ignore |
+| `language` | `zh` | User-facing message language: `zh` (default) or `en` |
 
 > **One-click onboarding**: start the plugin without `appId`/`appSecret` and it prints an onboarding link (valid ~10 minutes). Scan it with Feishu (or click and confirm) and the bot app is created automatically with permissions and event subscriptions preset; credentials are saved to `$DSH_HOME/.dsh-connect/feishu-credentials.json`.
 

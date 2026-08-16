@@ -15,8 +15,10 @@ export type { ConnectConfig, ResolvedConnectConfig } from "./runner.js";
 export { BindingStore } from "./binding.js";
 export type { ChatBinding, ChatSessionRecord } from "./binding.js";
 export { createAsyncQueue } from "./stream.js";
-export { parseCommand, HELP_TEXT } from "./commands.js";
+export { parseCommand, helpText } from "./commands.js";
 export type { Command } from "./commands.js";
+export { messages } from "./i18n.js";
+export type { Language, Messages } from "./i18n.js";
 export type {
   ChatType,
   ChoiceOption,
@@ -47,6 +49,8 @@ export const Config = z.object({
   workspaces: z.array(z.string()),
   /** Vision-capable model used to describe images when the main model can't see them. */
   visionModel: z.object({ provider: z.string(), model: z.string() }),
+  /** User-facing message language: `zh` (default) or `en`. */
+  language: z.union([z.const("zh"), z.const("en")]),
   /** Sender allowlist; empty = all senders allowed. */
   allowUsers: z.array(z.string()),
   /** Chat allowlist; empty = all chats allowed. */

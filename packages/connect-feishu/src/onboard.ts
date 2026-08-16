@@ -9,6 +9,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { registerApp } from "@larksuiteoapi/node-sdk";
+import type { Language } from "dsh-connect";
+import { feishuMessages } from "./i18n.js";
 
 export interface FeishuCredentials {
   appId: string;
@@ -47,7 +49,11 @@ export function saveCredentials(credentials: FeishuCredentials): void {
  * or `null` when the user aborts / the flow fails. The returned link (also
  * printable) is valid for ~10 minutes and usable by exactly one person.
  */
-export async function onboardFeishu(logger?: { warn?: (...args: unknown[]) => void }): Promise<FeishuCredentials | null> {
+export async function onboardFeishu(
+  logger?: { warn?: (...args: unknown[]) => void },
+  language: Language = "zh",
+): Promise<FeishuCredentials | null> {
+  const t = feishuMessages(language);
   try {
     const result = await registerApp({
       appPreset: {
@@ -68,14 +74,14 @@ export async function onboardFeishu(logger?: { warn?: (...args: unknown[]) => vo
         callbacks: { items: ["card.action.trigger"] },
       },
       onQRCodeReady(info) {
-        logger?.warn?.(`[connect-feishu] 未配置飞书凭据，进入一键接入。请用飞书扫码或点击链接完成：${info.url}`);
-        logger?.warn?.(`[connect-feishu] 链接约 ${Math.floor(info.expireIn / 60)} 分钟内有效，仅限一人使用。`);
+        logger?.warn?.(t.onboardingLink(info.url));
+        logger?.warn?.(t.onboardingLinkExpiry(Math.floor(info.expireIn / 60)));
       },
     });
     return { appId: result.client_id, appSecret: result.client_secret };
   } catch (error) {
     const code = (error as { code?: string })?.code ?? (error instanceof Error ? error.message : String(error));
-    logger?.warn?.(`[connect-feishu] 一键接入失败：${code}`);
+    logger?.warn?.(t.onboardingFailed(code));
     return null;
   }
 }

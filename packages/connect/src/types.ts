@@ -45,11 +45,22 @@ export interface ChoiceOption {
   readonly label: string;
 }
 
+/** One named group of a choice prompt; `ids` refer to `ChoicePrompt.options`. */
+export interface ChoiceSection {
+  readonly title?: string;
+  /** Option ids belonging to this section, in display order. */
+  readonly ids: readonly string[];
+}
+
 /** An interactive single-choice prompt rendered by the channel as buttons. */
 export interface ChoicePrompt {
   readonly title: string;
   readonly description?: string;
   readonly options: readonly ChoiceOption[];
+  /** Optional named groups — channels render these as separated sections. */
+  readonly sections?: readonly ChoiceSection[];
+  /** Optional footnote rendered at the bottom of the card. */
+  readonly footer?: string;
 }
 
 /** Result of an interactive choice: the picked option and the card's message id. */

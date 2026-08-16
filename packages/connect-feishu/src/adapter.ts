@@ -17,6 +17,8 @@ import type {
   OutboundTarget,
   SummaryCard,
 } from "dsh-connect";
+import type { Language } from "dsh-connect";
+import { feishuMessages, type FeishuMessages } from "./i18n.js";
 
 /** Zero-width / variation-selector chars that render at width 0. */
 const ZERO_WIDTH = new Set([0x200b, 0x200c, 0x200d, 0xfe0e, 0xfe0f]);
@@ -53,7 +55,8 @@ function padLabels(options: readonly ChoiceOption[]): ChoiceOption[] {
  * Render options as an equal-width button grid: 3 buttons per row via
  * `column_set` (three weighted columns), padding the last row with empty
  * columns so every row is a uniform 3-cell layout. Labels are padded to the
- * same display width so the buttons themselves render uniformly.
+ * same display width so the buttons themselves render uniformly. Destructive
+ * actions (labels starting with ❌) render as red danger buttons.
  */
 function buildButtonGrid(options: readonly ChoiceOption[]): unknown[] {
   const padded = padLabels(options);
@@ -69,7 +72,7 @@ function buildButtonGrid(options: readonly ChoiceOption[]): unknown[] {
         {
           tag: "button",
           text: { tag: "plain_text", content: opt.label },
-          type: "default",
+          type: opt.label.startsWith("❌") ? "danger" : "default",
           value: { choice: opt.id },
         },
       ],
@@ -85,6 +88,38 @@ function buildButtonGrid(options: readonly ChoiceOption[]): unknown[] {
     });
   }
   return rows;
+}
+
+/**
+ * Assemble the card elements for a choice prompt. When `sections` is given,
+ * the options are split into titled groups — each with a bold section caption
+ * and a divider before it — instead of one flat grid. Options not listed in
+ * any section (typically the trailing exit/back buttons) are rendered after
+ * the sections, separated by a divider.
+ */
+function buildChoiceElements(prompt: ChoicePrompt): unknown[] {
+  const { options, sections } = prompt;
+  if (sections === undefined || sections.length === 0) return buildButtonGrid(options);
+  const byId = new Map(options.map((o) => [o.id, o]));
+  const listed = new Set(sections.flatMap((s) => s.ids));
+  const elements: unknown[] = [];
+  let firstSection = true;
+  for (const section of sections) {
+    const group = section.ids.map((id) => byId.get(id)).filter((o): o is ChoiceOption => o !== undefined);
+    if (group.length === 0) continue;
+    if (!firstSection) elements.push({ tag: "hr" });
+    firstSection = false;
+    if (section.title !== undefined) {
+      elements.push({ tag: "div", text: { tag: "lark_md", content: `**${section.title}**` } });
+    }
+    elements.push(...buildButtonGrid(group));
+  }
+  const rest = options.filter((o) => !listed.has(o.id));
+  if (rest.length > 0) {
+    elements.push({ tag: "hr" });
+    elements.push(...buildButtonGrid(rest));
+  }
+  return elements;
 }
 
 /** Collect a Node.js readable stream into a single Buffer. */
@@ -129,6 +164,8 @@ export interface FeishuConfig {
   requireMention?: boolean;
   /** Single-chat policy (SDK values): open / allowlist / pair / disabled. */
   dmMode?: "open" | "allowlist" | "pair" | "disabled";
+  /** User-facing message language: `zh` (default) or `en`. */
+  language?: Language;
 }
 
 type LarkChannel = ReturnType<typeof createLarkChannel>;
@@ -153,6 +190,7 @@ export class FeishuAdapter implements ChannelAdapter {
   readonly id = "feishu";
   private readonly channel: LarkChannel;
   private readonly pendingChoices = new Map<string, PendingChoice>();
+  private readonly t: FeishuMessages;
   private handler?: (msg: InboundMessage) => void | Promise<void>;
 
   constructor(config: FeishuConfig, private readonly logger?: { warn?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void }) {
@@ -161,6 +199,7 @@ export class FeishuAdapter implements ChannelAdapter {
     if (!appId || !appSecret) {
       throw new Error("connect-feishu: appId and appSecret are required (config or FEISHU_APP_ID / FEISHU_APP_SECRET)");
     }
+    this.t = feishuMessages(config.language ?? "zh");
 
     const transport = config.transport ?? "websocket";
     this.channel = createLarkChannel({
@@ -195,7 +234,7 @@ export class FeishuAdapter implements ChannelAdapter {
     try {
       mkdirSync(dir, { recursive: true });
     } catch (error) {
-      return { images: [], error: `无法创建临时目录：${String(error)}` };
+      return { images: [], error: this.t.tempDirFailed(String(error)) };
     }
     const paths: string[] = [];
     let failed = 0;
@@ -210,28 +249,30 @@ export class FeishuAdapter implements ChannelAdapter {
         failed += 1;
         const detail = extractErrorDetail(error);
         firstError ??= detail;
-        this.logger?.warn?.(`connect-feishu: 图片下载失败 (${r.fileKey}): ${detail}`);
+        this.logger?.warn?.(this.t.imageDownloadLog(r.fileKey, detail));
       }
     }
     if (paths.length === 0 && failed > 0) {
-      // 保留真实的飞书错误码/详情，避免用户只能看到笼统的权限提示而无法定位。
-      const detail = firstError === undefined ? "" : `（错误详情：${firstError.slice(0, 200)}）`;
+      // Keep the real Feishu error code/detail so the user can pinpoint the
+      // actual missing permission instead of a generic hint.
+      const detail = firstError === undefined ? "" : this.t.errorDetail(firstError.slice(0, 200));
       return {
         images: [],
-        error: `有 ${failed} 张图片下载失败，请按上面的错误详情确认飞书应用权限（下载用户消息图片需要 im:message 系列权限）并重新发版${detail}`,
+        error: this.t.imageDownloadError(failed, detail),
       };
     }
     return { images: paths };
   }
 
   /**
-   * 下载用户消息内的图片。
+   * Download an image inside a user message.
    *
-   * 注意：不能走 SDK 的 `downloadResource(fileKey, "image")` —— 它调用的是
-   * `im.v1.image.get`（下载图片），飞书文档明确该接口**只能下载由当前机器人自己
-   * 上传的图片**；下载用户发送消息里的图片必须用「获取消息中的资源文件」
-   * `im.v1.messageResource.get`（带上 message_id + type=image），否则会返回
-   * HTTP 400。
+   * Note: do NOT use the SDK's `downloadResource(fileKey, "image")` — it calls
+   * `im.v1.image.get` (download image), and per the Feishu docs that endpoint
+   * **can only download images uploaded by the bot itself**. Images inside
+   * user-sent messages must be fetched with "get resource file from message"
+   * `im.v1.messageResource.get` (with message_id + type=image), otherwise it
+   * returns HTTP 400.
    */
   private async downloadMessageImage(messageId: string, fileKey: string): Promise<Buffer> {
     const res = await this.channel.rawClient.im.v1.messageResource.get({
@@ -312,12 +353,15 @@ export class FeishuAdapter implements ChannelAdapter {
 
   async promptChoice(target: OutboundTarget, prompt: ChoicePrompt, updateMessageId?: string): Promise<ChoiceResult> {
     const card = {
-      header: { title: { tag: "plain_text", content: prompt.title }, template: "blue" },
+      header: { title: { tag: "plain_text", content: prompt.title }, template: "indigo" },
       elements: [
         ...(prompt.description === undefined
           ? []
           : [{ tag: "div", text: { tag: "plain_text", content: prompt.description } }]),
-        ...buildButtonGrid(prompt.options),
+        ...buildChoiceElements(prompt),
+        ...(prompt.footer === undefined
+          ? []
+          : [{ tag: "note", elements: [{ tag: "plain_text", content: prompt.footer }] }]),
       ],
     };
 
@@ -341,8 +385,8 @@ export class FeishuAdapter implements ChannelAdapter {
         // Replace the stale menu with an expired notice instead of leaving it silent.
         await this.channel
           .updateCard(messageId, {
-            header: { title: { tag: "plain_text", content: "菜单已过期" }, template: "grey" },
-            elements: [{ tag: "note", elements: [{ tag: "plain_text", content: "请重新打开菜单。" }] }],
+            header: { title: { tag: "plain_text", content: this.t.menuExpired }, template: "grey" },
+            elements: [{ tag: "note", elements: [{ tag: "plain_text", content: this.t.menuExpiredHint }] }],
           })
           .catch(() => undefined);
         resolve({ choice: undefined, messageId });
@@ -361,7 +405,7 @@ export class FeishuAdapter implements ChannelAdapter {
   async closeMenu(messageId: string, summary: string): Promise<void> {
     await this.channel
       .updateCard(messageId, {
-        header: { title: { tag: "plain_text", content: "✅ 完成" }, template: "green" },
+        header: { title: { tag: "plain_text", content: this.t.doneHeader }, template: "green" },
         elements: [{ tag: "div", text: { tag: "plain_text", content: summary } }],
       })
       .catch(() => undefined);

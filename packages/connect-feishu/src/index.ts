@@ -8,6 +8,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { FeishuAdapter, type FeishuConfig } from "./adapter.js";
 import { loadCredentials, onboardFeishu, saveCredentials } from "./onboard.js";
+import { feishuMessages } from "./i18n.js";
 
 export { FeishuAdapter } from "./adapter.js";
 export type { FeishuConfig } from "./adapter.js";
@@ -29,6 +30,7 @@ export const Config = z.object({
   encryptKey: z.string().role("secret"),
   requireMention: z.boolean(),
   dmMode: z.union([z.const("open"), z.const("allowlist"), z.const("pair"), z.const("disabled")]),
+  language: z.union([z.const("zh"), z.const("en")]),
 });
 
 interface ConnectLike {
@@ -68,14 +70,14 @@ export function apply(ctx: Context, config: FeishuConfig = {}): void {
     return;
   }
 
-  ctx.logger?.warn?.("connect-feishu: 未配置 appId/appSecret，进入一键接入模式（扫码或点击链接自动创建飞书应用）。");
-  void onboardFeishu(ctx.logger).then((credentials) => {
+  ctx.logger?.warn?.(feishuMessages(config.language ?? "zh").onboardingEnter);
+  void onboardFeishu(ctx.logger, config.language ?? "zh").then((credentials) => {
     if (credentials === null) {
-      ctx.logger?.warn?.("connect-feishu: 一键接入未完成，可重启重试，或手动配置 appId/appSecret。");
+      ctx.logger?.warn?.(feishuMessages(config.language ?? "zh").onboardingIncomplete);
       return;
     }
     saveCredentials(credentials);
-    ctx.logger?.warn?.(`connect-feishu: 一键接入成功（${credentials.appId}），正在连接…`);
+    ctx.logger?.warn?.(feishuMessages(config.language ?? "zh").onboardingSuccess(credentials.appId));
     start(connect, { ...config, appId: credentials.appId, appSecret: credentials.appSecret }, ctx.logger);
   });
 }

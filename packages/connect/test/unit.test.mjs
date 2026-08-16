@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn } from "../lib/index.js";
+import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText } from "../lib/index.js";
 
 test("parseCommand passes through plain messages", () => {
   assert.deepEqual(parseCommand("帮我跑测试"), { kind: "message", text: "帮我跑测试" });
@@ -87,4 +87,22 @@ test("summarizeTurn derives an error outcome and ignores seed", () => {
   assert.equal(outcome.code, "X");
   assert.equal(outcome.message, "boom");
   assert.equal(outcome.text, "");
+});
+
+test("messages switches between zh and en", () => {
+  const zh = messages("zh");
+  const en = messages("en");
+  assert.equal(zh.menuRoot, "主菜单");
+  assert.equal(en.menuRoot, "Main menu");
+  assert.equal(zh.newChatDone, "已开启新会话。");
+  assert.equal(en.newChatDone, "New conversation started.");
+  // Interpolating helpers pick the active table too.
+  assert.equal(zh.dirSwitched("D:\\x"), "工作目录已切换为：\nD:\\x\n（已开启新会话）");
+  assert.equal(en.dirSwitched("D:\\x"), "Workdir switched to:\nD:\\x\n(new conversation started)");
+});
+
+test("helpText renders in the selected language", () => {
+  assert.match(helpText(messages("zh")), /可用命令/);
+  assert.match(helpText(messages("en")), /Available commands/);
+  assert.doesNotMatch(helpText(messages("en")), /[\u4e00-\u9fff]/);
 });

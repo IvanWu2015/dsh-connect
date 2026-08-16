@@ -43,6 +43,7 @@ Edit `%DSH_HOME%\profiles\web\cordis.patch.yml` (usually `C:\Users\you\.dsh\prof
         transport: websocket      # long connection, no public network needed
         requireMention: true      # groups need @mention
         dmMode: open              # DMs open
+        # language: en            # user-facing message language: zh (default) / en
 ```
 
 > Instead of putting credentials in the file you can use the environment variables `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and omit `appId`/`appSecret` in the config.

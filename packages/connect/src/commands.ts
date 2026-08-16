@@ -3,6 +3,7 @@
  * agent, so they stay fast and side-effect-free for the model.
  * @module dsh-connect/commands
  */
+import type { Messages } from "./i18n.js";
 
 export type Command =
   | { readonly kind: "new" }
@@ -91,24 +92,26 @@ export function parseCommand(raw: string): Command {
   }
 }
 
-export const HELP_TEXT = [
-  "可用命令（本地执行，不消耗模型）：",
-  "- `/menu` 打开主菜单（层级点选，可返回）",
-  "- `/settings`（`/set`）设置：模型 / 推理强度 / 通知 / 配置总览",
-  "- `/status` 查看会话状态、模型、工作目录、排队数",
-  "- `/task` 查看当前任务清单（todo）",
-  "- `/chat`（`/session`）列出对话，点选切换或新建",
-  "- `/dir` 列出工作目录，点选切换（或 `/dir <绝对路径>` 手动指定）",
-  "- `/workspace <绝对路径>` 新建工作区",
-  "- `/plugins` 查看插件清单",
-  "- `/compact` 压缩当前会话上下文",
-  "- `/history [条数]` 查看最近会话消息",
-  "- `/goals` 查看当前目标",
-  "- `/schedule` 查看本会话的定时提醒",
-  "- `/model` 查看 / 切换模型",
-  "- `/workspaces` 列出所有工作区",
-  "- `/new` 开启新对话",
-  "- `/clear` 清空当前对话",
-  "- `/stop` 停止当前任务",
-  "- 其他文本将作为任务发送给 DSH Agent",
-].join("\n");
+export function helpText(t: Messages): string {
+  return [
+    t.helpHeader,
+    "- `/menu` " + t.helpMenu,
+    "- `/settings`（`/set`）" + t.helpSettings,
+    "- `/status` " + t.helpStatus,
+    "- `/task` " + t.helpTask,
+    "- `/chat`（`/session`）" + t.helpChat,
+    "- `/dir` " + t.helpDir,
+    "- `/workspace <absolute path>` " + t.helpWorkspace,
+    "- `/plugins` " + t.helpPlugins,
+    "- `/compact` " + t.helpCompact,
+    "- `/history [count]` " + t.helpHistory,
+    "- `/goals` " + t.helpGoals,
+    "- `/schedule` " + t.helpSchedule,
+    "- `/model` " + t.helpModel,
+    "- `/workspaces` " + t.helpWorkspaces,
+    "- `/new` " + t.helpNew,
+    "- `/clear` " + t.helpClear,
+    "- `/stop` " + t.helpStop,
+    "- " + t.helpOther,
+  ].join("\n");
+}

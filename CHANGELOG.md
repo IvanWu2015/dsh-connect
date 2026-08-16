@@ -6,6 +6,7 @@ All notable changes to this project are documented following [Keep a Changelog](
 
 ### Added
 
+- **Configurable message language**: a `language` config (`zh` / `en`, default `zh`) on both `dsh-connect` and `dsh-connect-feishu` switches all user-facing messages (menus, command replies, status lines, image-download errors, help text) between Chinese and English.
 - **Menu card polish**: the main menu is now grouped into sections ("Workspace / Session / Task / System") with titles and separators; the "❌ Exit" button uses a red danger style; an operation hint is shown at the card footer; the menu header theme color switched to a more prominent indigo. Choice menus now support optional `sections` (grouping) and `footer` (footer hint) rendering.
 
 ### Fixed

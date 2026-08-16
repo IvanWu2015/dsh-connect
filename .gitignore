@@ -7,3 +7,4 @@ dist/
 *.tsbuildinfo
 .DS_Store
 .dsh-connect/
+.dsh-connect-images/

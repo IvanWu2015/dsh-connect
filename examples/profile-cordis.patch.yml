@@ -14,6 +14,8 @@
         # workspaces:                # Workdirs listed in the /dir picker
         #   - D:\projects\app-a
         #   - D:\projects\app-b
+        # visionModel: { provider: openai, model: gpt-4o }  # vision model for image sub-tasks
+        # language: en                                     # user-facing message language: zh (default) / en
         # allowUsers: ['ou_xxx']     # Sender allowlist (empty = allow all)
         # allowChats: ['oc_xxx']     # Chat allowlist (empty = allow all)
         # stateDir: .dsh-connect     # Directory for the binding route bindings.json
@@ -26,3 +28,4 @@
         transport: websocket          # long connection (recommended); webhook needs public HTTPS
         requireMention: true          # groups only respond when @mentioned
         dmMode: open                  # DM policy: open / allowlist / pair / disabled
+        # language: en                # user-facing message language: zh (default) / en
