@@ -5,9 +5,9 @@
  * @module dsh-connect/runner
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { existsSync, mkdirSync, statSync } from "node:fs";
+import { copyFile, readFile } from "node:fs/promises";
+import { basename, isAbsolute, join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import { SessionId, SessionStore, type Session, type SessionEvent, type TodoItem } from "@deepseek-ai/dsh-session";
 import { AgentRegistry, installModelSelection, type Agent, type AgentHandle, type ModelSelection } from "@deepseek-ai/dsh-agent";
@@ -438,8 +438,12 @@ export class AgentRunner {
    */
   private async buildUserContent(msg: InboundMessage): Promise<ContentBlock[]> {
     const content: ContentBlock[] = [{ type: "text", text: msg.text }];
-    const paths = msg.images;
-    if (paths === undefined || paths.length === 0) return content;
+    const rawImages = msg.images;
+    if (rawImages === undefined || rawImages.length === 0) return content;
+
+    // Copy images into the agent's work directory so its tools can access them.
+    const paths = await this.stageImages(rawImages);
+    const locationText = paths.map((p) => `- ${p}`).join("\n");
 
     const mainVision = await this.modelSupportsVision(this.agent?.options.provider, this.agent?.options.model);
     if (mainVision) {
@@ -451,12 +455,37 @@ export class AgentRunner {
     }
 
     const description = await this.describeImages(paths);
-    if (description !== "") {
-      content.push({ type: "text", text: `[用户发送了图片，图片内容说明：\n${description}\n]` });
-    } else {
-      content.push({ type: "text", text: "[用户发送了图片，但未能分析图片内容]" });
-    }
+    const note = [
+      "[用户发送了图片，图片已保存到以下路径（可用工具查看）：",
+      locationText,
+      description !== ""
+        ? `图片内容说明：\n${description}`
+        : "（未能自动分析图片内容，请用文件/终端工具查看这些图片。）",
+      "]",
+    ].join("\n");
+    content.push({ type: "text", text: note });
     return content;
+  }
+
+  /** Copy images into `<workDir>/.dsh-connect-images` so the agent's tools can reach them. */
+  private async stageImages(paths: readonly string[]): Promise<string[]> {
+    const dir = join(this.workDir, ".dsh-connect-images");
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      return [...paths];
+    }
+    const staged: string[] = [];
+    for (const p of paths) {
+      const target = join(dir, basename(p));
+      try {
+        await copyFile(p, target);
+        staged.push(target);
+      } catch {
+        staged.push(p);
+      }
+    }
+    return staged;
   }
 
   private async imageBlocks(paths: readonly string[]): Promise<ContentBlock[]> {
