@@ -2,6 +2,12 @@
 
 本项目的变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 约定。
 
+## [Unreleased]
+
+### 修复
+
+- **修复飞书图片下载失败（HTTP 400）**：下载用户消息内的图片改用「获取消息中的资源文件」接口（`im.v1.messageResource.get`，带 message_id + type=image）。旧代码走 `im.v1.image.get`（下载图片），飞书文档明确该接口只能下载机器人自己上传的图片，导致用户发图始终报 HTTP 400。同时把真实的飞书错误码/详情附到聊天提示里，方便排查权限（`99991672`）等问题。
+
 ## [0.4.0] - 2026-08-15
 
 ### 新增

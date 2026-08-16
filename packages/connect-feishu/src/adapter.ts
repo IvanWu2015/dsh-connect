@@ -87,6 +87,38 @@ function buildButtonGrid(options: readonly ChoiceOption[]): unknown[] {
   return rows;
 }
 
+/** Collect a Node.js readable stream into a single Buffer. */
+function collectStream(stream: NodeJS.ReadableStream): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    stream.on("data", (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
+    stream.on("error", reject);
+  });
+}
+
+/**
+ * Extract a human-readable error detail. Feishu business errors (missing
+ * permission, invalid resource, …) arrive as HTTP 200/400 with the real
+ * `{code, msg}` in the response body; prefer that over the axios fallback
+ * message like "Request failed with status code 400" that hides the cause.
+ */
+function extractErrorDetail(error: unknown): string {
+  const raw = error as
+    | { response?: { status?: number; data?: { code?: unknown; msg?: unknown; message?: unknown } } }
+    | undefined;
+  const body = raw?.response?.data;
+  if (body !== undefined && (body.code !== undefined || body.msg !== undefined || body.message !== undefined)) {
+    const status = raw?.response?.status;
+    const detail = [body.code !== undefined ? `code=${String(body.code)}` : "", body.msg ?? body.message]
+      .map((s) => String(s))
+      .filter((s) => s !== "")
+      .join(" ");
+    return `HTTP ${status ?? "?"}${detail ? `（${detail}）` : ""}`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 export interface FeishuConfig {
   appId?: string;
   appSecret?: string;
@@ -167,24 +199,46 @@ export class FeishuAdapter implements ChannelAdapter {
     }
     const paths: string[] = [];
     let failed = 0;
+    let firstError: string | undefined;
     for (const r of resources) {
       try {
-        const buf = await this.channel.downloadResource(r.fileKey, "image");
+        const buf = await this.downloadMessageImage(msg.messageId, r.fileKey);
         const file = join(dir, `${msg.messageId}-${r.fileKey.replace(/[^a-zA-Z0-9]/g, "_")}`);
         writeFileSync(file, buf);
         paths.push(file);
       } catch (error) {
         failed += 1;
-        this.logger?.warn?.(`connect-feishu: 图片下载失败 (${r.fileKey}): ${error instanceof Error ? error.message : String(error)}`);
+        const detail = extractErrorDetail(error);
+        firstError ??= detail;
+        this.logger?.warn?.(`connect-feishu: 图片下载失败 (${r.fileKey}): ${detail}`);
       }
     }
     if (paths.length === 0 && failed > 0) {
+      // 保留真实的飞书错误码/详情，避免用户只能看到笼统的权限提示而无法定位。
+      const detail = firstError === undefined ? "" : `（错误详情：${firstError.slice(0, 200)}）`;
       return {
         images: [],
-        error: `有 ${failed} 张图片下载失败，请确认飞书应用已开通「im:resource」（读取图片/文件资源）权限并重新发版`,
+        error: `有 ${failed} 张图片下载失败，请按上面的错误详情确认飞书应用权限（下载用户消息图片需要 im:message 系列权限）并重新发版${detail}`,
       };
     }
     return { images: paths };
+  }
+
+  /**
+   * 下载用户消息内的图片。
+   *
+   * 注意：不能走 SDK 的 `downloadResource(fileKey, "image")` —— 它调用的是
+   * `im.v1.image.get`（下载图片），飞书文档明确该接口**只能下载由当前机器人自己
+   * 上传的图片**；下载用户发送消息里的图片必须用「获取消息中的资源文件」
+   * `im.v1.messageResource.get`（带上 message_id + type=image），否则会返回
+   * HTTP 400。
+   */
+  private async downloadMessageImage(messageId: string, fileKey: string): Promise<Buffer> {
+    const res = await this.channel.rawClient.im.v1.messageResource.get({
+      path: { message_id: messageId, file_key: fileKey },
+      params: { type: "image" },
+    });
+    return await collectStream(res.getReadableStream());
   }
 
   async start(): Promise<void> {

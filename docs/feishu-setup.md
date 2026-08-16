@@ -64,6 +64,10 @@
 
 - **收不到消息**：确认版本已发布；群聊需 @机器人（或关闭 `requireMention`）；确认订阅了 `im.message.receive_v1`。
 - **点卡片按钮没反应**：确认订阅了 `card.action.trigger` 事件并重新发版。
+- **收不到图片（提示「图片下载失败」）**：
+  - **旧版本 bug**：旧代码用 `im.v1.image.get`（下载图片）下载用户消息里的图片，但飞书文档明确该接口**只能下载机器人自己上传的图片**；下载用户消息图片必须用「获取消息中的资源文件」`im.v1.messageResource.get`（带 message_id + type=image），否则返回 **HTTP 400**。请升级到修复后的版本。
+  - **权限**：`messageResource.get` 需要 `im:message`（或 `im:message:readonly` / `im:message.history:readonly`）任一开通（官方接口文档的「权限要求」一节，没有 `im:resource` 这个权限）。缺权限时飞书返回业务错误码 `99991672`，响应体里的 `error.permission_violations[]` 会直接列出到底缺哪个权限，以它为准。到「权限管理」开通后，再到「版本管理与发布」**创建版本并发布**（企业自建应用需管理员审核通过）。可在 [API 调试台](https://open.feishu.cn/api-explorer) 用「获取消息中的资源文件」接口直接复现验证。
+  - **真实错误码在哪看**：运行 `dsh web` 的进程控制台日志中 `connect-feishu: 图片下载失败 (...)` 一行；聊天提示里也会附带（修复版）。其他错误码（资源过期、file_key 无效等）参见[飞书错误码排查 FAQ](https://open.feishu.cn/document/faq/trouble-shooting/how-to-fix-the-99991672-error) 及接口文档。
 - **3 秒超时重推**：长连接模式下事件需在 3 秒内 ACK；SDK 内部已处理，业务侧保持 `handleInbound` 快速返回（本插件把消息入队即返回，Agent 处理在队列里异步进行，不受此限制）。
 - **多实例**：长连接为集群模式，同一应用多客户端只有随机一个收到消息（本插件按单进程设计）。
 - **webhook 模式**：如需公网回调，把 `transport: webhook` 并配 `verificationToken` / `encryptKey`，同时需要一个本地 HTTP 服务承接 SDK 的 express 适配器（本阶段未内置 HTTP 服务，优先用长连接）。
