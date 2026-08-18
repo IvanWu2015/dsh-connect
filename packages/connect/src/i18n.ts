@@ -70,6 +70,29 @@ export interface Messages {
   answerReceived: string;
   questionToolCall(text: string): string;
 
+  // First-time welcome card (sent once per chat).
+  welcomeTitle: string;
+  welcomeBody(workdir: string): string;
+
+  // Error classification + actionable advice.
+  errorAdvicePermission: string;
+  errorAdviceNetwork: string;
+  errorAdviceModel: string;
+  errorAdviceGeneric: string;
+  processingFailedAdvice(detail: string, advice: string): string;
+
+  // Destructive-action confirmation.
+  confirmTitle: string;
+  confirmYes: string;
+  confirmNo: string;
+  confirmClearText: string;
+  confirmNewText: string;
+  actionCancelled: string;
+
+  // Progress enhancement.
+  toolStepLabel(n: number, name: string): string;
+  queuedHint(n: number): string;
+
   // Notification levels (streaming reply detail).
   notifyFull: string;
   notifyImportant: string;
@@ -315,6 +338,31 @@ const zh: Messages = {
   rejectLabel: "❌ 拒绝",
   answerReceived: "✅ 已收到你的回答，继续处理…",
   questionToolCall: (text) => `🤔 需要你的选择 — ${text}`,
+  welcomeTitle: "👋 欢迎使用 dsh-connect",
+  welcomeBody: (workdir) =>
+    [
+      `我是接入 DeepSeek Harness 的飞书助手。工作目录：\`${workdir}\``,
+      "直接发消息即可开始任务，也可以使用这些命令：",
+      "- `/menu` 打开主菜单（工作目录 / 会话 / 设置 / 压缩等）",
+      "- `/help` 查看全部命令",
+      "- `/status` 查看会话状态与上下文占用",
+      "- `/compact` 上下文占用高时压缩",
+      "任务进行中会推送进度；需要你选择或授权时会出现带按钮的卡片，点选或直接回复即可。",
+    ].join("\n"),
+  errorAdvicePermission:
+    "可能是权限不足。请检查：飞书应用的权限（开发者后台 → 权限管理，修改后需重新发布版本）、DSH 沙箱与工作目录的访问权限。",
+  errorAdviceNetwork: "可能是网络问题。请检查本机网络连接与代理设置，稍后重试。",
+  errorAdviceModel: "可能是模型或配额问题。请检查模型配置 / API 额度，或用 /model 切换模型后重试。",
+  errorAdviceGeneric: "可发送 /status 查看会话状态，或 /stop 停止当前任务后重试。",
+  processingFailedAdvice: (detail, advice) => `⚠️ 处理失败：${detail}\n\n💡 建议：${advice}`,
+  confirmTitle: "请确认操作",
+  confirmYes: "✅ 确认",
+  confirmNo: "↩️ 取消",
+  confirmClearText: "清空当前会话将删除本会话的全部历史消息，确定继续吗？",
+  confirmNewText: "新建会话将丢弃当前对话上下文（历史仍保留在会话列表中），确定继续吗？",
+  actionCancelled: "已取消，未执行任何操作。",
+  toolStepLabel: (n, name) => `🔧 第 ${n} 次工具调用 \`${name}\``,
+  queuedHint: (n) => `（还有 ${n} 条消息排队中）`,
   notifyFull: "尽量输出过程",
   notifyImportant: "输出重要节点",
   notifyResult: "只输出结果",
@@ -566,6 +614,31 @@ const en: Messages = {
   rejectLabel: "❌ Deny",
   answerReceived: "✅ Got your answer — continuing…",
   questionToolCall: (text) => `🤔 Your input is needed — ${text}`,
+  welcomeTitle: "👋 Welcome to dsh-connect",
+  welcomeBody: (workdir) =>
+    [
+      `I'm a Feishu assistant powered by DeepSeek Harness. Workdir: \`${workdir}\``,
+      "Just send a message to start a task, or use these commands:",
+      "- `/menu` open the main menu (workdir / sessions / settings / compact…)",
+      "- `/help` list all commands",
+      "- `/status` session status and context usage",
+      "- `/compact` compact the context when it's getting full",
+      "While a task runs you'll get progress updates; when your input or approval is needed, a card with buttons appears — just tap or reply.",
+    ].join("\n"),
+  errorAdvicePermission:
+    "This looks like a permission problem. Check the Feishu app permissions (Developer Console → Permissions; release a new version after changes) and the DSH sandbox / workdir access.",
+  errorAdviceNetwork: "This looks like a network problem. Check your connection / proxy settings and retry later.",
+  errorAdviceModel: "This looks like a model or quota problem. Check the model config / API quota, or switch models with /model and retry.",
+  errorAdviceGeneric: "You can run /status to inspect the session, or /stop to cancel the current task and retry.",
+  processingFailedAdvice: (detail, advice) => `⚠️ Processing failed: ${detail}\n\n💡 Suggestion: ${advice}`,
+  confirmTitle: "Please confirm",
+  confirmYes: "✅ Confirm",
+  confirmNo: "↩️ Cancel",
+  confirmClearText: "Clearing this conversation deletes all of its history. Continue?",
+  confirmNewText: "A new conversation discards the current context (history stays in the session list). Continue?",
+  actionCancelled: "Cancelled — nothing was changed.",
+  toolStepLabel: (n, name) => `🔧 Tool call #${n}: \`${name}\``,
+  queuedHint: (n) => `(${n} more message(s) queued)`,
   notifyFull: "Full process",
   notifyImportant: "Key milestones",
   notifyResult: "Result only",

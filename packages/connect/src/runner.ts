@@ -91,6 +91,8 @@ interface ActiveTurn {
   lastPushAt: number;
   /** Latest user-visible milestone (thinking / last tool call) for the proactive progress notice. */
   milestone?: string;
+  /** Number of tool calls observed in this turn (for the step counter). */
+  toolCount: number;
 }
 
 /** Per-turn streaming assembly state mutated by {@link applyStreamChunk}. */
@@ -360,6 +362,18 @@ function truncate(text: string, max = 500): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
 
+/** Error category used to pick actionable advice for the user. */
+export type ErrorCategory = "permission" | "network" | "model" | "generic";
+
+/** Classify an error message into an advice bucket (keyword-based, best-effort). */
+export function classifyError(detail: string): ErrorCategory {
+  const d = detail.toLowerCase();
+  if (/(permission|forbidden|denied|not have access|no access|unauthorized|403|sandbox|acl |isn't permitted|not permitted|access denied)/.test(d)) return "permission";
+  if (/(timeout|econnrefused|econnreset|enotfound|enetunreach|etimedout|socket|network|proxy|tls|certificate|fetch failed|connect |unreachable|dns)/.test(d)) return "network";
+  if (/(model|quota|rate ?limit|429|insufficient|balance|token(s)? (limit|length)|max_tokens|context length|credit)/.test(d)) return "model";
+  return "generic";
+}
+
 /** Thousands-separated token count for display. */
 function fmtTokens(n: number): string {
   return n.toLocaleString("en-US");
@@ -565,6 +579,7 @@ export class AgentRunner {
       const name = event.data.name as string | undefined;
       if (typeof name !== "string" || name === "") return;
       const summary = toolCallSummary(event.data.arguments);
+      turn.toolCount += 1;
       // The proactive progress notice reports the latest milestone even when
       // `result` mode hides the streaming details.
       if (name === "ask_user_question") {
@@ -574,13 +589,14 @@ export class AgentRunner {
         turn.milestone = this.t.toolCalling(name, undefined);
       }
       // `result` mode shows nothing until the final answer; `important` shows
-      // the tool name only, `full` also carries the one-line summary.
+      // the tool name with a step counter, `full` also carries the summary.
       if (this.notifyLevel === "result") return;
-      const label = name === "ask_user_question"
+      const base = name === "ask_user_question"
         ? this.t.questionToolCall(questionTextOf(event.data.arguments))
-        : this.notifyLevel === "full"
-          ? this.t.toolCalling(name, summary)
-          : this.t.toolCalling(name, undefined);
+        : this.t.toolStepLabel(turn.toolCount, name);
+      const label = name === "ask_user_question" || this.notifyLevel !== "full" || summary === undefined
+        ? base
+        : `${base} — ${summary}`;
       applyToolCall(turn, label);
     }
   }
@@ -591,6 +607,60 @@ export class AgentRunner {
       chatType: this.chatType,
       ...(msg.replyRef === undefined ? {} : { replyRef: msg.replyRef }),
     };
+  }
+
+  /** Completion-card target: in groups, @ the requester so they notice the result. */
+  private taskTarget(msg: InboundMessage): OutboundTarget {
+    return this.chatType === "group"
+      ? { ...this.target(msg), atUsers: [msg.senderKey] }
+      : this.target(msg);
+  }
+
+  /** Send the one-time welcome card on a chat's first message (persisted marker). */
+  private async maybeSendWelcome(msg: InboundMessage): Promise<void> {
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding !== undefined && binding.welcomedAt !== undefined) return;
+    const base = binding ?? {
+      channel: this.channel,
+      chatKey: this.chatKey,
+      chatType: this.chatType,
+      sessionId: "",
+      ownerKey: msg.senderKey,
+      createdAt: Date.now(),
+      lastActiveAt: Date.now(),
+      sessions: [],
+    };
+    this.bindings.put({ ...base, welcomedAt: Date.now(), lastActiveAt: Date.now() });
+    await this.adapter
+      .sendCard(this.target(msg), { markdown: `${this.t.welcomeTitle}\n\n${this.t.welcomeBody(this.workDir)}` })
+      .catch(() => undefined);
+  }
+
+  /** Pick the localized advice text for a failed turn. */
+  private errorAdvice(detail: string): string {
+    switch (classifyError(detail)) {
+      case "permission":
+        return this.t.errorAdvicePermission;
+      case "network":
+        return this.t.errorAdviceNetwork;
+      case "model":
+        return this.t.errorAdviceModel;
+      default:
+        return this.t.errorAdviceGeneric;
+    }
+  }
+
+  /** Present a destructive-action confirmation; true only when the user confirms. */
+  private async confirmAction(target: OutboundTarget, promptText: string): Promise<boolean> {
+    const { choice } = await this.adapter.promptChoice(target, {
+      title: this.t.confirmTitle,
+      description: promptText,
+      options: [
+        { id: "confirm:yes", label: this.t.confirmYes },
+        { id: "confirm:no", label: this.t.confirmNo },
+      ],
+    });
+    return choice === "confirm:yes";
   }
 
   private async drain(): Promise<void> {
@@ -635,10 +705,15 @@ export class AgentRunner {
 
     try {
       // Acknowledge receipt before the (possibly slow) agent spin-up so the
-      // user knows processing started.
+      // user knows processing started. When more messages are queued, say so.
+      const ack = this.t.processingStarted(truncate(msg.text, 60));
+      const ackText = this.queue.length > 0 ? `${ack}\n${this.t.queuedHint(this.queue.length)}` : ack;
       await this.adapter
-        .sendText(this.target(msg), this.t.processingStarted(truncate(msg.text, 60)))
+        .sendText(this.target(msg), ackText)
         .catch(() => undefined);
+
+      // First message in this chat: one-time welcome card.
+      await this.maybeSendWelcome(msg);
 
       const agent = await this.ensureAgent(msg);
       const outcome = await this.driveAgent(agent, msg);
@@ -659,7 +734,7 @@ export class AgentRunner {
       
       const detail = error instanceof Error ? error.message : String(error);
       await this.adapter
-        .sendText(this.target(msg), this.t.processingFailed(truncate(detail)))
+        .sendText(this.target(msg), this.t.processingFailedAdvice(truncate(detail, 400), this.errorAdvice(detail)))
         .catch(() => undefined);
     }
   }
@@ -836,7 +911,7 @@ export class AgentRunner {
     this.turn = {
       firstSeq, chunks, lastText: "",
       reasoning: false, hintPushed: false, lastIndex: undefined, pushedAny: false,
-      startedAt: now, lastPushAt: now,
+      startedAt: now, lastPushAt: now, toolCount: 0,
     };
 
     // Liveness heartbeat: while the agent is working, keep the streaming card
@@ -1158,7 +1233,7 @@ export class AgentRunner {
     if (outcome.message !== undefined) lines.push(this.t.reasonMessage(truncate(outcome.message)));
     if (outcome.text !== "") lines.push(this.t.produced(truncate(outcome.text, 300)));
     const card: SummaryCard = { markdown: lines.join("\n") };
-    await this.adapter.sendCard(this.target(msg), card).catch(() => undefined);
+    await this.adapter.sendCard(this.taskTarget(msg), card).catch(() => undefined);
   }
 
   /** Context-window usage at or above this percentage suggests compaction. */
@@ -1185,18 +1260,26 @@ export class AgentRunner {
       lines.push(pct >= AgentRunner.COMPACT_THRESHOLD_PCT ? this.t.taskStatsCompactSuggest : this.t.taskStatsCompactOk);
     }
     const card: SummaryCard = { markdown: lines.join("\n") };
-    await this.adapter.sendCard(this.target(msg), card).catch(() => undefined);
+    await this.adapter.sendCard(this.taskTarget(msg), card).catch(() => undefined);
   }
 
   private async handleCommand(command: Command, msg: InboundMessage): Promise<void> {
     const target = this.target(msg);
     switch (command.kind) {
       case "new": {
+        if (!(await this.confirmAction(target, this.t.confirmNewText))) {
+          await this.adapter.sendText(target, this.t.actionCancelled);
+          break;
+        }
         await this.newChat(msg);
         await this.adapter.sendText(target, this.t.newChatDone);
         break;
       }
       case "clear": {
+        if (!(await this.confirmAction(target, this.t.confirmClearText))) {
+          await this.adapter.sendText(target, this.t.actionCancelled);
+          break;
+        }
         await this.clearChat(msg);
         await this.adapter.sendText(target, this.t.chatCleared);
         break;
@@ -1339,10 +1422,10 @@ export class AgentRunner {
       { sessionId, title, createdAt: Date.now(), lastActiveAt: Date.now(), workDir: this.workDir },
       ...others,
     ].slice(0, 50);
+    // Spread the existing binding so per-chat settings (language, notify
+    // level, progress interval, welcomedAt…) survive the first session record.
     this.bindings.put({
-      channel: this.channel,
-      chatKey: this.chatKey,
-      chatType: this.chatType,
+      ...(binding ?? { channel: this.channel, chatKey: this.chatKey, chatType: this.chatType }),
       sessionId,
       ownerKey,
       createdAt: binding?.createdAt ?? Date.now(),
@@ -1523,7 +1606,11 @@ export class AgentRunner {
           label: this.t.menuNewChat,
           leaf: true,
           onSelect: async (t, m) => {
-            await this.newChat(m);
+            if (await this.confirmAction(t, this.t.confirmNewText)) {
+              await this.newChat(m);
+            } else {
+              await this.adapter.sendText(t, this.t.actionCancelled);
+            }
           },
         });
         return items;

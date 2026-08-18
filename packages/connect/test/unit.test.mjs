@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer } from "../lib/index.js";
+import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer, classifyError } from "../lib/index.js";
 
 test("parseCommand passes through plain messages", () => {
   assert.deepEqual(parseCommand("帮我跑测试"), { kind: "message", text: "帮我跑测试" });
@@ -355,4 +355,35 @@ test("decodeTextAnswer maps labels, numbers, and free text", () => {
   assert.deepEqual(decodeTextAnswer(multi, "方案A、方案C"), { selected: ["方案A", "方案C"] });
   // A question without options is answered by free text.
   assert.deepEqual(decodeTextAnswer({ id: "b", question: "?" }, "任意回复"), { selected: [], custom: "任意回复" });
+});
+
+test("classifyError buckets errors into actionable advice categories", () => {
+  assert.equal(classifyError("HTTP 403 Forbidden: no permission to access resource"), "permission");
+  assert.equal(classifyError("EACCES: permission denied, open 'D:\\x\\file'"), "permission");
+  assert.equal(classifyError("sandbox: file access denied under workspace-write mode"), "permission");
+  assert.equal(classifyError("timeout of 15000ms exceeded"), "network");
+  assert.equal(classifyError("connect ECONNREFUSED 127.0.0.1:3080"), "network");
+  assert.equal(classifyError("getaddrinfo ENOTFOUND open.feishu.cn"), "network");
+  assert.equal(classifyError("fetch failed: self-signed certificate"), "network");
+  assert.equal(classifyError("model unavailable: deepseek-v4-pro has no active adapter"), "model");
+  assert.equal(classifyError("quota exceeded: insufficient balance"), "model");
+  assert.equal(classifyError("Request failed with status code 429"), "model");
+  assert.equal(classifyError("some random failure"), "generic");
+  assert.equal(classifyError(""), "generic");
+});
+
+test("messages expose welcome / confirm / error-advice / progress strings in both languages", () => {
+  const zh = messages("zh");
+  const en = messages("en");
+  assert.ok(zh.welcomeBody("D:\\work").includes("D:\\work"));
+  assert.ok(en.welcomeBody("/tmp").includes("/tmp"));
+  assert.equal(zh.confirmYes, "✅ 确认");
+  assert.equal(en.confirmNo, "↩️ Cancel");
+  assert.equal(zh.toolStepLabel(2, "pwsh"), "🔧 第 2 次工具调用 `pwsh`");
+  assert.equal(en.toolStepLabel(2, "pwsh"), "🔧 Tool call #2: `pwsh`");
+  assert.equal(zh.queuedHint(3), "（还有 3 条消息排队中）");
+  assert.equal(en.queuedHint(3), "(3 more message(s) queued)");
+  assert.ok(zh.processingFailedAdvice("boom", zh.errorAdviceNetwork).includes("网络"));
+  assert.ok(en.processingFailedAdvice("boom", en.errorAdviceModel).includes("quota"));
+  assert.ok(zh.errorAdvicePermission.includes("权限"));
 });

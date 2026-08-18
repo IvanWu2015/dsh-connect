@@ -368,7 +368,7 @@ export class FeishuAdapter implements ChannelAdapter {
     await this.channel.send(
       target.chatKey,
       { text },
-      { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) },
+      this.sendOpts(target),
     );
   }
 
@@ -376,7 +376,7 @@ export class FeishuAdapter implements ChannelAdapter {
     await this.channel.send(
       target.chatKey,
       { markdown: card.markdown },
-      { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) },
+      this.sendOpts(target),
     );
   }
 
@@ -392,6 +392,21 @@ export class FeishuAdapter implements ChannelAdapter {
       },
       { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) },
     );
+  }
+
+  /**
+   * Build the send options shared by text/markdown deliveries: an optional
+   * reply target and @-mentions (SDK renders `<at user_id=…>` prefixes for
+   * both text and post messages, so group completion cards can nudge the
+   * requester).
+   */
+  private sendOpts(target: OutboundTarget): { replyTo?: string; mentions?: { key: string; openId: string }[] } {
+    return {
+      ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }),
+      ...(target.atUsers === undefined || target.atUsers.length === 0
+        ? {}
+        : { mentions: target.atUsers.map((id) => ({ key: id, openId: id })) }),
+    };
   }
 
   async promptChoice(target: OutboundTarget, prompt: ChoicePrompt, updateMessageId?: string): Promise<ChoiceResult> {

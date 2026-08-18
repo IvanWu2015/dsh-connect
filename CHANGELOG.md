@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.3] - 2026-08-17
+
+### Added
+
+- **First-time welcome card**: the first message in every chat now also sends a one-time welcome card (ability intro + common commands), marked in `bindings.json` so it never repeats.
+- **Error classification & actionable advice**: a failed task now shows a suggestion matched to the error — permission problems (Feishu app permissions / DSH sandbox & workdir access), network problems (connection / proxy), model or quota problems (config / `/model` switch), or a generic hint (`/status`, `/stop`).
+- **Destructive-action confirmation**: `/clear`, `/new` and the menu's "新建对话" now ask for confirmation first (✅ 确认 / ↩️ 取消), preventing accidental history loss.
+- **Progress step counter**: tool-call status lines now include the call number (`🔧 第 2 次工具调用 \`pwsh\``), and the processing acknowledgment reports how many messages are still queued.
+- **Group completion @-mention**: in groups, the task-end stats/summary cards now @-mention the requester so the result is noticed.
+- New `OutboundTarget.atUsers` (channel adapters may @-mention users on delivery; the Feishu adapter renders it through the SDK's native mentions).
+
+### Changed
+
+- `recordSession` now spreads the existing binding, so per-chat settings (language / notify level / progress interval / welcome marker) survive the first session record.
+
 ## [0.5.2] - 2026-08-17
 
 ### Added

@@ -9,7 +9,10 @@ Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**D
 - **Work arrangement**: pushes a result-summary card when a task ends; `ctx.connect.notify()` lets goals/jobs hooks push progress proactively.
 - **Task-end stats**: when a task finishes, a card reports the model used, input/output/cached tokens, step count, duration and context usage, with a `/compact` suggestion when the context is ≥ 75% full.
 - **Notification levels**: `full` (stream everything) / `important` (key milestones, default) / `result` (answer only) — switchable per chat via the settings menu or `/notify`, persisted across restarts.
-- **Instant feedback + proactive progress**: every task is acknowledged the moment it is received (“✅ 已收到，开始处理”), key milestones (thinking, tool calls, questions, permissions) react live, and a configurable watchdog sends a standalone status card when a turn has been silent for too long (default 5 min, per-chat adjustable via `/progress` or `/settings`).
+- **Instant feedback + proactive progress**: every task is acknowledged the moment it is received (“✅ 已收到，开始处理”, with the queued-message count when busy), key milestones (thinking, tool calls with step counters, questions, permissions) react live, and a configurable watchdog sends a standalone status card when a turn has been silent for too long (default 5 min, per-chat adjustable via `/progress` or `/settings`).
+- **First-time welcome**: the first message in each chat triggers a one-time welcome card introducing the bot's capabilities and common commands.
+- **Actionable errors**: failed tasks show a suggestion matched to the error — permission / network / model-quota problems each get their own fix hint instead of a bare error string.
+- **Safe destructive actions**: `/clear`, `/new` and the menu's “新建对话” ask for confirmation first, so history is never wiped by accident.
 - **User choices & permission approvals in chat**: when the agent asks a question (`ask_user_question`) or requests a permission approval (sandbox escalation etc.), an interactive card with buttons appears right in Feishu — answer by tapping or by replying with text (number or option label); no need to open the Web GUI.
 - **Security**: groups require @mention by default; user/chat allowlists; Feishu credentials via environment variables or config.
 - **Interactive menus**: `/menu` offers hierarchical point-and-click navigation (workdir / chats / settings / plugins / compact, …) — the same card updates in place, supports back/exit, and stays usable across consecutive actions.
@@ -87,8 +90,8 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | `/compact` | Compact the current session context |
 | `/history [count]` | Show recent session messages |
 | `/goals` | Show current goals |
-| `/new` (`/reset`) | Start a new conversation |
-| `/clear` | Clear the current conversation |
+| `/new` (`/reset`) | Start a new conversation (asks for confirmation) |
+| `/clear` | Clear the current conversation (asks for confirmation) |
 | `/stop` (`/cancel`) | Stop the current task |
 | `/help` | List all commands |
 

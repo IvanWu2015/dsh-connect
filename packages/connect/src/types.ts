@@ -35,6 +35,8 @@ export interface OutboundTarget {
   readonly chatKey: string;
   readonly chatType: ChatType;
   readonly replyRef?: string;
+  /** Channel-specific user ids to @-mention on delivery (groups only; best-effort). */
+  readonly atUsers?: readonly string[];
 }
 
 /** A brief status card pushed on turn completion or error. */

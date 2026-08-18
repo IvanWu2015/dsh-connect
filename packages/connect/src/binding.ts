@@ -33,6 +33,8 @@ export interface ChatBinding {
   notifyLevel?: "full" | "important" | "result";
   /** Per-chat proactive progress-notice interval ms (0 disables); falls back to the plugin config. */
   progressTimeoutMs?: number;
+  /** Timestamp when the first-time welcome card was sent (undefined = not yet welcomed). */
+  welcomedAt?: number;
   /** Web mirror session id (shared with DSH Web for viewing). */
   webMirrorSessionId?: string;
   /** Session lock status: which channel currently owns write access. */
@@ -189,6 +191,7 @@ export class BindingStore {
           ...(b.language === "zh" || b.language === "en" ? { language: b.language } : {}),
           ...(b.notifyLevel === "full" || b.notifyLevel === "important" || b.notifyLevel === "result" ? { notifyLevel: b.notifyLevel } : {}),
           ...(typeof b.progressTimeoutMs === "number" && b.progressTimeoutMs >= 0 ? { progressTimeoutMs: b.progressTimeoutMs } : {}),
+          ...(typeof b.welcomedAt === "number" ? { welcomedAt: b.welcomedAt } : {}),
           ...(typeof b.webMirrorSessionId === "string" ? { webMirrorSessionId: b.webMirrorSessionId } : {}),
           ...(b.lockOwner === "feishu" || b.lockOwner === "web" ? { lockOwner: b.lockOwner } : {}),
           ...(typeof b.lockAcquiredAt === "number" ? { lockAcquiredAt: b.lockAcquiredAt } : {}),
