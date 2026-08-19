@@ -1,5 +1,7 @@
 # dsh-connect-feishu
 
+English | [中文](README.zh.md)
+
 The **Feishu / Lark channel adapter** for [dsh-connect](https://www.npmjs.com/package/dsh-connect): receives messages over the Feishu Open Platform **long connection (WebSocket)**, forwards them to the DSH agent, and **streams** replies back to Feishu, with interactive menu cards.
 
 ## Install

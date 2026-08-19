@@ -1,5 +1,7 @@
 # dsh-connect-telegram
 
+English | [中文](README.zh.md)
+
 Telegram channel adapter for [dsh-connect](../connect/README.md): brings DeepSeek Harness agents into Telegram with the same capabilities as the Feishu adapter — bidirectional conversation, streaming typewriter-style replies, interactive choice prompts, image/file intake, and completion cards.
 
 - **Transport**: official [Telegram Bot API](https://core.telegram.org/bots/api) via `getUpdates` long polling (no webhook / no public IP needed).

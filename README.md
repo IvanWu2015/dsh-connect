@@ -1,5 +1,7 @@
 # dsh-connect
 
+English | [中文](README.zh.md)
+
 Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**DSH**) agents to chat platforms — **Feishu / Lark first**, with DingTalk and others to follow. Send tasks from your messaging app, watch the agent execute with live streaming output, keep multi-turn context, and get result summaries pushed back when a task finishes.
 
 ## Features

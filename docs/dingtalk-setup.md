@@ -1,27 +1,29 @@
-# 钉钉群机器人(Webhook)配置手册
+# DingTalk Group Robot (Webhook) Setup Manual
 
-本文说明如何创建钉钉群自定义机器人,并用 `dsh-connect-dingtalk` 把 DeepSeek Harness 的任务进度/结果推送到钉钉群。
+English | [中文](dingtalk-setup.zh.md)
 
-> ⚠️ 群自定义机器人是**单向 Webhook**:只能发消息,不能接收用户消息。双向对话需要企业内部应用机器人(Stream 模式),见文末说明。
+This document explains how to create a DingTalk group custom robot and use `dsh-connect-dingtalk` to push DeepSeek Harness task progress/results to a DingTalk group.
 
-## 1. 创建群机器人
+> ⚠️ A group custom robot is a **one-way webhook**: it can only send messages, not receive user messages. Two-way conversations require an enterprise internal app robot (Stream mode); see the note at the end of this document.
 
-1. 打开目标钉钉群 → 右上角 **设置** → **机器人** → **添加机器人** → 选择「**自定义**」。
-2. 填写机器人名称(如 "DSH 助手"),安全设置任选其一:
-   - **自定义关键词**:如 `DSH` —— 之后每条消息正文必须包含该关键词
-   - **加签**:勾选后生成 `SEC…` 开头的密钥(推荐,正文无需关键词)
-   - **IP 地址段**:限制来源 IP
-3. 创建完成后,得到 **Webhook 地址**,形如:
+## 1. Creating the Group Robot
+
+1. Open the target DingTalk group → top-right **Settings** → **Robots** → **Add Robot** → choose **Custom**.
+2. Enter the robot name (e.g. "DSH 助手") and choose one of the security settings:
+   - **Custom keywords**: e.g. `DSH` — every message body must then contain this keyword
+   - **Signing**: after enabling it, a secret starting with `SEC…` is generated (recommended; no keyword needed in the message body)
+   - **IP address range**: restrict the source IPs
+3. After creation, you get the **Webhook URL**, which looks like:
 
    ```
    https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
    ```
 
-4. 若启用了加签,把 `SEC…` 密钥保存好。
+4. If signing is enabled, keep the `SEC…` secret safe.
 
-## 2. 配置给插件
+## 2. Configuring the Plugin
 
-在 DSH profile 的 `cordis.patch.yml` 中:
+In the `cordis.patch.yml` of your DSH profile:
 
 ```yaml
 - insert:
@@ -29,42 +31,42 @@
       name: dsh-connect-dingtalk
       config:
         webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxx"
-        secret: "SECxxxxxxxx"        # 仅当启用加签时
+        secret: "SECxxxxxxxx"        # only needed when signing is enabled
         language: zh
 ```
 
-或设置环境变量 `DINGTALK_WEBHOOK_URL`(加签密钥用 `DINGTALK_WEBHOOK_SECRET`)。
+Or set the environment variable `DINGTALK_WEBHOOK_URL` (use `DINGTALK_WEBHOOK_SECRET` for the signing secret).
 
-## 3. 推送消息
+## 3. Sending Messages
 
-插件提供 Cordis 服务 `ctx.dingtalk`,其他插件/脚本可直接调用:
+The plugin provides the Cordis service `ctx.dingtalk`, which other plugins/scripts can call directly:
 
 ```ts
 const dingtalk = ctx.get("dingtalk");
-// markdown 卡片(正文需含自定义关键词,若使用关键词安全设置)
+// markdown card (the body must contain the custom keyword if you use the keyword security setting)
 await dingtalk.sendMarkdown("任务完成", "**结果**：构建成功", { mobiles: ["13800000000"] });
-// 纯文本
+// plain text
 await dingtalk.sendText("DSH 任务已开始");
 ```
 
-- **@ 指定人**:用 `{ mobiles: ["手机号"] }`(钉钉 Webhook 只认手机号)或 `{ userIds: [...] }`;`{ all: true }` 表示 @所有人。
-- **关键词安全设置**:若选择了「自定义关键词」,markdown 的**正文**(`text` 字段)必须包含该关键词,否则钉钉返回 `errcode 310000`。选择「加签」则无此限制。
+- **@ specific people**: use `{ mobiles: ["手机号"] }` (the DingTalk webhook only recognizes phone numbers) or `{ userIds: [...] }`; `{ all: true }` @mentions everyone.
+- **Keyword security setting**: if you chose **Custom keywords**, the markdown **body** (the `text` field) must contain the keyword, otherwise DingTalk returns `errcode 310000`. Choosing **Signing** removes this restriction.
 
-## 4. 验证
+## 4. Verification
 
-1. 重启 `dsh web`。
-2. 在任意脚本/插件里调用一次 `sendText("DSH 测试")`,群内应出现机器人消息。
-3. 检查 `dsh web` 日志无 `connect-dingtalk: 推送失败`。
+1. Restart `dsh web`.
+2. Call `sendText("DSH 测试")` once from any script/plugin — the robot message should appear in the group.
+3. Check the `dsh web` logs for no `connect-dingtalk: 推送失败`.
 
-## 常见问题
+## FAQ
 
-| 现象 | 处理 |
+| Symptom | Fix |
 |---|---|
-| `errcode 310000 keywords not in content` | 正文未含自定义关键词;改用「加签」安全设置即可 |
-| `errcode 330000` | 机器人被限流或群异常;稍后重试 |
-| HTTP 401 | webhook token 失效;重新生成机器人 |
-| 推送超时 | 检查本机到 `oapi.dingtalk.com` 的网络/代理 |
+| `errcode 310000 keywords not in content` | The message body does not contain the custom keyword; switch to the **Signing** security setting instead |
+| `errcode 330000` | The robot is rate-limited or the group is abnormal; retry later |
+| HTTP 401 | The webhook token is invalid; regenerate the robot |
+| Push timeout | Check the network/proxy between your machine and `oapi.dingtalk.com` |
 
-## 双向对话怎么做?
+## What about Two-Way Conversations?
 
-群自定义机器人无法接收消息。若需要「用户在钉钉发消息 → agent 回复」的双向体验,需要在钉钉开放平台创建**企业内部应用机器人**,使用 Stream 模式长连接(类似飞书)——这将是另一个 adapter;本包的发送层可直接复用。
+A group custom robot cannot receive messages. If you need the two-way experience of "user sends a message in DingTalk → agent replies", you need to create an **enterprise internal app robot** on the DingTalk Open Platform, using a Stream-mode long connection (similar to Feishu) — this would be another adapter; the sending layer of this package can be reused directly.

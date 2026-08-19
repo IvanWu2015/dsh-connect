@@ -1,24 +1,26 @@
-# Telegram Bot 配置手册
+# Telegram Bot Setup Manual
 
-本文说明如何创建 Telegram 机器人并与 `dsh-connect-telegram` 对接。
+English | [中文](telegram-setup.zh.md)
 
-## 1. 创建机器人(BotFather)
+This document explains how to create a Telegram bot and connect it to `dsh-connect-telegram`.
 
-1. 在 Telegram 里搜索并打开 **[@BotFather](https://t.me/BotFather)**。
-2. 发送 `/newbot`,按提示输入机器人显示名称和用户名(必须以 `bot` 结尾)。
-3. BotFather 返回一个 **HTTP API Token**,形如:
+## 1. Creating a Bot (BotFather)
+
+1. In Telegram, search for and open **[@BotFather](https://t.me/BotFather)**.
+2. Send `/newbot` and follow the prompts to enter the bot's display name and username (the username must end in `bot`).
+3. BotFather returns an **HTTP API Token**, which looks like:
 
    ```
    1234567890:AAHf7xHfZxHfxxxxxxxxxxxxxxxxxxxxxxxxxx
    ```
 
-4. 建议立即配置:
-   - `/setcommands` — 设置命令列表(可选,便于用户发现 `/menu`、`/help` 等)
-   - `/setprivacy` — 选择 **Disable**,否则群聊里机器人收不到非 @ 消息(我们的 `requireMention` 策略自己处理,建议保持 Enable 并用插件配置控制)
+4. It is recommended to configure the following right away:
+   - `/setcommands` — set the command list (optional; helps users discover `/menu`, `/help`, etc.)
+   - `/setprivacy` — choose **Disable**, otherwise the bot will not receive non-@ messages in group chats (our `requireMention` policy handles this itself; we recommend keeping it at Enable and controlling it through the plugin config)
 
-## 2. 把 Token 配置给插件
+## 2. Providing the Token to the Plugin
 
-在 DSH profile 的 `cordis.patch.yml` 中:
+In the `cordis.patch.yml` of your DSH profile:
 
 ```yaml
 - insert:
@@ -30,24 +32,24 @@
         language: zh
 ```
 
-或设置环境变量 `TELEGRAM_BOT_TOKEN`(两者都配置时,优先用 config)。
+Or set the environment variable `TELEGRAM_BOT_TOKEN` (when both are configured, the config takes precedence).
 
-## 3. 与机器人对话
+## 3. Chatting with the Bot
 
-- **私聊**:直接给机器人发消息即可。
-- **群聊**:默认需要 @ 机器人(或回复机器人的消息)才会响应;可通过 `requireMention: false` 改为群内所有消息都响应。
+- **Private chat**: just send a message to the bot.
+- **Group chat**: by default the bot only responds when it is @-mentioned (or when replying to the bot's message); set `requireMention: false` to make it respond to every message in the group.
 
-## 4. 验证
+## 4. Verification
 
-1. 重启 `dsh web`。
-2. 给机器人发一条消息,应收到「✅ 已收到,开始处理」的即时确认,随后是流式回复。
-3. 发 `/menu` 应弹出内联按钮菜单(按钮回调即 `ask_user_question`/菜单选择)。
-4. 发一张图片,机器人应下载并(若主模型支持视觉)直接理解。
+1. Restart `dsh web`.
+2. Send a message to the bot — you should receive an instant confirmation of 「✅ 已收到,开始处理」, followed by the streaming reply.
+3. Send `/menu` and an inline button menu should pop up (button callbacks are `ask_user_question`/menu selections).
+4. Send an image — the bot should download it and (if the main model supports vision) understand it directly.
 
-## 常见问题
+## FAQ
 
-| 现象 | 处理 |
+| Symptom | Fix |
 |---|---|
-| 机器人没反应 | 确认 token 正确、`dsh web` 已重启、profile 里插件已 insert |
-| 群聊不响应 | 需要在群里 @ 机器人,或设 `requireMention: false` |
-| 长轮询报错 | 网络问题会自动重试;确认机器没有防火墙拦截 `api.telegram.org` |
+| The bot does not respond | Make sure the token is correct, `dsh web` has been restarted, and the plugin is inserted in the profile |
+| No response in group chats | You need to @-mention the bot in the group, or set `requireMention: false` |
+| Long polling errors | Network issues are retried automatically; make sure no firewall on your machine blocks `api.telegram.org` |

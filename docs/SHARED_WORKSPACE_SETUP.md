@@ -1,27 +1,29 @@
-# 共享工作区配置指南
+# Shared Workspace Setup Guide
 
-## 🎯 目标
+English | [中文](SHARED_WORKSPACE_SETUP.zh.md)
 
-确保飞书和 DSH Web 看到**完全相同的工作区、会话历史和文件**。
+## 🎯 Goal
 
-## ✨ 自动化（无需手动配置）
+Make sure Feishu and DSH Web see **exactly the same workspace, session history, and files**.
 
-**connect 插件会自动完成所有工作区/会话关联**，无需任何手动配置：
+## ✨ Automation (No Manual Configuration Needed)
 
-1. **自动注册工作区**：connect 首次收到消息时，自动把工作目录注册到 DSH 的 `workspaceRegistry`，Web GUI 会立即显示该工作区
-2. **自动关联会话**：飞书创建的每个会话（`connect-*`）自动 attach 到对应工作区，Web GUI 与飞书看到**完全相同的会话列表**
-3. **历史会话补录**：启动时自动把 bindings 中已记录的会话补录到工作区，旧会话也会出现在 Web GUI
-4. **零配置**：不需要用户执行 `/mirror`、不需要手动添加工作区、不需要设置环境变量
+**The connect plugin automatically handles all workspace/session associations — no manual configuration is required**:
 
-> 你只需要**确保飞书和 DSH Web 运行在同一个 DSH 进程/配置**（即 connect 插件通过 `cordis.patch.yml` 加载到 DSH 的 web profile 中——当前部署已是如此），其余全部自动完成。
+1. **Automatic workspace registration**: when connect first receives a message, the working directory is automatically registered with the DSH `workspaceRegistry`, and the Web GUI displays the workspace immediately
+2. **Automatic session association**: every session created by Feishu (`connect-*`) is automatically attached to its workspace, and the Web GUI sees **exactly the same session list** as Feishu
+3. **Historical session backfill**: on startup, sessions already recorded in the bindings are automatically backfilled into the workspace, so old sessions also appear in the Web GUI
+4. **Zero configuration**: no need to run `/mirror`, add workspaces manually, or set environment variables
+
+> You only need to **make sure Feishu and DSH Web run in the same DSH process/configuration** (i.e. the connect plugin is loaded into DSH's web profile via `cordis.patch.yml` — the current deployment is already set up this way); everything else is automatic.
 
 ---
 
-## 📋 手动配置（可选，仅当你需要覆盖默认值时）
+## 📋 Manual Configuration (Optional, Only When You Need to Override Defaults)
 
-### 1️⃣ 创建共享配置文件
+### 1️⃣ Creating the Shared Config File
 
-在项目根目录创建 `dsh.shared.config.json`：
+Create `dsh.shared.config.json` in the project root:
 
 ```json
 {
@@ -48,28 +50,28 @@
 }
 ```
 
-### 2️⃣ 配置飞书 Connect
+### 2️⃣ Configuring Feishu Connect
 
-飞书的 `ConnectService` 会自动读取 `dsh.shared.config.json`。
+Feishu's `ConnectService` automatically reads `dsh.shared.config.json`.
 
-确保你的启动代码中：
+Make sure your startup code:
 
 ```typescript
 import { ConnectService } from "@deepseek-ai/dsh-connect";
 
-// 不需要手动指定 workDir，会从共享配置读取
+// No need to specify workDir manually; it is read from the shared config
 const connect = new ConnectService(ctx, {
-  // 其他配置...
+  // other config...
 });
 ```
 
-### 3️⃣ 配置 DSH Web
+### 3️⃣ Configuring DSH Web
 
-DSH Web 需要指向**相同的工作目录和状态目录**。
+DSH Web needs to point to the **same working directory and state directory**.
 
-#### 方法 A：通过环境变量（推荐）
+#### Method A: Environment Variables (Recommended)
 
-在启动 DSH Web 时设置：
+Set the following when starting DSH Web:
 
 ```bash
 # Windows PowerShell
@@ -77,14 +79,14 @@ $env:DSH_WORK_DIR="D:\ACOINFO\code\dsh_feishu"
 $env:DSH_STATE_DIR=".dsh-connect"
 pnpm run dev:web
 
-# 或者在 .env 文件中
+# Or in the .env file
 DSH_WORK_DIR=D:\ACOINFO\code\dsh_feishu
 DSH_STATE_DIR=.dsh-connect
 ```
 
-#### 方法 B：通过 DSH 配置文件
+#### Method B: Via the DSH Config File
 
-在 DSH Web 的配置文件中（通常是 `dsh.config.ts` 或类似文件）：
+In the DSH Web config file (usually `dsh.config.ts` or similar):
 
 ```typescript
 export default {
@@ -101,17 +103,17 @@ export default {
 };
 ```
 
-### 4️⃣ 验证配置
+### 4️⃣ Verifying the Configuration
 
-#### 检查飞书端
+#### Checking the Feishu Side
 
-在飞书中发送：
+Send this in Feishu:
 
 ```
 /status
 ```
 
-应该看到：
+You should see:
 
 ```
 状态：空闲
@@ -124,40 +126,40 @@ export default {
 上下文：1234 tokens（会话 567）
 ```
 
-#### 检查 Web 端
+#### Checking the Web Side
 
-1. 打开 DSH Web（http://127.0.0.1:3080）
-2. 查看工作目录是否显示为 `D:\ACOINFO\code\dsh_feishu`
-3. 查看会话列表，应该能看到飞书创建的会话
+1. Open DSH Web (http://127.0.0.1:3080)
+2. Check whether the working directory shows as `D:\ACOINFO\code\dsh_feishu`
+3. Check the session list — you should see the sessions created by Feishu
 
-#### 检查文件系统
+#### Checking the File System
 
-在工作目录中应该看到：
+In the working directory you should see:
 
 ```
 D:\ACOINFO\code\dsh_feishu\
 ├── .dsh-connect\
-│   ├── bindings.json          # 会话绑定信息（共享）
+│   ├── bindings.json          # session binding information (shared)
 │   └── ...
 ├── .dsh\
-│   └── sessions\              # 会话历史（共享）
+│   └── sessions\              # session history (shared)
 │       ├── connect-xxx\
 │       │   ├── events.jsonl
 │       │   └── ...
 │       └── ...
-├── dsh.shared.config.json     # 共享配置文件
+├── dsh.shared.config.json     # shared config file
 └── ...
 ```
 
 ---
 
-## 🔍 关键文件说明
+## 🔍 Key File Descriptions
 
 ### `bindings.json`
 
-位置：`.dsh-connect/bindings.json`
+Location: `.dsh-connect/bindings.json`
 
-这是**飞书和 Web 共享的核心文件**，包含：
+This is the **core file shared by Feishu and Web**, containing:
 
 ```json
 [
@@ -187,111 +189,111 @@ D:\ACOINFO\code\dsh_feishu\
 ]
 ```
 
-**关键字段**：
-- `sessionId`：飞书和 Web 通过这个 ID 找到同一个会话
-- `workDir`：确保两边使用相同的工作目录
-- `webMirrorSessionId`：标记这个会话已镜像到 Web
+**Key fields**:
+- `sessionId`: Feishu and Web find the same session via this ID
+- `workDir`: ensures both sides use the same working directory
+- `webMirrorSessionId`: marks that this session has been mirrored to Web
 
 ### `events.jsonl`
 
-位置：`.dsh/sessions/connect-xxx/events.jsonl`
+Location: `.dsh/sessions/connect-xxx/events.jsonl`
 
-这是**会话的完整历史记录**，包含所有用户消息、助手回复、任务事件等。
+This is the **complete session history record**, containing all user messages, assistant replies, task events, etc.
 
-飞书和 Web **都读取这个文件**，所以看到的是完全相同的历史。
-
----
-
-## ⚠️ 常见问题
-
-### Q1: 飞书和 Web 看到的工作目录不同？
-
-**原因**：DSH Web 没有正确配置工作目录。
-
-**解决**：
-1. 检查 DSH Web 的环境变量或配置文件
-2. 确保 `DSH_WORK_DIR` 或 `workspace.defaultPath` 与飞书一致
-3. 重启 DSH Web
-
-### Q2: Web 看不到飞书的会话？
-
-**原因**：`bindings.json` 没有被 Web 读取。
-
-**解决**：
-1. 确认飞书和 Web 使用相同的 `stateDir`（默认 `.dsh-connect`）
-2. 检查 `.dsh-connect/bindings.json` 是否存在
-3. 确认 `webMirrorSessionId` 字段已设置
-
-### Q3: 飞书创建的文件，Web 看不到？
-
-**原因**：工作目录不同。
-
-**解决**：
-1. 确认两边的 `workDir` 完全一致（包括大小写和路径分隔符）
-2. 使用绝对路径，避免相对路径导致的差异
-3. 检查文件系统权限
-
-### Q4: 会话历史不同步？
-
-**原因**：DSH session 文件没有被共享。
-
-**解决**：
-1. 确认飞书和 Web 使用相同的 `sessionStorePath`
-2. 检查 `.dsh/sessions/` 目录是否存在且可读写
-3. 确保没有多个独立的 DSH 实例在运行
+Feishu and Web **both read this file**, so they see exactly the same history.
 
 ---
 
-## 🧪 测试流程
+## ⚠️ Common Issues
 
-### 测试 1：工作目录一致性
+### Q1: Feishu and Web see different working directories?
 
-1. 在飞书中发送：`/status`
-2. 记录显示的"工作目录"
-3. 在 DSH Web 中查看工作目录设置
-4. 两者应该完全一致
+**Cause**: DSH Web is not configured with the correct working directory.
 
-### 测试 2：会话同步
+**Solution**:
+1. Check DSH Web's environment variables or config file
+2. Make sure `DSH_WORK_DIR` or `workspace.defaultPath` matches Feishu's
+3. Restart DSH Web
 
-1. 在飞书中发送：`/mirror`
-2. 记录显示的会话 ID
-3. 在 DSH Web 中查找该会话 ID
-4. 应该能看到相同的会话
+### Q2: Web cannot see Feishu's sessions?
 
-### 测试 3：文件可见性
+**Cause**: `bindings.json` is not being read by Web.
 
-1. 在飞书中让 Agent 创建一个文件：
+**Solution**:
+1. Make sure Feishu and Web use the same `stateDir` (default `.dsh-connect`)
+2. Check whether `.dsh-connect/bindings.json` exists
+3. Make sure the `webMirrorSessionId` field is set
+
+### Q3: Files created in Feishu are not visible in Web?
+
+**Cause**: Different working directories.
+
+**Solution**:
+1. Make sure both sides' `workDir` are exactly the same (including case and path separators)
+2. Use absolute paths to avoid differences caused by relative paths
+3. Check file system permissions
+
+### Q4: Session history is out of sync?
+
+**Cause**: The DSH session files are not shared.
+
+**Solution**:
+1. Make sure Feishu and Web use the same `sessionStorePath`
+2. Check whether the `.dsh/sessions/` directory exists and is readable/writable
+3. Make sure no multiple independent DSH instances are running
+
+---
+
+## 🧪 Test Procedure
+
+### Test 1: Working Directory Consistency
+
+1. Send `/status` in Feishu
+2. Note the displayed working directory
+3. Check the working directory setting in DSH Web
+4. The two should be exactly the same
+
+### Test 2: Session Sync
+
+1. Send `/mirror` in Feishu
+2. Note the displayed session ID
+3. Look up that session ID in DSH Web
+4. You should see the same session
+
+### Test 3: File Visibility
+
+1. Have the Agent create a file in Feishu:
    ```
    请在当前工作目录创建一个 test.txt 文件，内容为 "Hello from Feishu"
    ```
-2. 在 DSH Web 的文件浏览器中查找 `test.txt`
-3. 应该能看到该文件并查看内容
+2. Look for `test.txt` in the DSH Web file browser
+3. You should be able to see the file and view its contents
 
-### 测试 4：历史一致性
+### Test 4: History Consistency
 
-1. 在飞书中进行几轮对话
-2. 在 DSH Web 中打开同一个会话
-3. 应该看到完全相同的对话历史
-
----
-
-## 📝 最佳实践
-
-1. **使用绝对路径**：避免相对路径导致的不一致
-2. **统一配置源**：所有通道都从 `dsh.shared.config.json` 读取配置
-3. **定期检查**：使用 `/status` 命令验证工作目录是否正确
-4. **备份配置**：定期备份 `dsh.shared.config.json` 和 `bindings.json`
-5. **版本控制**：将 `dsh.shared.config.json` 加入 Git（但不包括 `.dsh-connect/` 和 `.dsh/`）
+1. Have a few rounds of conversation in Feishu
+2. Open the same session in DSH Web
+3. You should see exactly the same conversation history
 
 ---
 
-## 🔗 相关文档
+## 📝 Best Practices
 
-- [Web Mirror Session](./MIRROR_SESSION.md) - 飞书与 Web 的镜像机制
-- [增强功能总结](./ENHANCEMENTS_SUMMARY.md) - 所有已实现的功能
-- [Binding Store API](../packages/connect/src/binding.ts) - 会话绑定的技术细节
+1. **Use absolute paths**: avoid inconsistencies caused by relative paths
+2. **Unified config source**: all channels read configuration from `dsh.shared.config.json`
+3. **Check regularly**: use the `/status` command to verify the working directory is correct
+4. **Back up configs**: regularly back up `dsh.shared.config.json` and `bindings.json`
+5. **Version control**: add `dsh.shared.config.json` to Git (but not `.dsh-connect/` or `.dsh/`)
 
 ---
 
-**更新日期**：2024-01-15  
-**版本**：v0.5.1
+## 🔗 Related Documentation
+
+- [Web Mirror Session](./MIRROR_SESSION.md) - the mirror mechanism between Feishu and Web
+- [Enhancements Summary](./ENHANCEMENTS_SUMMARY.md) - all implemented features
+- [Binding Store API](../packages/connect/src/binding.ts) - technical details of session binding
+
+---
+
+**Updated**: 2024-01-15  
+**Version**: v0.5.1

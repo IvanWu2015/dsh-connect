@@ -41,7 +41,10 @@ $RootDir = Split-Path -Parent $PSScriptRoot
 # Packages to update
 $PackageFiles = @(
     "packages\connect\package.json",
-    "packages\connect-feishu\package.json"
+    "packages\connect-feishu\package.json",
+    "packages\connect-dingtalk\package.json",
+    "packages\connect-telegram\package.json",
+    "packages\connect-web\package.json"
 )
 
 function Parse-SemVer {

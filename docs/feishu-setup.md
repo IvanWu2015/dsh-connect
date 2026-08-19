@@ -1,5 +1,7 @@
 # Feishu Open Platform Configuration Manual
 
+English | [中文](feishu-setup.zh.md)
+
 This plugin uses Feishu's **long-connection (WebSocket) event subscription** mode by default — no public IP / domain / tunnel is required, and events are received locally.
 
 ## 1. Create a custom app

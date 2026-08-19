@@ -1,5 +1,7 @@
 # Naming & Discoverability Guide
 
+English | [中文](PUBLISHING.zh.md)
+
 This document answers two questions: **what is it called**, and **how do DSH users find this repository**.
 
 ## 1. Naming

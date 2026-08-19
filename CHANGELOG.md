@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.2] - 2026-08-19
+
+### Added
+
+- **Bilingual documentation (zh/en, switchable)**: every user-facing doc now ships as an English + Chinese pair following the official DSH convention — `README.md` / `README.zh.md` (and the `docs/*.md` / `docs/*.zh.md` guides), each with a language-switch link at the top (`English | [中文](…)` ⇄ `[English](…) | 中文`):
+  - Root `README.md`, `docs/QUICKSTART.md`, `docs/feishu-setup.md`, `docs/telegram-setup.md`, `docs/dingtalk-setup.md`, `docs/PUBLISHING.md`, `docs/MIRROR_SESSION.md`, `docs/SHARED_WORKSPACE_SETUP.md`, `docs/ENHANCEMENTS_SUMMARY.md`, plus all five package READMEs.
+  - `README.i18n.yaml` consistency records (git blob hashes of both sides) for the root and all five packages, matching the official DSH package layout.
+  - npm packages now ship `README.zh.md` (and the i18n record) via the `files` field, so the Chinese docs reach npm package pages too.
+- `scripts/bump-version.ps1` now updates all five workspace packages (`connect`, `connect-feishu`, `connect-dingtalk`, `connect-telegram`, `connect-web`) instead of two.
+
 ## [0.6.1] - 2026-08-18
 
 ### Fixed

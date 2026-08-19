@@ -1,5 +1,7 @@
 # Quickstart
 
+English | [中文](QUICKSTART.zh.md)
+
 Hook `dsh-connect` up to an existing DSH installation and start chatting with the agent in Feishu. It has two halves — the **DSH side** and the **Feishu side** — do them in order.
 
 ## 0. Prerequisites

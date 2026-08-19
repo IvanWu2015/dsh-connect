@@ -1,52 +1,55 @@
-{
-  "name": "dsh-connect-dingtalk",
-  "version": "0.6.1",
-  "description": "DingTalk webhook push channel for dsh-connect",
-  "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./lib/index.d.ts",
-      "default": "./lib/index.js"
-    }
-  },
-  "files": [
-    "lib"
-  ],
-  "keywords": [
-    "dsh",
-    "deepseek-harness",
-    "dingtalk",
-    "ai-agent",
-    "chatbot",
-    "cordis"
-  ],
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/IvanWu2015/dsh-connect.git",
-    "directory": "packages/connect-dingtalk"
-  },
-  "homepage": "https://github.com/IvanWu2015/dsh-connect",
-  "bugs": {
-    "url": "https://github.com/IvanWu2015/dsh-connect/issues"
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
-  },
-  "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.1"
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "dsh-connect": "^0.6.0"
-  },
-  "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "dsh-connect": "workspace:*",
-    "@types/node": "^22.15.0",
-    "typescript": "^5.6.3"
-  }
+﻿{
+    "name":  "dsh-connect-dingtalk",
+    "version":  "0.6.2",
+    "description":  "DingTalk webhook push channel for dsh-connect",
+    "type":  "module",
+    "main":  "lib/index.js",
+    "types":  "lib/index.d.ts",
+    "exports":  {
+                    ".":  {
+                              "types":  "./lib/index.d.ts",
+                              "default":  "./lib/index.js"
+                          }
+                },
+    "files":  [
+                  "lib",
+                  "README.md",
+                  "README.zh.md",
+                  "README.i18n.yaml"
+              ],
+    "keywords":  [
+                     "dsh",
+                     "deepseek-harness",
+                     "dingtalk",
+                     "ai-agent",
+                     "chatbot",
+                     "cordis"
+                 ],
+    "license":  "MIT",
+    "repository":  {
+                       "type":  "git",
+                       "url":  "https://github.com/IvanWu2015/dsh-connect.git",
+                       "directory":  "packages/connect-dingtalk"
+                   },
+    "homepage":  "https://github.com/IvanWu2015/dsh-connect",
+    "bugs":  {
+                 "url":  "https://github.com/IvanWu2015/dsh-connect/issues"
+             },
+    "scripts":  {
+                    "build":  "tsc -p tsconfig.json",
+                    "typecheck":  "tsc -p tsconfig.json --noEmit"
+                },
+    "dependencies":  {
+                         "@deepseek-ai/schemastery":  "^3.18.1"
+                     },
+    "peerDependencies":  {
+                             "@deepseek-ai/cordis":  "^4.0.1",
+                             "dsh-connect":  "^0.6.0"
+                         },
+    "devDependencies":  {
+                            "@deepseek-ai/cordis":  "^4.0.1",
+                            "dsh-connect":  "workspace:*",
+                            "@types/node":  "^22.15.0",
+                            "typescript":  "^5.6.3"
+                        }
 }

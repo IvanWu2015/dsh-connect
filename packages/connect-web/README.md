@@ -1,5 +1,7 @@
 # dsh-connect-web
 
+English | [中文](README.zh.md)
+
 Web channel adapter for `dsh-connect`: enables DSH Web GUI to automatically mirror and interact with Feishu conversations.
 
 ## Overview

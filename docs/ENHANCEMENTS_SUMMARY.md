@@ -1,27 +1,29 @@
-# Web Mirror Session 增强功能实现总结
+# Web Mirror Session Enhancements - Implementation Summary
 
-## 📋 概述
+English | [中文](ENHANCEMENTS_SUMMARY.zh.md)
 
-本次更新实现了 Web Mirror Session 的所有计划增强功能，将 v0.5.1 的功能完整度从基础版本提升到生产就绪状态。
+## 📋 Overview
+
+This update implements all the planned enhancements for Web Mirror Session, bringing the completeness of v0.5.1 from the basic version up to production-ready.
 
 ---
 
-## ✅ 已完成的功能
+## ✅ Completed Features
 
-### 1. 📥 队列消息自动执行
+### 1. 📥 Automatic Execution of Queued Messages
 
-**问题**：之前 Web 端排队的消息只是被清除并通知用户，但不会真正执行。
+**Problem**: previously, messages queued on the Web side were only cleared with the user notified — they were never actually executed.
 
-**解决方案**：
-- 修改 `queueMessage()` 存储完整的消息对象（包括 text, senderKey, replyRef, images, files）
-- 修改 `processQueuedMessages()` 将队列中的消息重新构造为 `InboundMessage` 并加入 runner 的处理队列
-- 锁释放后自动触发 `drain()` 处理所有排队消息
+**Solution**:
+- Modified `queueMessage()` to store the complete message object (including text, senderKey, replyRef, images, files)
+- Modified `processQueuedMessages()` to rebuild queued messages as `InboundMessage` and add them to the runner's processing queue
+- Automatically triggers `drain()` to process all queued messages after the lock is released
 
-**影响文件**：
-- `packages/connect/src/binding.ts` - 扩展 `queuedMessages` 类型
-- `packages/connect/src/runner.ts` - 修改队列处理和消息重入队逻辑
+**Affected files**:
+- `packages/connect/src/binding.ts` - extended the `queuedMessages` type
+- `packages/connect/src/runner.ts` - modified the queue processing and message re-queueing logic
 
-**用户体验**：
+**User experience**:
 ```
 Web 用户发送消息（锁被飞书占用）
 → 📥 消息已加入队列（第 1 位），等待锁释放后自动执行
@@ -33,20 +35,20 @@ Web 用户发送消息（锁被飞书占用）
 
 ---
 
-### 2. ⏱️ 自定义超时时间
+### 2. ⏱️ Custom Timeout
 
-**问题**：超时时间硬编码为 5 分钟，无法根据任务复杂度调整。
+**Problem**: the timeout was hardcoded to 5 minutes and could not be adjusted to the task complexity.
 
-**解决方案**：
-- 在 `/mirror` 命令中支持 `--timeout N` 参数（N 为分钟数）
-- 解析命令行参数并应用到新创建的镜像会话
-- 在创建成功消息中显示自定义超时时间
+**Solution**:
+- Support the `--timeout N` argument in the `/mirror` command (N is the number of minutes)
+- Parse the command-line arguments and apply them to the newly created mirror session
+- Display the custom timeout in the creation success message
 
-**影响文件**：
-- `packages/connect/src/commands.ts` - 添加 `timeoutMin` 字段到 `mirror` 命令
-- `packages/connect/src/runner.ts` - 修改 `handleMirror()` 支持自定义超时
+**Affected files**:
+- `packages/connect/src/commands.ts` - added the `timeoutMin` field to the `mirror` command
+- `packages/connect/src/runner.ts` - modified `handleMirror()` to support custom timeouts
 
-**使用示例**：
+**Usage example**:
 ```bash
 /mirror --timeout 10
 → ✅ Web 镜像会话已创建：connect-xxx
@@ -55,21 +57,21 @@ Web 用户发送消息（锁被飞书占用）
 
 ---
 
-### 3. 🔄 锁续期命令
+### 3. 🔄 Lock Renewal Command
 
-**问题**：长任务可能在超时前未完成，需要一种方式延长锁的有效期。
+**Problem**: long tasks may not finish before the timeout, so a way to extend the lock's validity is needed.
 
-**解决方案**：
-- 新增 `/renew` 或 `/renew-lock` 命令
-- 重置 `lockAcquiredAt` 时间戳，使锁从当前时刻重新开始计时
-- 只有锁的拥有者才能续期
+**Solution**:
+- Added the `/renew` or `/renew-lock` command
+- Resets the `lockAcquiredAt` timestamp so the lock restarts its countdown from the current moment
+- Only the lock owner can renew
 
-**影响文件**：
-- `packages/connect/src/commands.ts` - 添加 `renew` 命令类型
-- `packages/connect/src/runner.ts` - 实现 `handleRenewLock()` 方法
-- `packages/connect/src/i18n.ts` - 添加 `lockRenewed` 消息
+**Affected files**:
+- `packages/connect/src/commands.ts` - added the `renew` command type
+- `packages/connect/src/runner.ts` - implemented the `handleRenewLock()` method
+- `packages/connect/src/i18n.ts` - added the `lockRenewed` message
 
-**使用示例**：
+**Usage example**:
 ```bash
 /renew
 → 🔄 会话锁已续期 5 分钟
@@ -77,27 +79,27 @@ Web 用户发送消息（锁被飞书占用）
 
 ---
 
-### 4. 📄 导出对话历史
+### 4. 📄 Conversation History Export
 
-**问题**：用户需要将对话历史保存为文件以便分享或归档。
+**Problem**: users need to save the conversation history as a file for sharing or archiving.
 
-**解决方案**：
-- 新增 `/export [markdown|pdf]` 命令
-- 遍历 session events 生成结构化的 Markdown 文档
-- 保存到工作目录，文件名包含 session ID 和时间戳
-- PDF 导出暂不支持（返回友好提示）
+**Solution**:
+- Added the `/export [markdown|pdf]` command
+- Iterates over session events to generate a structured Markdown document
+- Saves it to the working directory; the filename includes the session ID and a timestamp
+- PDF export is not supported yet (returns a friendly message)
 
-**影响文件**：
-- `packages/connect/src/commands.ts` - 添加 `export` 命令类型
-- `packages/connect/src/runner.ts` - 实现 `handleExport()` 和 `generateMarkdown()` 方法
-- `packages/connect/src/i18n.ts` - 添加导出相关消息
+**Affected files**:
+- `packages/connect/src/commands.ts` - added the `export` command type
+- `packages/connect/src/runner.ts` - implemented the `handleExport()` and `generateMarkdown()` methods
+- `packages/connect/src/i18n.ts` - added export-related messages
 
-**导出的 Markdown 包含**：
-- 会话元数据（ID、导出时间、事件总数）
-- 所有用户和助手的消息
-- 任务开始/结束的状态标记
+**The exported Markdown includes**:
+- Session metadata (ID, export time, total event count)
+- All user and assistant messages
+- Status markers for task start/end
 
-**使用示例**：
+**Usage example**:
 ```bash
 /export
 → 📄 对话历史已导出为 Markdown：
@@ -113,34 +115,34 @@ Web 用户发送消息（锁被飞书占用）
 
 ---
 
-## 📊 修改统计
+## 📊 Change Statistics
 
-| 文件 | 新增行数 | 修改行数 | 说明 |
+| File | Added lines | Modified lines | Description |
 |------|---------|---------|------|
-| `packages/connect/src/binding.ts` | +7 | -1 | 扩展 queuedMessages 类型 |
-| `packages/connect/src/commands.ts` | +18 | -3 | 添加 renew 和 export 命令 |
-| `packages/connect/src/runner.ts` | +120 | -15 | 实现队列自动执行、续期、导出 |
-| `packages/connect/src/i18n.ts` | +8 | -0 | 添加新消息键的中英文实现 |
-| `docs/MIRROR_SESSION.md` | +60 | -10 | 更新文档说明新功能 |
-| **总计** | **+213** | **-29** | |
+| `packages/connect/src/binding.ts` | +7 | -1 | Extended the queuedMessages type |
+| `packages/connect/src/commands.ts` | +18 | -3 | Added the renew and export commands |
+| `packages/connect/src/runner.ts` | +120 | -15 | Implemented automatic queue execution, renewal, and export |
+| `packages/connect/src/i18n.ts` | +8 | -0 | Added Chinese/English implementations of the new message keys |
+| `docs/MIRROR_SESSION.md` | +60 | -10 | Updated the documentation for the new features |
+| **Total** | **+213** | **-29** | |
 
 ---
 
-## 🧪 测试场景
+## 🧪 Test Scenarios
 
-### 场景 1：队列消息自动执行
+### Scenario 1: Automatic Execution of Queued Messages
 ```bash
-# 飞书正在执行任务
-# Web 端发送消息
+# Feishu is executing a task
+# The Web side sends a message
 你好
 → 📥 消息已加入队列（第 1 位），等待锁释放后自动执行
 
-# 飞书任务完成
+# Feishu task finishes
 → ✅ 已处理队列中的 1 条消息
 → [Agent 自动开始处理 "你好"]
 ```
 
-### 场景 2：自定义超时
+### Scenario 2: Custom Timeout
 ```bash
 /mirror --timeout 15
 → ✅ Web 镜像会话已创建：connect-xxx
@@ -153,22 +155,22 @@ Web 用户发送消息（锁被飞书占用）
    排队消息：0 条
 ```
 
-### 场景 3：锁续期
+### Scenario 3: Lock Renewal
 ```bash
-# 任务执行了 4 分钟，快超时了
+# The task has been running for 4 minutes and is about to time out
 /renew
 → 🔄 会话锁已续期 5 分钟
 
-# 锁的超时时间从当前时刻重新计算
+# The lock's timeout restarts from the current moment
 ```
 
-### 场景 4：导出对话
+### Scenario 4: Exporting the Conversation
 ```bash
 /export
 → 📄 对话历史已导出为 Markdown：
    D:\ACOINFO\code\dsh_feishu\conversation-connect-xxx-1234567890.md
 
-# 查看导出的文件
+# View the exported file
 cat conversation-connect-xxx-1234567890.md
 → # Conversation History
    - **Session ID**: connect-xxx
@@ -178,52 +180,52 @@ cat conversation-connect-xxx-1234567890.md
 
 ---
 
-## 🔒 技术亮点
+## 🔒 Technical Highlights
 
-1. **消息完整性**：队列现在存储完整的消息对象，包括附件和引用信息
-2. **自动重入队**：锁释放后自动将消息加入处理队列，无需用户干预
-3. **参数化配置**：超时时间可通过命令行参数灵活设置
-4. **权限检查**：只有锁的拥有者才能续期，防止误操作
-5. **结构化导出**：生成的 Markdown 包含完整的会话元数据和消息历史
-6. **错误处理**：所有操作都有完善的错误提示和边界情况处理
-
----
-
-## 📝 注意事项
-
-### Web UI 锁定状态指示
-
-该功能需要修改 DSH Web 的源代码（位于 `@deepseek-ai/dsh` 项目），不在当前 `dsh_feishu` 项目范围内。
-
-**建议的实现方案**：
-1. 在 DSH Web 的会话界面中添加锁定状态图标
-2. 通过 BindingStore 的 `onChange` 回调监听锁定状态变化
-3. 显示当前锁定方、超时剩余时间和排队消息数
-4. 提供手动解锁和续期的按钮
+1. **Message integrity**: the queue now stores complete message objects, including attachments and reference information
+2. **Automatic re-queueing**: messages are automatically added to the processing queue after the lock is released, with no user intervention needed
+3. **Parameterized configuration**: the timeout can be flexibly set via command-line arguments
+4. **Permission checks**: only the lock owner can renew, preventing accidental misuse
+5. **Structured export**: the generated Markdown contains complete session metadata and message history
+6. **Error handling**: all operations have thorough error messages and edge-case handling
 
 ---
 
-## 🚀 后续优化建议
+## 📝 Notes
 
-1. **PDF 导出**：集成 PDF 生成库（如 `puppeteer` 或 `pdf-lib`）
-2. **队列优先级**：支持标记重要消息优先处理
-3. **自定义续期时间**：`/renew --timeout 15` 指定续期时长
-4. **自动清理**：定期删除过期的导出文件
-5. **批量导出**：支持导出多个会话的历史
-6. **Web UI 集成**：在 DSH Web 中显示实时锁定状态
+### Web UI Lock Status Indicator
+
+This feature requires modifying the DSH Web source code (located in the `@deepseek-ai/dsh` project), which is out of scope for the current `dsh_feishu` project.
+
+**Suggested implementation**:
+1. Add a lock status icon to the session interface in DSH Web
+2. Listen for lock status changes through the `onChange` callback of BindingStore
+3. Display the current lock owner, remaining timeout, and queued message count
+4. Provide buttons for manual unlock and renewal
 
 ---
 
-## 📚 相关文档
+## 🚀 Future Optimization Suggestions
 
-- [Web Mirror Session 完整文档](./MIRROR_SESSION.md)
+1. **PDF export**: integrate a PDF generation library (e.g. `puppeteer` or `pdf-lib`)
+2. **Queue priority**: support marking important messages for priority processing
+3. **Custom renewal duration**: `/renew --timeout 15` to specify the renewal length
+4. **Automatic cleanup**: periodically delete expired export files
+5. **Batch export**: support exporting the history of multiple sessions
+6. **Web UI integration**: show real-time lock status in DSH Web
+
+---
+
+## 📚 Related Documentation
+
+- [Web Mirror Session Full Documentation](./MIRROR_SESSION.md)
 - [Binding Store API](../packages/connect/src/binding.ts)
-- [Runner 实现](../packages/connect/src/runner.ts)
-- [命令解析](../packages/connect/src/commands.ts)
-- [国际化消息](../packages/connect/src/i18n.ts)
+- [Runner Implementation](../packages/connect/src/runner.ts)
+- [Command Parsing](../packages/connect/src/commands.ts)
+- [i18n Messages](../packages/connect/src/i18n.ts)
 
 ---
 
-**版本**：v0.5.1  
-**更新日期**：2024-01-15  
-**作者**：DSH Connect Team
+**Version**: v0.5.1  
+**Updated**: 2024-01-15  
+**Author**: DSH Connect Team

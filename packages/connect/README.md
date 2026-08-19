@@ -1,5 +1,7 @@
 # dsh-connect
 
+English | [中文](README.zh.md)
+
 The **channel-agnostic core** for connecting [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**DSH**) agents to chat platforms (Feishu / Lark first, more to come): session binding, agent driving, streaming reply bridging, interactive menu cards, and local commands.
 
 > Install together with a channel adapter — e.g. [dsh-connect-feishu](https://www.npmjs.com/package/dsh-connect-feishu) — or the optional [dsh-connect-web](https://www.npmjs.com/package/dsh-connect-web) mirror monitor.

@@ -1,89 +1,91 @@
-# Web Mirror Session - 飞书对话同步到 DSH Web
+# Web Mirror Session - Syncing Feishu Conversations to DSH Web
 
-## 功能概述
+English | [中文](MIRROR_SESSION.zh.md)
 
-将飞书（Feishu）对话内容实时同步到 DSH Web 界面，实现**跨平台查看对话历史**。采用**共享会话 + 智能锁机制**，确保数据一致性和访问安全。
+## Overview
 
-### 🎯 核心目标
+Sync Feishu conversation content to the DSH Web interface in real time for **cross-platform viewing of conversation history**. It uses a **shared session + smart locking mechanism** to ensure data consistency and access safety.
 
-- **相同的工作区**：飞书和 Web 看到相同的文件系统和目录结构
-- **相同的会话**：通过共享 session ID 和历史记录，确保两边看到完全一致的对话
-- **互斥访问**：当一方正在执行任务时，另一方自动进入只读模式
+### 🎯 Core Goals
 
-### ⚡ 自动同步（增强版）
+- **Same workspace**: Feishu and Web see the same file system and directory structure
+- **Same session**: through a shared session ID and history, both sides see exactly the same conversation
+- **Mutual exclusion**: when one side is executing a task, the other side automatically enters read-only mode
 
-**connect 插件现在自动完成工作区与会话的同步，无需任何手动操作**：
+### ⚡ Automatic Sync (Enhanced)
 
-1. **自动注册工作区**：connect 启动后自动把工作目录注册到 DSH `workspaceRegistry`，Web GUI 立即显示该工作区
-2. **自动关联会话**：飞书创建的每个会话自动 attach 到对应工作区，Web GUI 看到与飞书完全相同的会话列表
-3. **历史会话补录**：启动时自动把 bindings 中已有的会话补录到工作区，旧会话也出现在 Web GUI
+**The connect plugin now automatically syncs the workspace and sessions — no manual steps are required**:
 
-> 💡 **无需手动配置**：只要飞书 connect 与 DSH Web 运行在同一个 DSH 进程（通过 `cordis.patch.yml` 加载），工作区和会话就自动一致。参考 [共享工作区配置](./SHARED_WORKSPACE_SETUP.md)。
+1. **Automatic workspace registration**: after connect starts, the working directory is automatically registered with the DSH `workspaceRegistry`, and the Web GUI displays the workspace immediately
+2. **Automatic session association**: every session created by Feishu is automatically attached to its workspace, and the Web GUI shows exactly the same session list as Feishu
+3. **Historical session backfill**: on startup, sessions already present in the bindings are automatically backfilled into the workspace, so old sessions also appear in the Web GUI
 
-### ✨ 增强功能（v0.5.1）
+> 💡 **No manual configuration needed**: as long as the Feishu connect and DSH Web run in the same DSH process (loaded via `cordis.patch.yml`), the workspace and sessions stay consistent automatically. See [Shared Workspace Setup](./SHARED_WORKSPACE_SETUP.md).
 
-- ⏰ **超时保护**：5分钟无活动自动释放锁，防止死锁
-- 🔓 **手动解锁**：`/unlock` 命令强制释放会话锁
-- 📥 **消息队列**：Web 端消息自动排队，锁释放后**自动执行**
-- 📊 **状态增强**：`/mirror` 显示超时时间、排队消息数
-- 🔄 **自定义超时**：`/mirror --timeout 10` 设置自定义超时时间
-- ⏱️ **锁续期**：`/renew` 延长当前锁的超时时间
-- 📄 **导出历史**：`/export [markdown|pdf]` 导出对话历史
+### ✨ Enhancements (v0.5.1)
 
----
-
-## 核心特性
-
-### 🔒 互斥访问控制
-
-- **自动锁定**：当一方（飞书或 Web）正在执行任务时，另一方自动进入**只读模式**
-- **智能释放**：任务完成后自动释放锁，另一方可继续操作
-- **状态提示**：清晰显示当前锁定方和访问权限
-
-### 📊 实时同步
-
-- 飞书发送的消息 → 立即在 Web 可见
-- Web 查看的历史 → 与飞书完全一致
-- 共享同一个 DSH session，无数据延迟
-
-### 🌐 多端查看
-
-- **飞书**：正常聊天交互（发送消息、接收回复）
-- **DSH Web**：查看完整对话历史、任务状态、上下文信息
-- **双向可见**：两边的操作都会反映到同一会话中
+- ⏰ **Timeout protection**: the lock is released automatically after 5 minutes of inactivity to prevent deadlocks
+- 🔓 **Manual unlock**: the `/unlock` command forcibly releases the session lock
+- 📥 **Message queue**: Web-side messages are queued automatically and **executed automatically** once the lock is released
+- 📊 **Enhanced status**: `/mirror` shows the timeout duration and the number of queued messages
+- 🔄 **Custom timeout**: `/mirror --timeout 10` sets a custom timeout duration
+- ⏱️ **Lock renewal**: `/renew` extends the current lock's timeout
+- 📄 **History export**: `/export [markdown|pdf]` exports the conversation history
 
 ---
 
-## 使用方法
+## Core Features
 
-### 1️⃣ 创建 Web 镜像会话
+### 🔒 Mutual Exclusion Access Control
 
-在飞书中发送：
+- **Automatic locking**: when one side (Feishu or Web) is executing a task, the other side automatically enters **read-only mode**
+- **Smart release**: the lock is released automatically after the task finishes, so the other side can continue
+- **Status indication**: clearly shows the current lock holder and access permission
+
+### 📊 Real-time Sync
+
+- Messages sent in Feishu → immediately visible in Web
+- History viewed in Web → exactly the same as Feishu
+- Both share the same DSH session, with no data latency
+
+### 🌐 Multi-end Viewing
+
+- **Feishu**: normal chat interaction (send messages, receive replies)
+- **DSH Web**: view the full conversation history, task status, and context information
+- **Bidirectional visibility**: operations on either side are reflected in the same session
+
+---
+
+## Usage
+
+### 1️⃣ Creating a Web Mirror Session
+
+Send this in Feishu:
 ```
 /mirror
 ```
 
-或：
+Or:
 ```
 /web
 ```
 
-**预期输出**：
+**Expected output**:
 ```
 ✅ Web 镜像会话已创建：connect-c38f92c6-2d6b-450c-95c1-c2aad995aff0
 在 DSH Web 中打开此会话即可查看飞书对话历史。
 ```
 
-### 2️⃣ 在 DSH Web 中查看
+### 2️⃣ Viewing in DSH Web
 
-1. 打开 DSH Web 界面（http://127.0.0.1:3080）
-2. 找到对应的工作区会话
-3. 会话 ID 与飞书显示的相同
-4. 可以查看完整的对话历史、任务清单、目标状态等
+1. Open the DSH Web interface (http://127.0.0.1:3080)
+2. Find the corresponding workspace session
+3. The session ID is the same as the one shown in Feishu
+4. You can view the full conversation history, task lists, goal status, etc.
 
-### 3️⃣ 查看镜像状态
+### 3️⃣ Checking Mirror Status
 
-在飞书中再次发送 `/mirror`：
+Send `/mirror` again in Feishu:
 ```
 Web 镜像会话：connect-c38f92c6-...
 锁定方：飞书
@@ -91,72 +93,72 @@ Web 镜像会话：connect-c38f92c6-...
 排队消息：2 条
 ```
 
-### 4️⃣ 手动释放锁
+### 4️⃣ Releasing the Lock Manually
 
-如果会话被意外锁定，可以强制释放：
+If the session is locked unexpectedly, you can force-release it:
 ```
 /unlock
 ```
 
-**预期输出**：
+**Expected output**:
 ```
 🔓 会话锁已手动释放
 ✅ 已处理队列中的 2 条消息
 ```
 
-### 5️⃣ 自定义超时时间
+### 5️⃣ Custom Timeout
 
-创建镜像时可以指定超时时间（分钟）：
+You can specify the timeout (in minutes) when creating a mirror:
 ```
 /mirror --timeout 10
 ```
 
-**预期输出**：
+**Expected output**:
 ```
 ✅ Web 镜像会话已创建：connect-xxx
 在 DSH Web 中打开此会话即可查看飞书对话历史。（超时时间：10 分钟）
 ```
 
-### 6️⃣ 续期会话锁
+### 6️⃣ Renewing the Session Lock
 
-如果任务较长，可以在超时前续期：
+If a task is long, you can renew it before the timeout:
 ```
 /renew
 ```
 
-**预期输出**：
+**Expected output**:
 ```
 🔄 会话锁已续期 5 分钟
 ```
 
-### 7️⃣ 导出对话历史
+### 7️⃣ Exporting Conversation History
 
-将当前会话的完整对话历史导出为 Markdown 文件：
+Export the current session's full conversation history as a Markdown file:
 ```
 /export
 ```
 
-或指定格式（目前仅支持 Markdown）：
+Or specify a format (currently only Markdown is supported):
 ```
 /export markdown
 ```
 
-**预期输出**：
+**Expected output**:
 ```
 📄 对话历史已导出为 Markdown：
 D:\projects\conversation-connect-xxx-1234567890.md
 ```
 
-导出的文件包含：
-- 会话 ID 和导出时间
-- 所有用户和助手的消息
-- 任务开始和结束的状态信息
+The exported file contains:
+- The session ID and export time
+- All user and assistant messages
+- Status information for task start and end
 
 ---
 
-## 访问控制逻辑
+## Access Control Logic
 
-### 场景 1：飞书正在执行任务
+### Scenario 1: Feishu Is Executing a Task
 
 ```
 飞书用户："帮我分析这个文件"
@@ -166,7 +168,7 @@ D:\projects\conversation-connect-xxx-1234567890.md
 → 收到提示："📥 消息已加入队列（第 1 位），等待锁释放后自动执行"
 ```
 
-### 场景 2：任务完成，锁释放
+### Scenario 2: Task Complete, Lock Released
 
 ```
 飞书任务完成
@@ -176,7 +178,7 @@ D:\projects\conversation-connect-xxx-1234567890.md
 → Web 用户可以发送消息
 ```
 
-### 场景 3：超时自动释放
+### Scenario 3: Timeout Auto-Release
 
 ```
 飞书获得锁后 5 分钟无活动
@@ -185,7 +187,7 @@ D:\projects\conversation-connect-xxx-1234567890.md
 → 双方都可以重新获取锁
 ```
 
-### 场景 4：手动解锁
+### Scenario 4: Manual Unlock
 
 ```
 任意一方发送 /unlock
@@ -194,7 +196,7 @@ D:\projects\conversation-connect-xxx-1234567890.md
 → 通知："🔓 会话锁已手动释放"
 ```
 
-### 场景 5：无锁状态（初始或空闲）
+### Scenario 5: No Lock (Initial or Idle)
 
 ```
 双方都空闲
@@ -204,9 +206,9 @@ D:\projects\conversation-connect-xxx-1234567890.md
 
 ---
 
-## 技术实现
+## Technical Implementation
 
-### 数据模型扩展
+### Data Model Extension
 
 ```typescript
 interface ChatBinding {
@@ -220,20 +222,20 @@ interface ChatBinding {
 }
 ```
 
-### 锁定机制
+### Locking Mechanism
 
 ```typescript
-// 获取锁（返回 true 表示成功）
+// Acquire the lock (returns true on success)
 acquireLock(channel: "feishu" | "web"): boolean
 
-// 释放锁
+// Release the lock
 releaseLock(): void
 
-// 检查是否有写权限
+// Check whether the channel has write permission
 canWrite(channel: "feishu" | "web"): boolean
 ```
 
-### 命令处理
+### Command Handling
 
 ```typescript
 case "mirror": {
@@ -244,71 +246,71 @@ case "mirror": {
 
 ---
 
-## 注意事项
+## Notes
 
-### ⚠️ 重要限制
+### ⚠️ Important Limitations
 
-1. **单一会话**：飞书和 Web 共享同一个 DSH session ID
-2. **互斥写入**：同一时间只有一方能发送消息给 Agent
-3. **超时保护**：默认 5 分钟无活动自动释放锁（可通过 `/mirror --timeout N` 自定义）
-4. **队列自动执行**：Web 端消息会排队，锁释放后**自动执行**（无需手动触发）
-5. **锁续期**：使用 `/renew` 命令延长当前锁的超时时间
+1. **Single session**: Feishu and Web share the same DSH session ID
+2. **Mutually exclusive writes**: only one side can send messages to the Agent at a time
+3. **Timeout protection**: by default the lock is released automatically after 5 minutes of inactivity (customizable via `/mirror --timeout N`)
+4. **Automatic queue execution**: Web-side messages are queued and **executed automatically** once the lock is released (no manual trigger needed)
+5. **Lock renewal**: use the `/renew` command to extend the current lock's timeout
 
-### 💡 最佳实践
+### 💡 Best Practices
 
-1. **主要交互端**：建议以飞书为主要交互端，Web 作为查看端
-2. **避免并发**：不要在两边同时发送消息，等待一方完成后再切换
-3. **定期检查**：使用 `/mirror` 查看当前锁定状态和排队消息
-4. **超时设置**：如果任务较长，使用 `/mirror --timeout 15` 设置更长的超时时间
-5. **锁续期**：任务执行中快超时时，使用 `/renew` 延长锁的超时时间
-6. **手动解锁**：遇到死锁时使用 `/unlock` 强制释放
-7. **队列自动处理**：Web 端排队的消息会在锁释放后自动执行，无需额外操作
+1. **Primary interaction end**: it is recommended to use Feishu as the primary interaction end and Web as the viewing end
+2. **Avoid concurrency**: do not send messages on both sides at the same time; wait for one side to finish before switching
+3. **Check regularly**: use `/mirror` to view the current lock status and queued messages
+4. **Timeout setting**: for long tasks, use `/mirror --timeout 15` to set a longer timeout
+5. **Lock renewal**: when a task is about to time out during execution, use `/renew` to extend the lock's timeout
+6. **Manual unlock**: use `/unlock` to force-release a deadlock
+7. **Automatic queue handling**: Web-side queued messages are executed automatically after the lock is released; no extra steps are needed
 
-### 🔧 故障排查
+### 🔧 Troubleshooting
 
-**问题**：Web 中看不到飞书对话
+**Problem**: Feishu conversations are not visible in Web
 
-**解决**：
-1. 确认已执行 `/mirror` 命令
-2. 检查会话 ID 是否匹配
-3. 确认 DSH Web 使用的是相同的工作区
+**Solution**:
+1. Confirm that the `/mirror` command was run
+2. Check whether the session ID matches
+3. Confirm that DSH Web uses the same workspace
 
-**问题**：一直显示"会话被占用"
+**Problem**: "会话被占用" keeps showing
 
-**解决**：
-1. 检查飞书是否有未完成的任务
-2. 使用 `/stop` 停止当前任务
-3. 等待 5 分钟让锁自动超时释放
-4. 或使用 `/unlock` 手动释放锁
+**Solution**:
+1. Check whether Feishu has unfinished tasks
+2. Use `/stop` to stop the current task
+3. Wait 5 minutes for the lock to time out and be released automatically
+4. Or use `/unlock` to release the lock manually
 
-**问题**：Web 消息一直在排队
+**Problem**: Web messages keep queueing
 
-**解决**：
-1. 确认飞书端已完成当前任务
-2. 检查是否有其他进程持有锁
-3. 使用 `/unlock` 释放锁并处理队列
-4. 队列中的消息会在锁释放后**自动执行**，无需手动重新发送
-
----
-
-## 未来增强
-
-可能的改进方向：
-
-- [ ] **Web UI 锁定状态指示**：在 DSH Web 界面显示锁定状态图标和提示（需要修改 DSH Web 源代码）
-- [ ] 支持多端同时查看（真正的只读模式）
-- [ ] PDF 导出支持（需要额外的 PDF 生成库）
-- [ ] 队列优先级（重要消息优先处理）
-- [ ] 锁续期自定义时间（`/renew --timeout 15`）
-- [ ] 自动清理过期的导出文件
-
-> **注意**：Web UI 锁定状态指示功能需要修改 DSH Web 的源代码（位于 `@deepseek-ai/dsh` 项目），不在当前 `dsh_feishu` 项目范围内。
+**Solution**:
+1. Confirm that the Feishu side has finished the current task
+2. Check whether another process holds the lock
+3. Use `/unlock` to release the lock and process the queue
+4. Messages in the queue are **executed automatically** after the lock is released; no need to resend them manually
 
 ---
 
-## 示例对话
+## Future Enhancements
 
-### 飞书端
+Possible improvement directions:
+
+- [ ] **Web UI lock status indicator**: show a lock status icon and hint in the DSH Web interface (requires modifying the DSH Web source code)
+- [ ] Support simultaneous multi-end viewing (true read-only mode)
+- [ ] PDF export support (requires an additional PDF generation library)
+- [ ] Queue priority (important messages processed first)
+- [ ] Custom lock renewal duration (`/renew --timeout 15`)
+- [ ] Automatically clean up expired export files
+
+> **Note**: the Web UI lock status indicator requires modifying the DSH Web source code (located in the `@deepseek-ai/dsh` project), which is out of scope for the current `dsh_feishu` project.
+
+---
+
+## Example Conversation
+
+### Feishu Side
 
 ```
 User: /mirror
@@ -321,7 +323,7 @@ Bot: 🔄 正在处理任务...
      ✅ 完成
 ```
 
-### Web 端（同时查看）
+### Web Side (Viewing Simultaneously)
 
 ```
 [会话 connect-xxx]
@@ -338,8 +340,8 @@ Bot: 🔄 正在处理任务...
 
 ---
 
-## 相关文档
+## Related Documentation
 
-- [Binding Store](../packages/connect/src/binding.ts) - 会话绑定存储
-- [Runner](../packages/connect/src/runner.ts) - 会话驱动和锁定逻辑
-- [Commands](../packages/connect/src/commands.ts) - 命令解析
+- [Binding Store](../packages/connect/src/binding.ts) - session binding storage
+- [Runner](../packages/connect/src/runner.ts) - session driving and locking logic
+- [Commands](../packages/connect/src/commands.ts) - command parsing
