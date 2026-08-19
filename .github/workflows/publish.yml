@@ -1,0 +1,58 @@
+# Publish all dsh-connect packages to npm when a GitHub Release is created.
+#
+# Prerequisites:
+#   1. Add an npm "automation" token (bypasses 2FA OTP) to repository secrets as NPM_TOKEN.
+#      Generate at: https://www.npmjs.com/settings/~/tokens → "Automation" type.
+#   2. Create a GitHub Release → the workflow runs automatically.
+#
+# Packages are published in dependency order (connect first, adapters after).
+
+name: Publish to npm
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
+  publish-npm:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Order matters: connect must be published first because the adapter
+        # packages have it as a peerDependency.
+        package:
+          - packages/connect
+          - packages/connect-feishu
+          - packages/connect-telegram
+          - packages/connect-dingtalk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org/
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm publish --filter ${{ matrix.package }} --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # npm automation token (no OTP needed). Set this in GitHub repo
+          # Settings → Secrets and variables → Actions → New repository secret.
