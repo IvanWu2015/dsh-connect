@@ -182,7 +182,6 @@ export class TelegramAdapter implements ChannelAdapter {
     } else {
       await this.client.answerCallbackQuery(query.id, this.t.choiceExpired).catch(() => undefined);
     }
-  }
 
   /** Normalize a Telegram message into dsh-connect's InboundMessage; returns undefined when ignored. */
   private async normalizeMessage(message: TelegramMessage): Promise<InboundMessage | undefined> {

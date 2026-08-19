@@ -1,7 +1,7 @@
 {
   "name": "dsh-connect-dingtalk",
-  "version": "0.6.0",
-  "description": "DingTalk webhook push channel for dsh-connect: send task progress, results, and notices to a DingTalk group as text/markdown cards with @mentions",
+  "version": "0.6.1",
+  "description": "DingTalk webhook push channel for dsh-connect",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

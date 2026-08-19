@@ -351,14 +351,33 @@ export class InteractionBridge {
         { id: "approval:reject", label: t.rejectLabel },
       ],
     };
-    const result = await this.presentLoop(interaction, prompt, (choice) => {
+    const result = await this.presentLoop(interaction, prompt, async (choice, messageId) => {
       if (choice !== "approval:allow" && choice !== "approval:reject") return undefined;
       const outcome = choice === "approval:allow" ? "allowed-once" : "rejected";
-      void this.respondThen(interaction, {
+      // Submit the decision through the host respond path and wait for the
+      // verdict — this is what tells the user whether their tap actually took
+      // effect (the Web GUI may have answered first, or the request expired).
+      const accepted = await this.respond(interaction.rpcId, {
         sessionId: interaction.sessionId,
         approvalId: interaction.approvalId,
         outcome,
       });
+      if (accepted) {
+        // Replace the buttons with a clear "done" state so the user sees the
+        // decision landed even if the chat keeps streaming afterwards.
+        await interaction.adapter
+          .closeMenu(messageId, t.approvalDone(outcome, interaction.toolName))
+          .catch(() => undefined);
+      } else {
+        // Not accepted: the approval was already handled elsewhere, or is
+        // stale. Say so explicitly instead of silently ignoring the tap.
+        await interaction.adapter
+          .closeMenu(messageId, t.approvalStale)
+          .catch(() => undefined);
+        await interaction.adapter
+          .sendText(this.outbound(interaction), t.approvalStale)
+          .catch(() => undefined);
+      }
       return "answered";
     });
     if (result === "answered") this.settle(interaction);
@@ -370,11 +389,15 @@ export class InteractionBridge {
    * timeout; on expiry the same card is re-presented in place so the choice
    * stays clickable for as long as the agent waits. Resolves `"answered"`
    * when `onChoice` accepted a choice, `"stopped"` otherwise.
+   *
+   * `onChoice` may be async and receives the card's message id (for feedback
+   * such as updating the card once the decision is delivered). A thrown
+   * `onChoice` error resolves the loop as `"stopped"` (best-effort channel).
    */
   private async presentLoop(
     interaction: PendingInteraction,
     prompt: ChoicePrompt,
-    onChoice: (choice: string | undefined) => "answered" | undefined,
+    onChoice: (choice: string | undefined, messageId: string) => "answered" | undefined | Promise<"answered" | undefined>,
   ): Promise<"answered" | "stopped"> {
     while (!interaction.controller.signal.aborted && !interaction.settled) {
       try {
@@ -384,7 +407,7 @@ export class InteractionBridge {
           interaction.messageId,
         );
         interaction.messageId = messageId;
-        if (onChoice(choice) === "answered") return "answered";
+        if ((await onChoice(choice, messageId)) === "answered") return "answered";
       } catch {
         return "stopped";
       }
@@ -425,15 +448,15 @@ export class InteractionBridge {
       sessionId: interaction.sessionId,
       answer: { answers },
     });
+    const t = messages(interaction.language);
     if (accepted) {
-      const t = messages(interaction.language);
       await interaction.adapter.sendText(this.outbound(interaction), t.answerReceived).catch(() => undefined);
+    } else {
+      // The host did not accept the answers (already answered elsewhere, or
+      // the question expired) — tell the user their reply had no effect.
+      await interaction.adapter.sendText(this.outbound(interaction), t.questionStale).catch(() => undefined);
     }
     this.settle(interaction);
-  }
-
-  private async respondThen(interaction: PendingInteraction, value: unknown): Promise<void> {
-    await this.respond(interaction.rpcId, value);
   }
 
   private async respond(rpcId: string, value: unknown): Promise<boolean> {

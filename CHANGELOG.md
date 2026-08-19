@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] - 2026-08-18
+
+### Fixed
+
+- **Authorization feedback gap**: tapping an approval card's "同意"/"拒绝" button now immediately shows the result — the card is replaced with a green "✅ 已同意/已拒绝" summary when the decision is accepted, or a "⚠️ 已失效" notice when the request was already handled elsewhere or expired. Previously the card went silent (`void this.respondThen(...)` fire-and-forget), leaving the user unsure whether the tap took effect.
+- **Stale-button silence**: tapping a button on an already-handled or expired card (e.g. an old approval card behind new messages) now shows a clear "⚠️ 此操作已失效" message instead of silently ignoring the tap. Applies to Feishu via `cardAction` fallback and to Telegram via `answerCallbackQuery` "expired" toast.
+- **Question answer staleness**: when all questions are answered but the host rejects the response (already answered in the Web GUI), the user now sees "⚠️ 此问题已失效" instead of getting no feedback at all.
+
+### Changed
+
+- `presentLoop` callback signature: `onChoice` now receives the card's `messageId` as a second argument and may be **async** — enabling the approval flow to `await respond()` and update the card in place before settling.
+- Removed the now-unused `respondThen` helper.
+
 ## [0.6.0] - 2026-08-18
 
 ### Added

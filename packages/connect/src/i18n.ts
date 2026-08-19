@@ -69,6 +69,14 @@ export interface Messages {
   rejectLabel: string;
   answerReceived: string;
   questionToolCall(text: string): string;
+  /** Card summary shown after an approval decision was accepted. */
+  approvalDone(outcome: "allowed-once" | "rejected", toolName: string): string;
+  /** Card summary shown when the approval is no longer actionable (stale / already handled). */
+  approvalStale: string;
+  /** Shown when answering an interactive question failed (e.g. it was already answered elsewhere). */
+  questionStale: string;
+  /** Inline status shown inside the approval card while the decision is being submitted. */
+  approvalSubmitting: string;
 
   // First-time welcome card (sent once per chat).
   welcomeTitle: string;
@@ -338,6 +346,11 @@ const zh: Messages = {
   rejectLabel: "❌ 拒绝",
   answerReceived: "✅ 已收到你的回答，继续处理…",
   questionToolCall: (text) => `🤔 需要你的选择 — ${text}`,
+  approvalDone: (outcome, toolName) =>
+    outcome === "allowed-once" ? `✅ 已同意授权：\`${toolName}\`` : `已拒绝授权：\`${toolName}\``,
+  approvalStale: "⚠️ 此授权请求已失效（可能已被处理或已过期），本次操作未生效。",
+  questionStale: "⚠️ 此问题已失效（可能已被处理或已过期），本次回答未生效。",
+  approvalSubmitting: "⏳ 正在提交授权结果…",
   welcomeTitle: "👋 欢迎使用 dsh-connect",
   welcomeBody: (workdir) =>
     [
@@ -614,6 +627,11 @@ const en: Messages = {
   rejectLabel: "❌ Deny",
   answerReceived: "✅ Got your answer — continuing…",
   questionToolCall: (text) => `🤔 Your input is needed — ${text}`,
+  approvalDone: (outcome, toolName) =>
+    outcome === "allowed-once" ? `✅ Approved: \`${toolName}\`` : `Rejected: \`${toolName}\``,
+  approvalStale: "⚠️ This approval request is no longer active (already handled or expired) — this action had no effect.",
+  questionStale: "⚠️ This question is no longer active (already handled or expired) — this answer had no effect.",
+  approvalSubmitting: "⏳ Submitting your decision…",
   welcomeTitle: "👋 Welcome to dsh-connect",
   welcomeBody: (workdir) =>
     [

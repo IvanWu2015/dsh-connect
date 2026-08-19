@@ -386,4 +386,12 @@ test("messages expose welcome / confirm / error-advice / progress strings in bot
   assert.ok(zh.processingFailedAdvice("boom", zh.errorAdviceNetwork).includes("网络"));
   assert.ok(en.processingFailedAdvice("boom", en.errorAdviceModel).includes("quota"));
   assert.ok(zh.errorAdvicePermission.includes("权限"));
+  assert.ok(zh.approvalDone("allowed-once", "pwsh").includes("同意"));
+  assert.ok(zh.approvalDone("rejected", "pwsh").includes("拒绝"));
+  assert.ok(zh.approvalStale.includes("已失效"));
+  assert.ok(zh.questionStale.includes("已失效"));
+  assert.ok(en.approvalDone("allowed-once", "pwsh").includes("Approved"));
+  assert.ok(en.approvalStale.includes("no longer active"));
+  assert.ok(zh.approvalSubmitting.includes("提交"));
+  assert.ok(en.approvalSubmitting.includes("Submitting"));
 });

@@ -15,6 +15,8 @@ export interface FeishuMessages {
   fileDownloadError(failed: number, detail: string): string;
   menuExpired: string;
   menuExpiredHint: string;
+  /** Shown when the user taps a button on a card whose interaction is no longer pending. */
+  actionStale: string;
   doneHeader: string;
   onboardingEnter: string;
   onboardingIncomplete: string;
@@ -35,6 +37,7 @@ const zh: FeishuMessages = {
     `有 ${failed} 个文件下载失败，请按上面的错误详情确认飞书应用权限（下载用户消息文件需要 im:message 系列权限）并重新发版${detail}`,
   menuExpired: "菜单已过期",
   menuExpiredHint: "请重新打开菜单。",
+  actionStale: "⚠️ 此操作已失效（可能已被处理或已过期）。",
   doneHeader: "✅ 完成",
   onboardingEnter: "connect-feishu: 未配置 appId/appSecret，进入一键接入模式（扫码或点击链接自动创建飞书应用）。",
   onboardingIncomplete: "connect-feishu: 一键接入未完成，可重启重试，或手动配置 appId/appSecret。",
@@ -55,6 +58,7 @@ const en: FeishuMessages = {
     `Failed to download ${failed} file(s). Check the Feishu app permissions per the error detail above (downloading user-message files requires the im:message family) and release a new version${detail}`,
   menuExpired: "Menu expired",
   menuExpiredHint: "Please reopen the menu.",
+  actionStale: "⚠️ This action is no longer active (already handled or expired).",
   doneHeader: "✅ Done",
   onboardingEnter: "connect-feishu: no appId/appSecret configured — entering one-click onboarding (scan or open the link to auto-create the Feishu app).",
   onboardingIncomplete: "connect-feishu: onboarding not completed — restart to retry, or configure appId/appSecret manually.",

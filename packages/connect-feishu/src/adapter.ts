@@ -204,6 +204,8 @@ export class FeishuAdapter implements ChannelAdapter {
   readonly id = "feishu";
   private readonly channel: LarkChannel;
   private readonly pendingChoices = new Map<string, PendingChoice>();
+  /** Cards whose stale-button tap was already noticed (dedupe, self-clearing). */
+  private readonly staleNoticed = new Set<string>();
   private readonly t: FeishuMessages;
   private handler?: (msg: InboundMessage) => void | Promise<void>;
 
@@ -342,7 +344,22 @@ export class FeishuAdapter implements ChannelAdapter {
 
     this.channel.on("cardAction", (evt: CardActionEvent) => {
       const pending = this.pendingChoices.get(evt.messageId);
-      if (pending === undefined) return;
+      if (pending === undefined) {
+        // The card's interaction is no longer pending: it was already handled,
+        // expired, or replaced by a newer card. Tell the user instead of
+        // silently ignoring the tap — a stale authorization captions the
+        // "did my tap do anything?" confusion. Wait: the core now also updates
+        // the card in place on acceptance, so most stale taps hit cards the
+        // user can see are done; this is the fallback for anything else.
+        const value = evt.action.value as { choice?: string } | undefined;
+        if (value?.choice !== undefined && !this.staleNoticed.has(evt.messageId)) {
+          this.staleNoticed.add(evt.messageId);
+          // Keep the notice once per card to avoid spam on repeated taps.
+          setTimeout(() => this.staleNoticed.delete(evt.messageId), 30_000);
+          void this.sendText({ chatKey: evt.chatId, chatType: "p2p" }, this.t.actionStale).catch(() => undefined);
+        }
+        return;
+      }
       this.pendingChoices.delete(evt.messageId);
       clearTimeout(pending.timer);
       const value = evt.action.value as { choice?: string } | undefined;
