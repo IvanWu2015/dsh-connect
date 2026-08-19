@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-08-18
+
+### Added
+
+- **`dsh-connect-telegram` — Telegram channel adapter (new package)**. Bidirectional conversation over the official Bot API `getUpdates` long polling (no webhook / public IP needed):
+  - Text / markdown replies with HTML parse mode; long answers stream as in-place message edits.
+  - Interactive choice prompts (`ask_user_question`, `/menu`) render as inline-keyboard buttons answered via callback queries.
+  - Photo / document intake with automatic download into the workdir; group @-mention policy (`requireMention`).
+  - Zero runtime HTTP dependency (built on the global `fetch`).
+  - Setup guide: `docs/telegram-setup.md`.
+- **`dsh-connect-dingtalk` — DingTalk group-webhook push channel (new package)**. One-way notice delivery into a DingTalk group (DingTalk custom robots cannot receive messages):
+  - `ctx.dingtalk` Cordis service: `sendMarkdown` / `sendText` with @-mentions by phone / user id / @all.
+  - Optional signing secret (`SEC…`); zero runtime HTTP dependency.
+  - Setup guide: `docs/dingtalk-setup.md`.
+- Workspace now ships 4 packages: `connect`, `connect-feishu`, `connect-telegram`, `connect-dingtalk`; root `pnpm test` covers all of them (29 + 6 + 5 unit tests).
+
 ## [0.5.3] - 2026-08-17
 
 ### Added

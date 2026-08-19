@@ -32,3 +32,19 @@
         requireMention: true          # groups only respond when @mentioned
         dmMode: open                  # DM policy: open / allowlist / pair / disabled
         # language: en                # user-facing message language: zh (default) / en
+
+    - id: connect-telegram
+      name: dsh-connect-telegram
+      config:
+        botToken: "123456:ABC-YourBotToken"  # from @BotFather; or env TELEGRAM_BOT_TOKEN
+        requireMention: true                 # groups only respond when @mentioned
+        # language: en
+
+    - id: connect-dingtalk
+      name: dsh-connect-dingtalk
+      config:
+        webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"  # or env DINGTALK_WEBHOOK_URL
+        # secret: "SECxxx"             # only if the robot has signing enabled
+        # language: en
+        # defaultAt:                   # @-mention on every push
+        #   mobiles: ["13800000000"]

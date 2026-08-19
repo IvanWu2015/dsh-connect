@@ -19,21 +19,35 @@ Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**D
 - **Smart image & file handling**: images sent to the bot are downloaded automatically; if the main model supports vision it sees them directly, otherwise a vision-model sub-task describes them and the description is injected — so a text-only main model never stalls on images. Attached files/audio/video are also downloaded into the workdir.
 - **Web mirror**: each chat can mirror its DSH session into the DSH Web GUI (`/mirror`, or automatic via `autoMirror`), sharing the same conversation with mutual-exclusion locking.
 - **Local commands** (no model tokens): `/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/schedule` `/model` `/notify` `/progress` `/mirror` `/new` `/clear` `/stop` `/settings` `/help`.
-- **Extensible**: `dsh-connect` (channel-agnostic core) + `dsh-connect-feishu` (Feishu adapter) are layered; adding DingTalk only requires one more adapter package.
+- **Extensible, multi-platform**: `dsh-connect` (channel-agnostic core) + per-channel adapter packages — `dsh-connect-feishu` (bidirectional Feishu/Lark), `dsh-connect-telegram` (bidirectional Telegram), `dsh-connect-dingtalk` (one-way DingTalk group push). Adding a channel is one more adapter package.
 
 ## Repository layout
 
 ```
 packages/
-  connect/         dsh-connect core: services, bindings, runner, streaming bridge, commands
-  connect-feishu/  dsh-connect-feishu Feishu adapter: createLarkChannel long connection, normalization, streaming replies
+  connect/           dsh-connect core: services, bindings, runner, streaming bridge, commands
+  connect-feishu/    dsh-connect-feishu Feishu adapter: createLarkChannel long connection, normalization, streaming replies
+  connect-telegram/  dsh-connect-telegram Telegram adapter: Bot API long-polling, streaming edits, inline-keyboard choices
+  connect-dingtalk/  dsh-connect-dingtalk DingTalk group-webhook push: text/markdown/@-mention notices (one-way)
 docs/
-  QUICKSTART.md    step-by-step run guide (DSH side + Feishu side)
-  feishu-setup.md  Feishu Open Platform configuration manual
-  PUBLISHING.md    naming + GitHub/npm discoverability guide
+  QUICKSTART.md      step-by-step run guide (DSH side + Feishu side)
+  feishu-setup.md    Feishu Open Platform configuration manual
+  telegram-setup.md  Telegram BotFather setup manual
+  dingtalk-setup.md  DingTalk group custom-robot setup manual
+  PUBLISHING.md      naming + GitHub/npm discoverability guide
 examples/
   profile-cordis.patch.yml
 ```
+
+## Channel matrix
+
+| Channel | Package | Direction | Transport | Notes |
+|---|---|---|---|---|
+| Feishu / Lark | `dsh-connect-feishu` | bidirectional | WebSocket long connection | full features (streaming, menus, images) |
+| Telegram | `dsh-connect-telegram` | bidirectional | Bot API long polling | full features (streaming edits, inline keyboards) |
+| DingTalk | `dsh-connect-dingtalk` | one-way push | group-robot webhook | task progress / results / alerts into a group |
+
+All bidirectional adapters share the same `dsh-connect` core: commands, `/menu`, notification levels, the proactive progress watchdog, interactive choices & approvals, and per-chat settings work identically on every channel.
 
 ## Quick start
 
@@ -42,7 +56,7 @@ examples/
 Published to npm — install straight into your DSH profile:
 
 ```sh
-dsh plugin --profile web add dsh-connect dsh-connect-feishu
+dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram dsh-connect-dingtalk
 ```
 
 ### Configure
@@ -61,11 +75,20 @@ Append to the profile's `cordis.patch.yml` (`$DSH_HOME/profiles/web/cordis.patch
         transport: websocket
         requireMention: true
         dmMode: open
+    - id: connect-telegram
+      name: dsh-connect-telegram
+      config:
+        botToken: "123456:ABC-YourBotToken"   # from @BotFather
+        requireMention: true
+    - id: connect-dingtalk
+      name: dsh-connect-dingtalk
+      config:
+        webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
 ```
 
 ### Run
 
-Restart `dsh web` (Host plugins require a process restart to load), complete the Feishu-side subscription per [docs/feishu-setup.md](docs/feishu-setup.md), then chat with the bot in Feishu.
+Restart `dsh web` (Host plugins require a process restart to load), complete the platform-side subscription per [docs/feishu-setup.md](docs/feishu-setup.md), [docs/telegram-setup.md](docs/telegram-setup.md) or [docs/dingtalk-setup.md](docs/dingtalk-setup.md), then chat with the bot.
 
 > Detailed step-by-step instructions (including Feishu-side setup and verification) are in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 

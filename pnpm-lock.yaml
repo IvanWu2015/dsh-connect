@@ -40,6 +40,25 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  packages/connect-dingtalk:
+    dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: ^3.18.1
+        version: 3.18.1
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: ^4.0.1
+        version: 4.0.1
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.20.1
+      dsh-connect:
+        specifier: workspace:*
+        version: link:../connect
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
   packages/connect-feishu:
     dependencies:
       '@deepseek-ai/schemastery':
@@ -67,6 +86,53 @@ importers:
       dsh-connect:
         specifier: workspace:*
         version: link:../connect
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/connect-telegram:
+    dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: ^3.18.1
+        version: 3.18.1
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: ^4.0.1
+        version: 4.0.1
+      '@deepseek-ai/dsh-agent':
+        specifier: ^0.1.0-rc.6
+        version: 0.1.0-rc.6(b0514d7a320728b6d8f5a31eb3960e10)
+      '@deepseek-ai/dsh-llm':
+        specifier: ^0.1.0-rc.6
+        version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-attachment@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-brand@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-timeout@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))
+      '@deepseek-ai/dsh-session':
+        specifier: ^0.1.0-rc.6
+        version: 0.1.0-rc.6(6fd26f59436a18b115f326d6060415e6)
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.20.1
+      dsh-connect:
+        specifier: workspace:*
+        version: link:../connect
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/connect-web:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: ^4.0.1
+        version: 4.0.1
+      '@deepseek-ai/schemastery':
+        specifier: ^3.18.1
+        version: 3.18.1
+      dsh-connect:
+        specifier: workspace:*
+        version: link:../connect
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.20.1
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

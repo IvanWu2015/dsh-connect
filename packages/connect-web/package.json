@@ -16,8 +16,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@deepseek-ai/cordis": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:*",
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1",
     "dsh-connect": "workspace:*"
   },
   "devDependencies": {

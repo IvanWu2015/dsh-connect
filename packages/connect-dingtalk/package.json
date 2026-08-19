@@ -1,7 +1,7 @@
 {
-  "name": "dsh-connect-feishu",
+  "name": "dsh-connect-dingtalk",
   "version": "0.6.0",
-  "description": "Feishu/Lark channel adapter for dsh-connect: long-connection event intake, message normalization, streaming replies, and work summary cards",
+  "description": "DingTalk webhook push channel for dsh-connect: send task progress, results, and notices to a DingTalk group as text/markdown cards with @mentions",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -17,8 +17,7 @@
   "keywords": [
     "dsh",
     "deepseek-harness",
-    "feishu",
-    "lark",
+    "dingtalk",
     "ai-agent",
     "chatbot",
     "cordis"
@@ -27,7 +26,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/IvanWu2015/dsh-connect.git",
-    "directory": "packages/connect-feishu"
+    "directory": "packages/connect-dingtalk"
   },
   "homepage": "https://github.com/IvanWu2015/dsh-connect",
   "bugs": {
@@ -38,8 +37,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "@larksuiteoapi/node-sdk": "^1.73.0"
+    "@deepseek-ai/schemastery": "^3.18.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -47,9 +45,6 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
     "dsh-connect": "workspace:*",
     "@types/node": "^22.15.0",
     "typescript": "^5.6.3"

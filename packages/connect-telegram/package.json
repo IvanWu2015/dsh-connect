@@ -1,7 +1,7 @@
 {
-  "name": "dsh-connect-feishu",
+  "name": "dsh-connect-telegram",
   "version": "0.6.0",
-  "description": "Feishu/Lark channel adapter for dsh-connect: long-connection event intake, message normalization, streaming replies, and work summary cards",
+  "description": "Telegram channel adapter for dsh-connect: getUpdates long-polling intake, message normalization, streaming replies, and interactive choice prompts",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -17,8 +17,7 @@
   "keywords": [
     "dsh",
     "deepseek-harness",
-    "feishu",
-    "lark",
+    "telegram",
     "ai-agent",
     "chatbot",
     "cordis"
@@ -27,7 +26,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/IvanWu2015/dsh-connect.git",
-    "directory": "packages/connect-feishu"
+    "directory": "packages/connect-telegram"
   },
   "homepage": "https://github.com/IvanWu2015/dsh-connect",
   "bugs": {
@@ -38,8 +37,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "@larksuiteoapi/node-sdk": "^1.73.0"
+    "@deepseek-ai/schemastery": "^3.18.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
