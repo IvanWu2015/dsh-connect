@@ -1,6 +1,6 @@
-{
+﻿{
     "name":  "dsh-connect",
-    "version":  "0.6.4",
+    "version":  "0.6.5",
     "description":  "Channel-agnostic messaging bridge core for DeepSeek Harness (DSH): binds chat channels to DSH agents, streams replies, and pushes work summaries",
     "type":  "module",
     "main":  "lib/index.js",
