@@ -1,0 +1,3 @@
+- insert:
+    - id: connect-telegram
+      name: dsh-connect-telegram

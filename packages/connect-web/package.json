@@ -1,6 +1,6 @@
 {
     "name":  "dsh-connect-web",
-    "version":  "0.6.3",
+    "version":  "0.6.4",
     "description":  "Web channel adapter for dsh-connect: mirrors Feishu conversations to DSH Web GUI",
     "type":  "module",
     "main":  "./lib/index.js",
@@ -15,8 +15,14 @@
                   "lib",
                   "README.md",
                   "README.zh.md",
-                  "README.i18n.yaml"
+                  "README.i18n.yaml",
+                  "cordis.patch.yml"
               ],
+    "dsh":  {
+                "bundle":  {
+                               "patch":  "./cordis.patch.yml"
+                           }
+            },
     "scripts":  {
                     "build":  "tsc",
                     "typecheck":  "tsc --noEmit",

@@ -1,0 +1,3 @@
+- insert:
+    - id: connect-feishu
+      name: dsh-connect-feishu

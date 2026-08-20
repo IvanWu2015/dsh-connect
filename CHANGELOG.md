@@ -4,6 +4,10 @@ All notable changes to this project are documented following [Keep a Changelog](
 
 ## [Unreleased]
 
+### Added
+
+- **`dsh.bundle` manifest for `dsh plugin add`** — every package now declares `dsh.bundle.patch` (`./cordis.patch.yml`) in its `package.json` and ships a per-package `cordis.patch.yml` (listed in `files`), so `dsh plugin --profile <name> add dsh-connect dsh-connect-feishu …` installs the packages as proper profile bundle layers (auto-applied, no manual `cordis.patch.yml` editing) instead of plain dependencies.
+
 ## [0.6.3] - 2026-08-20
 
 ### Fixed

@@ -1,6 +1,6 @@
 {
     "name":  "dsh-connect-feishu",
-    "version":  "0.6.3",
+    "version":  "0.6.4",
     "description":  "Feishu/Lark channel adapter for dsh-connect: long-connection event intake, message normalization, streaming replies, and work summary cards",
     "type":  "module",
     "main":  "lib/index.js",
@@ -15,8 +15,14 @@
                   "lib",
                   "README.md",
                   "README.zh.md",
-                  "README.i18n.yaml"
+                  "README.i18n.yaml",
+                  "cordis.patch.yml"
               ],
+    "dsh":  {
+                "bundle":  {
+                               "patch":  "./cordis.patch.yml"
+                           }
+            },
     "keywords":  [
                      "dsh",
                      "deepseek-harness",
