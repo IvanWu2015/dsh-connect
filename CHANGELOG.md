@@ -2,11 +2,15 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.6.4] - 2026-08-20
 
 ### Added
 
 - **`dsh.bundle` manifest for `dsh plugin add`** — every package now declares `dsh.bundle.patch` (`./cordis.patch.yml`) in its `package.json` and ships a per-package `cordis.patch.yml` (listed in `files`), so `dsh plugin --profile <name> add dsh-connect dsh-connect-feishu …` installs the packages as proper profile bundle layers (auto-applied, no manual `cordis.patch.yml` editing) instead of plain dependencies.
+
+### Fixed
+
+- **feishu (`dsh-connect-feishu`)**: the pre-download allowlist gate crashed on every inbound message — `connect.isChatAllowed` was passed to the adapter as a bare method reference, so invoking it as `this.isChatAllowed(...)` lost the `ConnectService` `this` and threw `Cannot read properties of undefined (reading 'allowUsers')`. The method is now bound at construction (`connect.isChatAllowed?.bind(connect)`); messages route normally again.
 
 ## [0.6.3] - 2026-08-20
 
