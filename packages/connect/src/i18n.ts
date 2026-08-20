@@ -131,6 +131,10 @@ export interface Messages {
   newChatDone: string;
   chatCleared: string;
   stopRequested: string;
+  sessionSwitched(title: string): string;
+  modelSet(name: string): string;
+  reasoningSet(name: string): string;
+  languageAlready(name: string): string;
   dirUsage: string;
   dirNotExists(path: string): string;
   dirNotExistsHint(path: string): string;
@@ -400,6 +404,10 @@ const zh: Messages = {
   newChatDone: "已开启新会话。",
   chatCleared: "会话已清空。",
   stopRequested: "已请求停止当前任务。",
+  sessionSwitched: (title) => `✅ 已切换到会话：${title}`,
+  modelSet: (name) => `✅ 已切换模型：${name}`,
+  reasoningSet: (name) => `✅ 已设置推理强度：${name}`,
+  languageAlready: (name) => `当前已是${name}，无需切换。`,
   dirUsage: "请输入绝对路径，例如 `/dir D:\\projects\\my-app`。",
   dirNotExists: (path) => `目录不存在或不是文件夹：${path}`,
   dirNotExistsHint: (path) => `目录不存在或不是文件夹：${path}\n（请先创建该目录，再执行 /workspace）`,
@@ -674,6 +682,10 @@ const en: Messages = {
   newChatDone: "New conversation started.",
   chatCleared: "Conversation cleared.",
   stopRequested: "Stop requested for the current task.",
+  sessionSwitched: (title) => `✅ Switched to session: ${title}`,
+  modelSet: (name) => `✅ Model switched: ${name}`,
+  reasoningSet: (name) => `✅ Reasoning effort set: ${name}`,
+  languageAlready: (name) => `Already set to ${name}; no change needed.`,
   dirUsage: "Enter an absolute path, e.g. `/dir D:\\projects\\my-app`.",
   dirNotExists: (path) => `Directory does not exist or is not a folder: ${path}`,
   dirNotExistsHint: (path) => `Directory does not exist or is not a folder: ${path}\n(create the directory first, then run /workspace)`,

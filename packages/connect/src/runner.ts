@@ -455,8 +455,13 @@ interface MenuItem {
   label: string;
   /** Leaf action: after it runs, the menu returns to the root menu on the same card. */
   leaf?: boolean;
-  /** `messageId` is the menu card id: pass it to `openMenu` to navigate in place, or close the card. */
-  onSelect: (target: OutboundTarget, msg: InboundMessage, messageId: string) => Promise<void>;
+  /**
+   * `messageId` is the menu card id: pass it to `openMenu` to navigate in place,
+   * or close the card. A returned string is sent to the chat as the action's
+   * result feedback before the menu returns, so every button press answers
+   * visibly instead of leaving the user to guess whether it worked.
+   */
+  onSelect: (target: OutboundTarget, msg: InboundMessage, messageId: string) => Promise<string | void>;
 }
 
 /** How often the proactive progress watchdog re-checks whether a status card is due (ms). */
@@ -659,15 +664,19 @@ export class AgentRunner {
   }
 
   /** Present a destructive-action confirmation; true only when the user confirms. */
-  private async confirmAction(target: OutboundTarget, promptText: string): Promise<boolean> {
-    const { choice } = await this.adapter.promptChoice(target, {
-      title: this.t.confirmTitle,
-      description: promptText,
-      options: [
-        { id: "confirm:yes", label: this.t.confirmYes },
-        { id: "confirm:no", label: this.t.confirmNo },
-      ],
-    });
+  private async confirmAction(target: OutboundTarget, promptText: string, messageId?: string): Promise<boolean> {
+    const { choice } = await this.adapter.promptChoice(
+      target,
+      {
+        title: this.t.confirmTitle,
+        description: promptText,
+        options: [
+          { id: "confirm:yes", label: this.t.confirmYes },
+          { id: "confirm:no", label: this.t.confirmNo },
+        ],
+      },
+      messageId,
+    );
     return choice === "confirm:yes";
   }
 
@@ -1668,9 +1677,13 @@ export class AgentRunner {
     }
     const item = items.find((i) => i.id === choice);
     if (item === undefined) return;
-    await item.onSelect(target, msg, messageId);
+    const feedback = await item.onSelect(target, msg, messageId);
     if (item.leaf === true) {
-      // Return to the root menu on the same card so the user can keep operating.
+      // Every leaf press must answer visibly: send the action's result feedback
+      // (if any) before returning to the root menu on the same card.
+      if (feedback !== undefined && feedback !== "") {
+        await this.adapter.sendText(target, feedback).catch(() => undefined);
+      }
       await this.openMenu(target, msg, "root", [], messageId);
     }
   }
@@ -1699,6 +1712,7 @@ export class AgentRunner {
           onSelect: async (t, m) => {
             this.workDir = w.path;
             await this.newChat(m);
+            return this.t.dirSwitched(w.path);
           },
         }));
       }
@@ -1717,6 +1731,7 @@ export class AgentRunner {
             leaf: true,
             onSelect: async (t, m) => {
               await this.switchTo(sessionId, m.senderKey);
+              return this.t.sessionSwitched(title || sessionId);
             },
           };
         });
@@ -1725,8 +1740,8 @@ export class AgentRunner {
           items.push({
             id: "none:history",
             label: this.t.noSessionsInWorkdir(this.workDir),
-            leaf: false,
-            onSelect: async () => undefined,
+            leaf: true,
+            onSelect: async () => this.t.noSessionsInWorkdir(this.workDir),
           });
         }
 
@@ -1734,12 +1749,13 @@ export class AgentRunner {
           id: "action:new",
           label: this.t.menuNewChat,
           leaf: true,
-          onSelect: async (t, m) => {
-            if (await this.confirmAction(t, this.t.confirmNewText)) {
+          onSelect: async (t, m, messageId) => {
+            // Reuse the menu card for the confirm prompt so no stale card is left behind.
+            if (await this.confirmAction(t, this.t.confirmNewText, messageId)) {
               await this.newChat(m);
-            } else {
-              await this.adapter.sendText(t, this.t.actionCancelled);
+              return this.t.newChatDone;
             }
+            return this.t.actionCancelled;
           },
         });
         return items;
@@ -1919,10 +1935,11 @@ export class AgentRunner {
       leaf: true,
       onSelect: async (t, m) => {
         await this.setModel(c.provider, c.model, m);
+        return this.t.modelSet(c.name);
       },
     }));
     if (items.length === 0) {
-      items.push({ id: "model:none", label: this.t.noModelsFound, onSelect: async () => {} });
+      items.push({ id: "model:none", label: this.t.noModelsFound, leaf: true, onSelect: async () => this.t.noModelsFound });
     }
     return items;
   }
@@ -1977,6 +1994,7 @@ export class AgentRunner {
         leaf: true,
         onSelect: async (t, m) => {
           await this.setReasoning(undefined, m);
+          return this.t.reasoningSet(this.t.effortDefault);
         },
       },
     ];
@@ -1987,6 +2005,7 @@ export class AgentRunner {
         leaf: true,
         onSelect: async (t, m) => {
           await this.setReasoning(e.id, m);
+          return this.t.reasoningSet(e.name);
         },
       });
     }
@@ -2008,10 +2027,14 @@ export class AgentRunner {
 
   /** Switch the user-facing language for this chat, persisted in its binding. */
   private async setLanguage(lang: Language, target: OutboundTarget, msg: InboundMessage): Promise<void> {
-    if (lang === this.language) return;
-    this.language = lang;
-    this.t = messages(lang);
+    const changed = lang !== this.language;
+    if (changed) {
+      this.language = lang;
+      this.t = messages(lang);
+    }
     // Persist into the chat's binding (create one if the chat has no session yet).
+    // Persisting again for the already-active language is harmless and keeps the
+    // button press answer visible either way.
     const binding = this.bindings.get(this.channel, this.chatKey);
     if (binding !== undefined) {
       this.bindings.put({ ...binding, language: lang, lastActiveAt: Date.now() });
@@ -2028,7 +2051,8 @@ export class AgentRunner {
         sessions: [],
       });
     }
-    await this.adapter.sendText(target, this.t.languageSet(lang === "zh" ? this.t.languageZh : this.t.languageEn));
+    const label = lang === "zh" ? this.t.languageZh : this.t.languageEn;
+    await this.adapter.sendText(target, changed ? this.t.languageSet(label) : this.t.languageAlready(label));
   }
 
   /**
