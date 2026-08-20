@@ -29,6 +29,7 @@ export type Command =
   | { readonly kind: "unlock" }
   | { readonly kind: "renew" }
   | { readonly kind: "export"; readonly format?: "markdown" | "pdf" }
+  | { readonly kind: "ps"; readonly text: string }
   | { readonly kind: "help" }
   | { readonly kind: "message"; readonly text: string };
 
@@ -123,6 +124,9 @@ export function parseCommand(raw: string): Command {
       }
       return { kind: "export" };
     }
+    case "/ps":
+    case "/append":
+      return { kind: "ps", text: arg ?? "" };
     case "/help":
     case "/start":
       return { kind: "help" };
@@ -154,6 +158,7 @@ export function helpText(t: Messages): string {
     "- `/unlock` manually release session lock",
     "- `/renew` renew current session lock timeout",
     "- `/export [markdown|pdf]` export conversation history",
+    "- `/ps <note>` append a note to the running task",
     "- `/new` " + t.helpNew,
     "- `/clear` " + t.helpClear,
     "- `/stop` " + t.helpStop,

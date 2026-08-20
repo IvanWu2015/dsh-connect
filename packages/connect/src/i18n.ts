@@ -99,6 +99,16 @@ export interface Messages {
   toolStepLabel(n: number, name: string): string;
   queuedHint(n: number): string;
 
+  // Append-to-running-task (`/ps`) + proactive context-high nudge.
+  psUsage: string;
+  psReceived(text: string): string;
+  psNoActiveSession: string;
+  psAppendLabel(text: string): string;
+  busyHint(text: string): string;
+  contextHighPrompt(pct: number): string;
+  contextHighTitle: string;
+  compactQueued: string;
+
   // Notification levels (streaming reply detail).
   notifyFull: string;
   notifyImportant: string;
@@ -370,6 +380,14 @@ const zh: Messages = {
   actionCancelled: "已取消，未执行任何操作。",
   toolStepLabel: (n, name) => `🔧 第 ${n} 次工具调用 \`${name}\``,
   queuedHint: (n) => `（还有 ${n} 条消息排队中）`,
+  psUsage: "用法：`/ps <补充信息>`，向正在执行的任务追加说明。",
+  psReceived: (text) => `✅ 已向当前任务追加：${text}`,
+  psNoActiveSession: "当前没有活动会话，无法追加。可发送消息开始新对话。",
+  psAppendLabel: (text) => `[用户通过 /ps 追加的说明]\n${text}`,
+  busyHint: (text) => `⏳ 上一个请求仍在处理中。使用 \`/ps ${text}\` 可向正在执行的任务追加补充信息；或发 \`/stop\` 停止当前任务。`,
+  contextHighPrompt: (pct) => `⚠️ 上下文占用已达 ${pct}%，接近上限。是否现在压缩上下文？\n（压缩可减少 token 占用，但会概括早期对话内容）`,
+  contextHighTitle: "上下文压缩建议",
+  compactQueued: "✅ 已确认，当前任务结束后将自动压缩上下文。",
   notifyFull: "尽量输出过程",
   notifyImportant: "输出重要节点",
   notifyResult: "只输出结果",
@@ -648,6 +666,14 @@ const en: Messages = {
   actionCancelled: "Cancelled — nothing was changed.",
   toolStepLabel: (n, name) => `🔧 Tool call #${n}: \`${name}\``,
   queuedHint: (n) => `(${n} more message(s) queued)`,
+  psUsage: "Usage: `/ps <note>` — append a note to the running task.",
+  psReceived: (text) => `✅ Note appended to the current task: ${text}`,
+  psNoActiveSession: "No active session to append to. Send a message to start a new conversation.",
+  psAppendLabel: (text) => `[Note appended by the user via /ps]\n${text}`,
+  busyHint: (text) => `⏳ The previous request is still processing. Use \`/ps ${text}\` to append a note to the running task, or \`/stop\` to cancel it.`,
+  contextHighPrompt: (pct) => `⚠️ Context usage is at ${pct}%, close to the limit. Compact now?\n(Compaction reduces token usage but summarizes earlier conversation content)`,
+  contextHighTitle: "Context compaction suggestion",
+  compactQueued: "✅ Confirmed — the context will be compacted automatically once the current task finishes.",
   notifyFull: "Full process",
   notifyImportant: "Key milestones",
   notifyResult: "Result only",

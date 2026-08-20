@@ -93,6 +93,13 @@ interface ActiveTurn {
   milestone?: string;
   /** Number of tool calls observed in this turn (for the step counter). */
   toolCount: number;
+  /** Latest observed context usage (input tokens) and window, for the proactive compaction nudge. */
+  contextSize?: number;
+  contextWindow?: number;
+  /** Whether the proactive context-high nudge was already sent this turn (dedupe). */
+  contextNudged: boolean;
+  /** User confirmed compaction while the turn was still running — run it once the turn ends. */
+  compactAfterTurn: boolean;
 }
 
 /** Per-turn streaming assembly state mutated by {@link applyStreamChunk}. */
@@ -569,6 +576,13 @@ export class AgentRunner {
       });
       return;
     }
+    // A task is already running (or queued): tell the user they can append a
+    // note to the in-flight task with /ps instead of queueing a brand-new turn
+    // behind it. The message still queues as before.
+    if (this.running) {
+      const hint = this.t.busyHint(truncate(msg.text, 20));
+      void this.adapter.sendText(this.target(msg), hint).catch(() => undefined);
+    }
     this.queue.push(msg);
     void this.drain();
   }
@@ -579,6 +593,22 @@ export class AgentRunner {
     if (turn === undefined) return;
     if (this.agent === undefined || session.id !== this.agent.id) return;
     if (event.seq < turn.firstSeq) return;
+
+    // Track context usage while the turn runs so we can nudge the user to
+    // compact before the window fills up (deduped to one nudge per turn).
+    if (event.type === "request/context") {
+      if (typeof event.data.contextWindow === "number") turn.contextWindow = event.data.contextWindow;
+      this.maybeNudgeContext(turn);
+      return;
+    }
+    if (event.type === "assistant/message") {
+      const usage = (event.data as { usage?: { inputTokens?: number } }).usage;
+      if (usage !== undefined && typeof usage.inputTokens === "number") {
+        turn.contextSize = usage.inputTokens;
+        this.maybeNudgeContext(turn);
+      }
+    }
+
     if (event.type === "assistant/chunk") {
       const chunk = event.data.chunk as unknown as StreamChunkLike;
       // First reasoning delta = the milestone the proactive progress notice reports.
@@ -612,6 +642,40 @@ export class AgentRunner {
         : `${base} — ${summary}`;
       applyToolCall(turn, label);
     }
+  }
+
+  /**
+   * Proactive context-high nudge: when the turn's observed context usage
+   * crosses the compaction threshold, ask the user (once per turn) whether to
+   * compact now, instead of waiting until the turn ends to report it.
+   */
+  private maybeNudgeContext(turn: ActiveTurn): void {
+    if (turn.contextNudged) return;
+    const size = turn.contextSize;
+    const window = turn.contextWindow;
+    if (size === undefined || window === undefined || window <= 0) return;
+    const pct = Math.round((size / window) * 100);
+    if (pct < AgentRunner.COMPACT_THRESHOLD_PCT) return;
+    turn.contextNudged = true;
+    void (async () => {
+      const target: OutboundTarget = { chatKey: this.chatKey, chatType: this.chatType };
+      const nudge = this.t.contextHighPrompt(pct);
+      try {
+        if (await this.confirmAction(target, nudge)) {
+          if (this.agent?.status === "running" || this.running) {
+            // Compaction needs an idle agent; run it right after this turn ends.
+            turn.compactAfterTurn = true;
+            await this.adapter.sendText(target, this.t.compactQueued);
+          } else {
+            await this.compact(target);
+          }
+        } else {
+          await this.adapter.sendText(target, this.t.actionCancelled);
+        }
+      } catch (error) {
+        this.log(`connect: context nudge failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    })();
   }
 
   private target(msg: InboundMessage): OutboundTarget {
@@ -990,7 +1054,7 @@ export class AgentRunner {
     this.turn = {
       firstSeq, chunks, lastText: "",
       reasoning: false, hintPushed: false, lastIndex: undefined, pushedAny: false,
-      startedAt: now, lastPushAt: now, toolCount: 0,
+      startedAt: now, lastPushAt: now, toolCount: 0, contextNudged: false, compactAfterTurn: false,
     };
 
     // Liveness heartbeat: while the agent is working, keep the streaming card
@@ -1061,6 +1125,15 @@ export class AgentRunner {
     }
     endChunks();
     await streamPromise;
+
+    // The user confirmed a compaction nudge while this turn was still running:
+    // the agent is idle now, so compact before summarizing.
+    const compactAfterTurn = this.turn.compactAfterTurn;
+    if (compactAfterTurn) {
+      await this.compact(this.target(msg)).catch((error) => {
+        this.log(`connect: deferred compaction failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
 
     const outcome = summarizeTurn(agent.session.events, firstSeq);
     const text = outcome.text !== "" ? outcome.text : this.turn.lastText;
@@ -1491,6 +1564,10 @@ export class AgentRunner {
         await this.handleExport(target, command.format);
         break;
       }
+      case "ps": {
+        await this.handleAppend(command.text, target, msg);
+        break;
+      }
       case "help": {
         await this.adapter.sendText(target, helpText(this.t));
         break;
@@ -1511,6 +1588,28 @@ export class AgentRunner {
       await agent.whenIdle().catch(() => undefined);
     }
     await handle?.dispose().catch(() => undefined);
+  }
+
+  /**
+   * `/ps <note>` — append a note to the running task. Uses the agent's `steer`
+   * inbox: a running driver consumes the note at its next step boundary (so it
+   * steers the in-flight task), and an idle driver starts a new turn with it.
+   */
+  private async handleAppend(text: string, target: OutboundTarget, msg: InboundMessage): Promise<void> {
+    if (text === "") {
+      await this.adapter.sendText(target, this.t.psUsage);
+      return;
+    }
+    const agent = this.agent;
+    if (agent === undefined) {
+      await this.adapter.sendText(target, this.t.psNoActiveSession);
+      return;
+    }
+    const note = this.t.psAppendLabel(text);
+    const content = await this.buildUserContent({ ...msg, text: note });
+    agent.steer(createUserMessage({ content, source: { kind: "user" } }));
+    this.touchBinding(msg);
+    await this.adapter.sendText(target, this.t.psReceived(text));
   }
 
   private recordSession(sessionId: string, title: string, ownerKey: string): void {

@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.7] - 2026-08-21
+
+### Added
+
+- **`/ps <note>` — append to the running task**: while a task is executing, `/ps <note>` (alias `/append`) injects the note into the in-flight task via the agent's steering inbox — a running driver consumes it at its next step boundary, so the user can steer the current task instead of queueing a new turn behind it. When the agent is idle it starts a turn like a normal message. While a task runs, ordinary messages now reply with a hint that `/ps <note>` can append to the running task (or `/stop` to cancel) instead of silently queueing.
+- **proactive context-high nudge**: while a turn runs, observed context usage vs. the model window is tracked; when it crosses 75% the user is asked (once per turn) whether to compact now. If the task is still running, compaction is deferred and runs automatically right after the turn ends.
+
 ## [0.6.6] - 2026-08-21
 
 ### Added

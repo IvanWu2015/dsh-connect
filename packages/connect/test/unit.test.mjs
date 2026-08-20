@@ -307,6 +307,12 @@ test("parseCommand recognizes /progress", () => {
   assert.deepEqual(parseCommand("/progress 5"), { kind: "progress" });
 });
 
+test("parseCommand recognizes /ps (append to running task)", () => {
+  assert.deepEqual(parseCommand("/ps 补充一点"), { kind: "ps", text: "补充一点" });
+  assert.deepEqual(parseCommand("/append note here"), { kind: "ps", text: "note here" });
+  assert.deepEqual(parseCommand("/ps"), { kind: "ps", text: "" });
+});
+
 test("messages expose notification levels and task stats in both languages", () => {
   const zh = messages("zh");
   const en = messages("en");
