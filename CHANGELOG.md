@@ -7,6 +7,7 @@ All notable changes to this project are documented following [Keep a Changelog](
 ### Fixed
 
 - **feishu (`dsh-connect-feishu`) hotfix for 0.6.4**: the pre-download allowlist gate crashed on every inbound message — `connect.isChatAllowed` was passed to the adapter as a bare method reference, so invoking it as `this.isChatAllowed(...)` lost the `ConnectService` `this` and threw `Cannot read properties of undefined (reading 'allowUsers')` on every Feishu message (the bot appeared unresponsive). The method is now bound at construction (`connect.isChatAllowed?.bind(connect)`); messages route normally again. **Anyone who installed 0.6.4 must upgrade to 0.6.5.**
+- **feishu history after `/dir`**: the "switch conversation" menu and `/history` now list every session the DSH workspace registry attaches to the current work directory (binding records plus Web-created / older-chat sessions, titles via `sessionQuery.readTitle`, sorted by recency) instead of a bare new-chat entry or a "no active session" error. After switching work directories the historical conversations of that directory are visible and switchable, matching the Web GUI.
 
 ## [0.6.4] - 2026-08-20
 
