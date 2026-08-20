@@ -2,14 +2,27 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.6] - 2026-08-21
+
+### Added
+
+- **feishu history after `/dir`**: the "switch conversation" menu and `/history` now list every session the DSH workspace registry attaches to the current work directory (binding records plus Web-created / older-chat sessions, titles via `sessionQuery.readTitle`, sorted by recency) instead of a bare new-chat entry or a "no active session" error. After switching work directories the historical conversations of that directory are visible and switchable, matching the Web GUI.
+- **feishu menu feedback**: every menu button press now answers visibly — switching sessions/work directories, new chat, model and reasoning-effort changes, and placeholder buttons (no history / no models) send a result message (success or why nothing changed) before the menu returns, so users never have to guess whether a press worked. The new-chat confirm prompt reuses the menu card instead of leaving a stale card behind.
+
+### Fixed
+
+- **feishu session titles**: session lists rendered `[object Object]` for Web-created / older-chat sessions because `sessionQuery.readTitle` returns a `SessionTitleSnapshot` object, not the bare title string. The title is now unwrapped (and a plain string still accepted), so work-directory session lists show real titles.
+- **feishu menu under rapid taps**: rapid menu navigation (switching workspace, switching conversation, going back…) no longer lands in the wrong menu or freezes. The pending tap listener is registered before the card redraw, so taps arriving mid-redraw are handled instead of dropped as "stale", and a leftover tap from a previous card generation redraws the current menu instead of silently ending the chain.
+
+### Changed
+
+- **terminology**: user-facing copy now consistently says "workspace" (工作区) instead of mixing "work directory" (工作目录) and "workspace" for the same concept — menu labels, `/dir` help, welcome text, status/settings fields and empty-history messages, matching the Web GUI and the `/workspace` `/workspaces` commands. The `/dir` command name and `workDir` config key are unchanged.
+
 ## [0.6.5] - 2026-08-20
 
 ### Fixed
 
 - **feishu (`dsh-connect-feishu`) hotfix for 0.6.4**: the pre-download allowlist gate crashed on every inbound message — `connect.isChatAllowed` was passed to the adapter as a bare method reference, so invoking it as `this.isChatAllowed(...)` lost the `ConnectService` `this` and threw `Cannot read properties of undefined (reading 'allowUsers')` on every Feishu message (the bot appeared unresponsive). The method is now bound at construction (`connect.isChatAllowed?.bind(connect)`); messages route normally again. **Anyone who installed 0.6.4 must upgrade to 0.6.5.**
-- **feishu history after `/dir`**: the "switch conversation" menu and `/history` now list every session the DSH workspace registry attaches to the current work directory (binding records plus Web-created / older-chat sessions, titles via `sessionQuery.readTitle`, sorted by recency) instead of a bare new-chat entry or a "no active session" error. After switching work directories the historical conversations of that directory are visible and switchable, matching the Web GUI.
-- **feishu menu feedback**: every menu button press now answers visibly — switching sessions/work directories, new chat, model and reasoning-effort changes, and placeholder buttons (no history / no models) send a result message (success or why nothing changed) before the menu returns, so users never have to guess whether a press worked. The new-chat confirm prompt reuses the menu card instead of leaving a stale card behind.
-- **feishu menu under rapid taps**: rapid menu navigation (switching workspace, switching conversation, going back…) no longer lands in the wrong menu or freezes. The pending tap listener is registered before the card redraw, so taps arriving mid-redraw are handled instead of dropped as "stale", and a leftover tap from a previous card generation redraws the current menu instead of silently ending the chain.
 
 ## [0.6.4] - 2026-08-20
 

@@ -1,66 +1,66 @@
-﻿{
-    "name":  "dsh-connect-feishu",
-    "version":  "0.6.5",
-    "description":  "Feishu/Lark channel adapter for dsh-connect: long-connection event intake, message normalization, streaming replies, and work summary cards",
-    "type":  "module",
-    "main":  "lib/index.js",
-    "types":  "lib/index.d.ts",
-    "exports":  {
-                    ".":  {
-                              "types":  "./lib/index.d.ts",
-                              "default":  "./lib/index.js"
-                          }
-                },
-    "files":  [
-                  "lib",
-                  "README.md",
-                  "README.zh.md",
-                  "README.i18n.yaml",
-                  "cordis.patch.yml"
-              ],
-    "dsh":  {
-                "bundle":  {
-                               "patch":  "./cordis.patch.yml"
-                           }
-            },
-    "keywords":  [
-                     "dsh",
-                     "deepseek-harness",
-                     "feishu",
-                     "lark",
-                     "ai-agent",
-                     "chatbot",
-                     "cordis"
-                 ],
-    "license":  "MIT",
-    "repository":  {
-                       "type":  "git",
-                       "url":  "https://github.com/IvanWu2015/dsh-connect.git",
-                       "directory":  "packages/connect-feishu"
-                   },
-    "homepage":  "https://github.com/IvanWu2015/dsh-connect",
-    "bugs":  {
-                 "url":  "https://github.com/IvanWu2015/dsh-connect/issues"
-             },
-    "scripts":  {
-                    "build":  "tsc -p tsconfig.json",
-                    "typecheck":  "tsc -p tsconfig.json --noEmit"
-                },
-    "dependencies":  {
-                         "@deepseek-ai/schemastery":  "^3.18.1",
-                         "@larksuiteoapi/node-sdk":  "^1.73.0"
-                     },
-    "peerDependencies":  {
-                             "@deepseek-ai/cordis":  "^4.0.1",
-                             "dsh-connect":  "^0.6.0"
-                         },
-    "devDependencies":  {
-                            "@deepseek-ai/cordis":  "^4.0.1",
-                            "@deepseek-ai/dsh-agent":  "^0.1.0-rc.6",
-                            "@deepseek-ai/dsh-llm":  "^0.1.0-rc.6",
-                            "@deepseek-ai/dsh-session":  "^0.1.0-rc.6",
-                            "dsh-connect":  "workspace:*",
-                            "@types/node":  "^22.15.0",
-                            "typescript":  "^5.6.3"
-                        }
+{
+  "name": "dsh-connect-feishu",
+  "version": "0.6.6",
+  "description": "Feishu/Lark channel adapter for dsh-connect: long-connection event intake, message normalization, streaming replies, and work summary cards",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib",
+    "README.md",
+    "README.zh.md",
+    "README.i18n.yaml",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "feishu",
+    "lark",
+    "ai-agent",
+    "chatbot",
+    "cordis"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IvanWu2015/dsh-connect.git",
+    "directory": "packages/connect-feishu"
+  },
+  "homepage": "https://github.com/IvanWu2015/dsh-connect",
+  "bugs": {
+    "url": "https://github.com/IvanWu2015/dsh-connect/issues"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@larksuiteoapi/node-sdk": "^1.73.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "dsh-connect": "^0.6.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
+    "dsh-connect": "workspace:*",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.6.3"
+  }
 }
