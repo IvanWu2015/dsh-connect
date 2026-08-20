@@ -1676,7 +1676,13 @@ export class AgentRunner {
       return;
     }
     const item = items.find((i) => i.id === choice);
-    if (item === undefined) return;
+    if (item === undefined) {
+      // The tap belonged to a previous card generation (e.g. a rapid second
+      // tap on the old menu while the new one was still being redrawn). Don't
+      // silently swallow it: redraw the current menu so the chain stays usable.
+      await this.openMenu(target, msg, menuId, stack, messageId);
+      return;
+    }
     const feedback = await item.onSelect(target, msg, messageId);
     if (item.leaf === true) {
       // Every leaf press must answer visibly: send the action's result feedback

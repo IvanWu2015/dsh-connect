@@ -581,9 +581,6 @@ export class FeishuAdapter implements ChannelAdapter {
 
     let messageId: string;
     if (updateMessageId !== undefined) {
-      // Reuse the existing card: replace its content in place so a menu chain
-      // navigates on one card instead of stacking new ones.
-      await this.channel.updateCard(updateMessageId, card);
       messageId = updateMessageId;
     } else {
       ({ messageId } = await this.channel.send(
@@ -593,7 +590,12 @@ export class FeishuAdapter implements ChannelAdapter {
       ));
     }
 
-    return await new Promise<ChoiceResult>((resolve) => {
+    // Register the pending choice BEFORE the async card update. Rapid taps on
+    // the previous menu arrive while updateCard is still in flight; if the
+    // pending record only exists after the redraw, those taps hit the stale
+    // branch and the menu appears to swallow them ("can't go back"). Register
+    // first, then redraw, so every tap has a live listener.
+    const pending = new Promise<ChoiceResult>((resolve) => {
       const timer = setTimeout(async () => {
         this.pendingChoices.delete(messageId);
         // Replace the stale menu with an expired notice instead of leaving it silent.
@@ -614,6 +616,13 @@ export class FeishuAdapter implements ChannelAdapter {
         timer,
       });
     });
+
+    if (updateMessageId !== undefined) {
+      // Reuse the existing card: replace its content in place so a menu chain
+      // navigates on one card instead of stacking new ones.
+      await this.channel.updateCard(updateMessageId, card).catch(() => undefined);
+    }
+    return pending;
   }
 
   async closeMenu(messageId: string, summary: string): Promise<void> {
