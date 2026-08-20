@@ -97,8 +97,8 @@ test("messages switches between zh and en", () => {
   assert.equal(zh.newChatDone, "已开启新会话。");
   assert.equal(en.newChatDone, "New conversation started.");
   // Interpolating helpers pick the active table too.
-  assert.equal(zh.dirSwitched("D:\\x"), "工作目录已切换为：\nD:\\x\n（已开启新会话）");
-  assert.equal(en.dirSwitched("D:\\x"), "Workdir switched to:\nD:\\x\n(new conversation started)");
+  assert.equal(zh.dirSwitched("D:\\x"), "已切换到工作区：\nD:\\x\n（已开启新会话）");
+  assert.equal(en.dirSwitched("D:\\x"), "Switched to workspace:\nD:\\x\n(new conversation started)");
 });
 
 test("helpText renders in the selected language", () => {

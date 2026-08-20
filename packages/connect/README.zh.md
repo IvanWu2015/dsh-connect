@@ -102,7 +102,7 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 |---|---|---|
 | `agentPreset` | roster default | 组合进每个绑定会话的智能体预设 id |
 | `workDir` | process cwd | 每个绑定智能体的绝对工作目录 |
-| `workspaces` | `[]` | `/dir` 选择器提供的额外工作目录 |
+| `workspaces` | `[]` | `/dir` 选择器提供的额外工作区 |
 | `visionModel` | auto-detected | 当主模型无法查看图片时，用于描述图片的 `{ provider, model }` |
 | `language` | `zh` | 面向用户的消息语言：`zh` / `en` |
 | `allowUsers` | `[]` | 发送者白名单（open_id）。空 = 允许所有人 |

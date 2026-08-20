@@ -102,7 +102,7 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under each plu
 |---|---|---|
 | `agentPreset` | roster default | Agent preset id composed into each bound session |
 | `workDir` | process cwd | Absolute working directory for each bound agent |
-| `workspaces` | `[]` | Extra workdirs offered by the `/dir` picker |
+| `workspaces` | `[]` | Extra workspaces offered by the `/dir` picker |
 | `visionModel` | auto-detected | `{ provider, model }` used to describe images when the main model can't see them |
 | `language` | `zh` | User-facing message language: `zh` / `en` |
 | `allowUsers` | `[]` | Sender allowlist (open_id). Empty = allow all |
