@@ -44,7 +44,9 @@ interface ConnectLike {
 
 function start(connect: ConnectLike, config: FeishuConfig, logger?: { warn?: (...args: unknown[]) => void }): void {
   try {
-    const adapter = new FeishuAdapter(config, logger, connect.isChatAllowed);
+    // Bind the service method: FeishuAdapter invokes it as `this.isChatAllowed(...)`,
+    // so a bare reference would lose the ConnectService `this` (and crash on this.config).
+    const adapter = new FeishuAdapter(config, logger, connect.isChatAllowed?.bind(connect));
     connect.registerAdapter(adapter);
     void adapter.start().catch((error) => {
       logger?.warn?.(`connect-feishu: start failed: ${String(error)}`);
