@@ -443,6 +443,11 @@ function detectImageMediaType(buf: Buffer): "image/png" | "image/jpeg" | "image/
   return "image/png";
 }
 
+/** Compare two work-directory paths ignoring trailing slashes and case (Windows). */
+function sameDir(a: string, b: string): boolean {
+  return a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();
+}
+
 type MenuId = "root" | "workspace" | "chat" | "settings" | "model" | "reasoning" | "notify" | "language" | "progress";
 
 interface MenuItem {
@@ -825,6 +830,38 @@ export class AgentRunner {
       await ws?.attachSession?.(sessionId as never);
     } catch (error) {
       this.log(`connect: attachToWorkspace(${sessionId}) skipped: ${String(error)}`);
+    }
+  }
+
+  /**
+   * Session ids the DSH workspace registry attaches to a work directory.
+   * Best-effort: without a workspace registry this returns `[]`.
+   */
+  private async workspaceSessionIds(workDir: string): Promise<string[]> {
+    const registry = this.ctx.get("workspaceRegistry") as
+      | {
+          resolveByPath?: (path: string) => Promise<{ sessionIds?: readonly unknown[] } | undefined>;
+        }
+      | undefined;
+    if (registry?.resolveByPath === undefined) return [];
+    try {
+      const ws = await registry.resolveByPath(workDir);
+      return (ws?.sessionIds ?? []).map(String);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Latest display title of a session via the host query service, or undefined. */
+  private async sessionTitleOf(sessionId: string): Promise<string | undefined> {
+    const query = this.ctx.get("sessionQuery") as
+      | { readTitle?: (id: string, signal?: AbortSignal) => Promise<string | undefined> }
+      | undefined;
+    if (query?.readTitle === undefined) return undefined;
+    try {
+      return await query.readTitle(sessionId);
+    } catch {
+      return undefined;
     }
   }
 
@@ -1631,25 +1668,51 @@ export class AgentRunner {
       }
       case "chat": {
         const binding = this.bindings.get(this.channel, this.chatKey);
-        const sessions = binding?.sessions ?? [];
         const active = binding?.sessionId;
         const hasWebMirror = binding?.webMirrorSessionId !== undefined;
-        
-        const items: MenuItem[] = sessions.map((s) => {
-          // Check if this session is mirrored to Web
-          const isMirrored = hasWebMirror && binding.webMirrorSessionId === s.sessionId;
+
+        // Historical sessions for the CURRENT work directory: prefer this chat's
+        // binding records, then back-fill any other session the DSH workspace
+        // registry attaches to this directory (e.g. sessions created from the
+        // Web GUI or an older chat). Titles come from the binding record when
+        // known, otherwise from the host's session title service.
+        const seen = new Set<string>();
+        const items: MenuItem[] = [];
+        const pushSession = (sessionId: string, title: string | undefined) => {
+          if (seen.has(sessionId)) return;
+          seen.add(sessionId);
+          const isMirrored = hasWebMirror && binding?.webMirrorSessionId === sessionId;
           const mirrorIndicator = isMirrored ? ` ${this.t.webMirrorIndicator}` : "";
-          const activeIndicator = s.sessionId === active ? "●" : "○";
-          
-          return {
-            id: `session:${s.sessionId}`,
-            label: `${activeIndicator} ${s.title || s.sessionId}${mirrorIndicator}`,
+          const activeIndicator = sessionId === active ? "●" : "○";
+          items.push({
+            id: `session:${sessionId}`,
+            label: `${activeIndicator} ${title || sessionId}${mirrorIndicator}`,
             leaf: true,
             onSelect: async (t, m) => {
-              await this.switchTo(s.sessionId, m.senderKey);
+              await this.switchTo(sessionId, m.senderKey);
             },
-          };
-        });
+          });
+        };
+
+        for (const s of binding?.sessions ?? []) {
+          if (sameDir(s.workDir, this.workDir)) pushSession(s.sessionId, s.title);
+        }
+        for (const sessionId of await this.workspaceSessionIds(this.workDir)) {
+          if (seen.has(sessionId)) continue;
+          const known = (binding?.sessions ?? []).find((s) => s.sessionId === sessionId);
+          const title = known?.title ?? (await this.sessionTitleOf(sessionId));
+          pushSession(sessionId, title);
+        }
+
+        if (items.length === 0) {
+          items.push({
+            id: "none:history",
+            label: this.t.noSessionsInWorkdir(this.workDir),
+            leaf: false,
+            onSelect: async () => undefined,
+          });
+        }
+
         items.push({
           id: "action:new",
           label: this.t.menuNewChat,

@@ -238,6 +238,7 @@ export interface Messages {
   noWorkspaces: string;
   workspaceSessions(n: number): string;
   workspacesCount(n: number, list: string): string;
+  noSessionsInWorkdir(workdir: string): string;
 
   currentDir: string;
 
@@ -507,6 +508,7 @@ const zh: Messages = {
   noWorkspaces: "还没有工作区。可用 `/workspace <绝对路径>` 新建。",
   workspaceSessions: (n) => `  · ${n} 会话`,
   workspacesCount: (n, list) => `工作区（${n}）：\n${list}`,
+  noSessionsInWorkdir: (workdir) => `当前工作目录下暂无历史会话：\n${workdir}\n\n可发送消息开始新对话，或 /dir 切换工作目录。`,
 
   currentDir: "当前目录",
 
@@ -778,6 +780,7 @@ const en: Messages = {
   noWorkspaces: "No workspaces yet. Create one with `/workspace <absolute path>`.",
   workspaceSessions: (n) => `  · ${n} session(s)`,
   workspacesCount: (n, list) => `Workspaces (${n}):\n${list}`,
+  noSessionsInWorkdir: (workdir) => `No historical sessions in the current work directory:\n${workdir}\n\nSend a message to start a new conversation, or use /dir to switch directories.`,
 
   currentDir: "Current directory",
 
