@@ -834,6 +834,32 @@ export class AgentRunner {
   }
 
   /**
+   * Historical sessions for the CURRENT work directory: this chat's binding
+   * records (filtered by workDir), then any other session the DSH workspace
+   * registry attaches to the directory (e.g. Web-created or older-chat
+   * sessions). Titles come from the binding record when known, otherwise from
+   * the host's session title service. Sorted newest first.
+   */
+  private async collectWorkdirSessions(): Promise<{ sessionId: string; title: string }[]> {
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    const byId = new Map<string, string>();
+    for (const s of binding?.sessions ?? []) {
+      if (sameDir(s.workDir, this.workDir)) byId.set(s.sessionId, s.title);
+    }
+    for (const sessionId of await this.workspaceSessionIds(this.workDir)) {
+      if (byId.has(sessionId)) continue;
+      const known = (binding?.sessions ?? []).find((s) => s.sessionId === sessionId);
+      const title = known?.title ?? (await this.sessionTitleOf(sessionId)) ?? sessionId;
+      byId.set(sessionId, title);
+    }
+    const lastActive = new Map<string, number>();
+    for (const s of binding?.sessions ?? []) lastActive.set(s.sessionId, s.lastActiveAt);
+    return [...byId.entries()]
+      .map(([sessionId, title]) => ({ sessionId, title }))
+      .sort((a, b) => (lastActive.get(b.sessionId) ?? 0) - (lastActive.get(a.sessionId) ?? 0));
+  }
+
+  /**
    * Session ids the DSH workspace registry attaches to a work directory.
    * Best-effort: without a workspace registry this returns `[]`.
    */
@@ -1671,38 +1697,19 @@ export class AgentRunner {
         const active = binding?.sessionId;
         const hasWebMirror = binding?.webMirrorSessionId !== undefined;
 
-        // Historical sessions for the CURRENT work directory: prefer this chat's
-        // binding records, then back-fill any other session the DSH workspace
-        // registry attaches to this directory (e.g. sessions created from the
-        // Web GUI or an older chat). Titles come from the binding record when
-        // known, otherwise from the host's session title service.
-        const seen = new Set<string>();
-        const items: MenuItem[] = [];
-        const pushSession = (sessionId: string, title: string | undefined) => {
-          if (seen.has(sessionId)) return;
-          seen.add(sessionId);
+        const items: MenuItem[] = (await this.collectWorkdirSessions()).map(({ sessionId, title }) => {
           const isMirrored = hasWebMirror && binding?.webMirrorSessionId === sessionId;
           const mirrorIndicator = isMirrored ? ` ${this.t.webMirrorIndicator}` : "";
           const activeIndicator = sessionId === active ? "●" : "○";
-          items.push({
+          return {
             id: `session:${sessionId}`,
             label: `${activeIndicator} ${title || sessionId}${mirrorIndicator}`,
             leaf: true,
             onSelect: async (t, m) => {
               await this.switchTo(sessionId, m.senderKey);
             },
-          });
-        };
-
-        for (const s of binding?.sessions ?? []) {
-          if (sameDir(s.workDir, this.workDir)) pushSession(s.sessionId, s.title);
-        }
-        for (const sessionId of await this.workspaceSessionIds(this.workDir)) {
-          if (seen.has(sessionId)) continue;
-          const known = (binding?.sessions ?? []).find((s) => s.sessionId === sessionId);
-          const title = known?.title ?? (await this.sessionTitleOf(sessionId));
-          pushSession(sessionId, title);
-        }
+          };
+        });
 
         if (items.length === 0) {
           items.push({
@@ -2186,7 +2193,15 @@ export class AgentRunner {
   private async showHistory(target: OutboundTarget, limit: number): Promise<void> {
     const agent = this.agent;
     if (agent === undefined) {
-      await this.adapter.sendText(target, this.t.noActiveSession);
+      // No live agent: there may still be historical sessions for the current
+      // work directory. List them instead of a bare "no active session".
+      const sessions = await this.collectWorkdirSessions();
+      if (sessions.length === 0) {
+        await this.adapter.sendText(target, this.t.noSessionsInWorkdir(this.workDir));
+        return;
+      }
+      const lines = sessions.slice(0, limit).map((s, i) => `${i + 1}. ${s.title || s.sessionId}`);
+      await this.adapter.sendText(target, this.t.historySessions(sessions.length, lines.join("\n")));
       return;
     }
     const events = agent.session.events;

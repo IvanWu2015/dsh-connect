@@ -239,6 +239,7 @@ export interface Messages {
   workspaceSessions(n: number): string;
   workspacesCount(n: number, list: string): string;
   noSessionsInWorkdir(workdir: string): string;
+  historySessions(n: number, list: string): string;
 
   currentDir: string;
 
@@ -509,6 +510,7 @@ const zh: Messages = {
   workspaceSessions: (n) => `  · ${n} 会话`,
   workspacesCount: (n, list) => `工作区（${n}）：\n${list}`,
   noSessionsInWorkdir: (workdir) => `当前工作目录下暂无历史会话：\n${workdir}\n\n可发送消息开始新对话，或 /dir 切换工作目录。`,
+  historySessions: (n, list) => `当前工作目录的历史会话（${n}）：\n${list}\n\n点开主菜单「💬 切换对话」可选择并切换到对应会话。`,
 
   currentDir: "当前目录",
 
@@ -781,6 +783,7 @@ const en: Messages = {
   workspaceSessions: (n) => `  · ${n} session(s)`,
   workspacesCount: (n, list) => `Workspaces (${n}):\n${list}`,
   noSessionsInWorkdir: (workdir) => `No historical sessions in the current work directory:\n${workdir}\n\nSend a message to start a new conversation, or use /dir to switch directories.`,
+  historySessions: (n, list) => `Historical sessions in the current work directory (${n}):\n${list}\n\nOpen the main menu → "Switch conversation" to pick and switch to a session.`,
 
   currentDir: "Current directory",
 
