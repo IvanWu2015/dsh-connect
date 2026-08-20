@@ -881,11 +881,21 @@ export class AgentRunner {
   /** Latest display title of a session via the host query service, or undefined. */
   private async sessionTitleOf(sessionId: string): Promise<string | undefined> {
     const query = this.ctx.get("sessionQuery") as
-      | { readTitle?: (id: string, signal?: AbortSignal) => Promise<string | undefined> }
+      | {
+          readTitle?: (
+            id: string,
+            signal?: AbortSignal,
+          ) => Promise<string | { title?: unknown } | undefined>;
+        }
       | undefined;
     if (query?.readTitle === undefined) return undefined;
     try {
-      return await query.readTitle(sessionId);
+      // `readTitle` returns the folded `SessionTitleSnapshot` object in some
+      // host versions and the bare title string in others — accept both.
+      const result = await query.readTitle(sessionId);
+      if (typeof result === "string") return result;
+      if (result !== undefined && typeof result.title === "string") return result.title;
+      return undefined;
     } catch {
       return undefined;
     }
