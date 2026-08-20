@@ -19,8 +19,8 @@ Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**D
 - **Security**: groups require @mention by default; user/chat allowlists; Feishu credentials via environment variables or config.
 - **Interactive menus**: `/menu` offers hierarchical point-and-click navigation (workdir / chats / settings / plugins / compact, …) — the same card updates in place, supports back/exit, and stays usable across consecutive actions.
 - **Smart image & file handling**: images sent to the bot are downloaded automatically; if the main model supports vision it sees them directly, otherwise a vision-model sub-task describes them and the description is injected — so a text-only main model never stalls on images. Attached files/audio/video are also downloaded into the workdir.
-- **Web mirror**: each chat can mirror its DSH session into the DSH Web GUI (`/mirror`, or automatic via `autoMirror`), sharing the same conversation with mutual-exclusion locking.
-- **Local commands** (no model tokens): `/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/schedule` `/model` `/notify` `/progress` `/mirror` `/new` `/clear` `/stop` `/settings` `/help`.
+- **Web mirror**: each chat can mirror its DSH session into the DSH Web GUI (`/mirror`, or automatic via `autoMirror`). The mirror lock is enforced only on the Feishu side (`lockOwner`): the Web GUI reads/writes the DSH session directly and never consults the lock, so mutual exclusion is one-sided (not fixable at the repository level — documented as-is). `/new`, `/clear` or switching sessions resets the mirror target; `autoMirror` rebuilds it for new sessions.
+- **Local commands** (no model tokens): `/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/export` `/goals` `/schedule` `/model` `/notify` `/progress` `/mirror` `/unlock` `/renew` `/new` `/clear` `/stop` `/settings` `/help`.
 - **Extensible, multi-platform**: `dsh-connect` (channel-agnostic core) + per-channel adapter packages — `dsh-connect-feishu` (bidirectional Feishu/Lark), `dsh-connect-telegram` (bidirectional Telegram), `dsh-connect-dingtalk` (one-way DingTalk group push). Adding a channel is one more adapter package.
 
 ## Repository layout
@@ -31,6 +31,7 @@ packages/
   connect-feishu/    dsh-connect-feishu Feishu adapter: createLarkChannel long connection, normalization, streaming replies
   connect-telegram/  dsh-connect-telegram Telegram adapter: Bot API long-polling, streaming edits, inline-keyboard choices
   connect-dingtalk/  dsh-connect-dingtalk DingTalk group-webhook push: text/markdown/@-mention notices (one-way)
+  connect-web/       dsh-connect-web Web mirror adapter: tracks mirror sessions for DSH Web GUI (no synthesized messages; outbound is a contract no-op)
 docs/
   QUICKSTART.md      step-by-step run guide (DSH side + Feishu side)
   feishu-setup.md    Feishu Open Platform configuration manual
@@ -47,7 +48,7 @@ examples/
 |---|---|---|---|---|
 | Feishu / Lark | `dsh-connect-feishu` | bidirectional | WebSocket long connection | full features (streaming, menus, images) |
 | Telegram | `dsh-connect-telegram` | bidirectional | Bot API long polling | full features (streaming edits, inline keyboards) |
-| DingTalk | `dsh-connect-dingtalk` | one-way push | group-robot webhook | task progress / results / alerts into a group |
+| DingTalk | `dsh-connect-dingtalk` | one-way push | group-robot webhook | one-way push service (sendMarkdown / sendText / @mentions) — no inbound |
 
 All bidirectional adapters share the same `dsh-connect` core: commands, `/menu`, notification levels, the proactive progress watchdog, interactive choices & approvals, and per-chat settings work identically on every channel.
 
@@ -55,11 +56,13 @@ All bidirectional adapters share the same `dsh-connect` core: commands, `/menu`,
 
 ### Install
 
-Published to npm — install straight into your DSH profile:
+The packages are published to npm automatically on every GitHub Release — [`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs `pnpm build` + typecheck first, then publishes all five packages serially. Install straight into your DSH profile:
 
 ```sh
 dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram dsh-connect-dingtalk
 ```
+
+For local development (before the packages are published), load the built packages by absolute path as shown in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ### Configure
 
@@ -104,6 +107,8 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | `/notify` (`/notice`) | Choose the notification level: `full` / `important` / `result` (takes effect immediately) |
 | `/progress` | Choose how long a silent task may run before a proactive progress card is sent (default 5 min; `关闭` disables) |
 | `/mirror [--timeout N]` | Create (or show) the Web mirror session for this chat; optional lock timeout in minutes |
+| `/unlock` | Manually release the session lock (Feishu/Web mirror scenario only) |
+| `/renew` (`/renew-lock`) | Renew the current session lock timeout |
 | `/status` | Session status, model, workdir, queue length, **context tokens**, session ID |
 | `/task` (`/tasks` `/todo`) | Show the current task list |
 | `/schedule` (`/reminders`) | Show scheduled reminders for this session |
@@ -114,6 +119,7 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | `/plugins` | List installed plugins |
 | `/compact` | Compact the current session context |
 | `/history [count]` | Show recent session messages |
+| `/export [markdown\|pdf]` | Export conversation history as Markdown (`pdf` not supported yet — a hint is shown) |
 | `/goals` | Show current goals |
 | `/new` (`/reset`) | Start a new conversation (asks for confirmation) |
 | `/clear` | Clear the current conversation (asks for confirmation) |
@@ -146,10 +152,12 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | Key | Default | Description |
 |---|---|---|
 | `appId` / `appSecret` | env `FEISHU_APP_ID` / `FEISHU_APP_SECRET`, or **one-click onboarding** | App credentials (when unset, onboarding mode starts and creates the app via QR scan) |
-| `transport` | `websocket` | Long connection (recommended); `webhook` needs a public HTTPS URL |
+| `transport` | `websocket` | `websocket` (default, long connection); `webhook` needs a public HTTPS callback URL — the adapter hosts its own HTTP service and auto-answers the `url_verification` challenge |
+| `webhookPort` | `9000` | HTTP listen port for webhook transport mode |
+| `webhookPath` | `/` | Feishu event callback path |
 | `verificationToken` / `encryptKey` | empty | Only needed for webhook mode |
 | `requireMention` | `true` | Groups only respond when the bot is @mentioned |
-| `dmMode` | `open` | DM policy: `open` receive / `closed` ignore |
+| `dmMode` | `open` | DM policy: `open` / `allowlist` / `pair` / `disabled` (`disabled` = ignore DMs) |
 | `language` | `zh` | User-facing message language: `zh` (default) or `en` |
 
 > **One-click onboarding**: start the plugin without `appId`/`appSecret` and it prints an onboarding link (valid ~10 minutes). Scan it with Feishu (or click and confirm) and the bot app is created automatically with permissions and event subscriptions preset; credentials are saved to `$DSH_HOME/.dsh-connect/feishu-credentials.json`.
@@ -165,13 +173,18 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 
 ## Testing
 
+Five test suites, all `node:test` (build `lib/` first):
+
 ```sh
 pnpm build        # build first (generates lib/)
-pnpm test         # unit tests (pure logic) + smoke test (Cordis runtime load contract)
+pnpm test         # 5 test suites, all node:test
 ```
 
-- `packages/connect/test/unit.test.mjs`: command parsing, binding persistence, async queue, turn outcome derivation.
-- `packages/connect/test/smoke.mjs`: loads both plugins into a real Cordis context, verifying `ctx.connect` service registration, adapter registration, allowlist authorization, proactive `notify` push, and Feishu adapter construction.
+- `packages/connect/test/unit.test.mjs` + `packages/connect/test/smoke.mjs` (connect core suite): command parsing, binding persistence, async queue, turn outcome derivation; plus loading the plugins into a real Cordis context to verify the plugin contract, including the `isChatAllowed` allowlist pre-filter assertion.
+- `packages/connect-dingtalk/test/unit.test.mjs`: signature verification, retry/rate-limit, 20000-character truncation.
+- `packages/connect-telegram/test/unit.test.mjs`: HTML escaping, @mention detection, offset confirmation semantics.
+- `packages/connect-feishu/test/unit.test.mjs`: button grid, label alignment, filename sanitization, error extraction.
+- `packages/connect-web/test/unit.test.mjs`: mirror records, no-synthesized-message regression test.
 
 ## Documentation
 

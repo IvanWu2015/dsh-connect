@@ -19,7 +19,7 @@ export const inject = ["connect"];
 /** Plugin configuration options. */
 export const Config = z.object({
   /** Polling interval in milliseconds for detecting new mirror sessions. Default: 1000ms */
-  pollIntervalMs: z.number().optional(),
+  pollIntervalMs: z.number(),
 });
 
 export interface ConnectWebConfig {
@@ -28,6 +28,8 @@ export interface ConnectWebConfig {
 
 interface ConnectLike {
   registerAdapter(adapter: unknown): void;
+  /** Public accessor for the binding routing store (added to ConnectService). */
+  bindingStore?: BindingStore;
 }
 
 /**
@@ -46,9 +48,8 @@ export function apply(ctx: Context, config: ConnectWebConfig = {}): void {
     throw new Error("connect-web: the dsh-connect service is not present; load it before this adapter");
   }
 
-  // Get the BindingStore from the connect service
-  // Note: In a full implementation, BindingStore would be exposed as a service
-  // or accessible through the connect service
+  // Get the BindingStore from the connect service (public getter, not the
+  // private `bindings` field — the getter is part of the service contract).
   const bindings = getBindingStore(ctx);
   
   if (bindings === undefined) {
@@ -74,11 +75,10 @@ export function apply(ctx: Context, config: ConnectWebConfig = {}): void {
 }
 
 /**
- * Attempt to retrieve the BindingStore from the context.
- * This is a workaround until BindingStore is properly exposed as a service.
+ * Retrieve the BindingStore through the connect service's public `bindingStore`
+ * getter. The store is owned by the connect service (created in `apply`).
  */
 function getBindingStore(ctx: Context): BindingStore | undefined {
-  // Try to get from connect service's internal state
-  const connect = ctx.get("connect") as { bindings?: BindingStore } | undefined;
-  return connect?.bindings;
+  const connect = ctx.get("connect") as ConnectLike | undefined;
+  return connect?.bindingStore;
 }

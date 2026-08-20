@@ -12,6 +12,7 @@ import { feishuMessages } from "./i18n.js";
 
 export { FeishuAdapter } from "./adapter.js";
 export type { FeishuConfig } from "./adapter.js";
+export { padLabels, buildButtonGrid, buildChoiceElements, sanitizeFileName, extractErrorDetail } from "./adapter.js";
 export { loadCredentials, onboardFeishu, saveCredentials } from "./onboard.js";
 export type { FeishuCredentials } from "./onboard.js";
 
@@ -28,6 +29,8 @@ export const Config = z.object({
   transport: z.union([z.const("websocket"), z.const("webhook")]),
   verificationToken: z.string().role("secret"),
   encryptKey: z.string().role("secret"),
+  webhookPort: z.number().min(1).max(65535),
+  webhookPath: z.string(),
   requireMention: z.boolean(),
   dmMode: z.union([z.const("open"), z.const("allowlist"), z.const("pair"), z.const("disabled")]),
   language: z.union([z.const("zh"), z.const("en")]),
@@ -35,11 +38,13 @@ export const Config = z.object({
 
 interface ConnectLike {
   registerAdapter(adapter: unknown): void;
+  /** Allowlist gate usable by adapters before they download message resources. */
+  isChatAllowed?(channel: string, chatKey: string, senderKey: string): boolean;
 }
 
 function start(connect: ConnectLike, config: FeishuConfig, logger?: { warn?: (...args: unknown[]) => void }): void {
   try {
-    const adapter = new FeishuAdapter(config, logger);
+    const adapter = new FeishuAdapter(config, logger, connect.isChatAllowed);
     connect.registerAdapter(adapter);
     void adapter.start().catch((error) => {
       logger?.warn?.(`connect-feishu: start failed: ${String(error)}`);

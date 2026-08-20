@@ -36,14 +36,11 @@
   },
   
   "state": {
-    "stateDir": ".dsh-connect",
-    "sessionStorePath": ".dsh/sessions"
+    "stateDir": ".dsh-connect"
   },
   
   "mirror": {
-    "autoCreate": true,
-    "defaultTimeoutMinutes": 5,
-    "enableLocking": true
+    "autoCreate": true
   },
   
   "language": "zh"
@@ -238,7 +235,7 @@ D:\ACOINFO\code\dsh_feishu\
 **原因**：DSH session 文件没有被共享。
 
 **解决**：
-1. 确认飞书和 Web 使用相同的 `sessionStorePath`
+1. 确认飞书和 Web 运行在同一个 DSH 实例、使用相同的 `stateDir`（默认 `.dsh-connect`）
 2. 检查 `.dsh/sessions/` 目录是否存在且可读写
 3. 确保没有多个独立的 DSH 实例在运行
 
@@ -295,5 +292,5 @@ D:\ACOINFO\code\dsh_feishu\
 
 ---
 
-**更新日期**：2024-01-15  
-**版本**：v0.5.1
+**更新日期**：2026-08-20  
+**版本**：v0.6.2

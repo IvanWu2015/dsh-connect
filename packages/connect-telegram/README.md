@@ -8,7 +8,7 @@ Telegram channel adapter for [dsh-connect](../connect/README.md): brings DeepSee
 - **Bidirectional**: private chats and groups; group replies require @-mention (configurable).
 - **Streaming replies**: long answers are edited in place on one message (typewriter feel).
 - **Interactive choices**: `ask_user_question` / menu prompts render as inline-keyboard buttons; tapping answers the question.
-- **Media**: photos and documents are downloaded into the workdir automatically.
+- **Media**: photos, documents, voice, video and audio are downloaded and staged into the workdir automatically.
 - **Zero runtime HTTP dependency**: built on the global `fetch` (Node ≥ 18 / ≥ 20).
 
 ## Install

@@ -2,180 +2,55 @@
 
 English | [中文](README.zh.md)
 
-Web channel adapter for `dsh-connect`: enables DSH Web GUI to automatically mirror and interact with Feishu conversations.
+Web channel adapter for [dsh-connect](https://www.npmjs.com/package/dsh-connect): tracks which conversations are **mirrored** into the DSH Web GUI. It monitors the binding route store for chats whose session has been mirrored (`webMirrorSessionId` set — auto-created by `dsh-connect` for every new chat) so the GUI can open the shared session.
 
-## Overview
+## What it does
 
-This package provides a bridge between `dsh-connect`'s mirror sessions and the DSH Web GUI. 
+- **Mirror tracking** — watches the `BindingStore` (via `onChange` events plus a fallback poll) and records each mirrored session: `isSessionMirrored(sessionId)` and `getMirrorSource(sessionId)` (`"channel:chatKey"`).
+- **No synthetic inbound messages** — mirror detection is pure bookkeeping. The adapter deliberately does **not** emit an inbound "mirror created" message, because that would spin up a spurious `web` runner and burn a real agent turn for nothing.
+- **Outbound methods are contract no-ops** — `sendText` / `sendCard` / `streamText` / `promptChoice` / `closeMenu` exist only to satisfy the `ChannelAdapter` interface. The Web GUI renders the agent's session events directly from DSH's shared session store, not from adapter calls.
+- **One-sided locking** — the mirror "lock" (`lockOwner` in the binding) is enforced **only on the Feishu side** by `dsh-connect`. The Web GUI reads mirrored sessions directly and is write-always from this repository's perspective; that asymmetry cannot be fixed from this package.
 
-**✨ NEW: Automatic Mirroring** - As of the latest version, Web mirrors are created **automatically** for every Feishu conversation. No manual `/mirror` command needed!
+## Install
 
-The adapter monitors `BindingStore` for chats with `webMirrorSessionId` set (auto-created by dsh-connect) and makes those sessions available in the Web interface.
+```sh
+dsh plugin --profile web add dsh-connect dsh-connect-web
+```
 
-## Features
+Requires the `dsh-connect` service to be loaded first (it is declared via `inject: ["connect"]`), and reads the binding store through `dsh-connect`'s public `bindingStore` getter (typed via the `dsh-connect/binding` export subpath).
 
-- **Automatic Mirror Detection**: Monitors `BindingStore` for chats with `webMirrorSessionId` set
-- **Event-Driven Updates**: Real-time detection of new mirrors through change events
-- **Session Lock Awareness**: Respects lock ownership to prevent concurrent write conflicts
-- **Message Queuing**: Queues Web messages when Feishu holds the lock, processes them on release
-- **Fallback Polling**: Periodic scanning as a safety net if events are missed
-
-## Installation
-
-Add to your DSH profile configuration:
+## Configure
 
 ```yaml
-plugins:
-  connect-web: {}
+- insert:
+    - id: connect
+      name: dsh-connect
+    - id: connect-web
+      name: dsh-connect-web
+      config:
+        # pollIntervalMs: 1000   # fallback mirror scan interval (default 1000)
 ```
 
-Or with custom options:
+| Key | Default | Description |
+|---|---|---|
+| `pollIntervalMs` | `1000` | Fallback polling interval (ms) for detecting new mirror sessions when change events are missed |
 
-```yaml
-plugins:
-  connect-web:
-    pollIntervalMs: 2000  # Poll every 2 seconds instead of default 1s
-```
+## API
 
-## Usage
-
-### Automatic Mirroring (Default)
-
-**No setup required!** Every Feishu conversation automatically gets a Web mirror:
-
-1. Start chatting with the bot in Feishu
-2. Open DSH Web GUI at http://127.0.0.1:3080
-3. The conversation appears automatically ✨
-
-The mirror is created when:
-- A new session is started
-- An existing session is resumed
-
-### Manual Mirror Control (Optional)
-
-The `/mirror` command is still available for viewing status:
-
-```
-/mirror
-```
-
-This shows:
-- Current mirror session ID
-- Lock owner and timeout
-- Queued message count
-
-### Viewing Mirrors in Web GUI
-
-Once a conversation starts in Feishu:
-1. Open DSH Web GUI at http://127.0.0.1:3080
-2. The mirrored session appears automatically
-3. You can view the full conversation history
-4. Send messages (subject to lock ownership)
-
-### Session Locking
-
-To prevent conflicts when both Feishu and Web are active:
-
-- **Lock Owner**: Only the lock owner can send messages that trigger agent execution
-- **Read-Only Mode**: Non-owner can view but messages are queued
-- **Timeout**: Locks auto-release after 5 minutes of inactivity
-- **Manual Release**: Use `/unlock` in Feishu to release the lock early
-
-### Commands
-
-From Feishu:
-- `/mirror` - Create or show Web mirror status
-- `/unlock` - Manually release the session lock
-
-From Web GUI:
-- Messages are automatically queued if lock is held by Feishu
-- Queue is processed when lock is released
-
-## Architecture
-
-```
-┌─────────────┐         ┌──────────────────┐         ┌─────────────┐
-│   Feishu    │◄───────►│   dsh-connect    │◄───────►│  DSH Web    │
-│   Adapter   │         │   BindingStore   │         │   Adapter   │
-└─────────────┘         └──────────────────┘         └─────────────┘
-                               ▲
-                               │ onChange events
-                               │
-                        ┌──────┴──────┐
-                        │  WebAdapter │
-                        │  (monitor)  │
-                        └─────────────┘
-```
-
-## API Reference
-
-### WebAdapter
-
-```typescript
+```ts
 class WebAdapter implements ChannelAdapter {
-  constructor(bindings: BindingStore, options?: { pollIntervalMs?: number });
-  
-  // Check if a session is mirrored
-  isSessionMirrored(sessionId: string): boolean;
-  
-  // Get the source chat key for a mirrored session
-  getMirrorSource(sessionId: string): string | undefined;
-  
-  // Get lock status for a session
-  getSessionLock(sessionId: string): "feishu" | "web" | undefined;
-  
-  // Check if Web can write to a session
-  canWrite(channel: string, chatKey: string): boolean;
-  
-  // Queue a message for later processing
-  queueMessageForSession(channel: string, chatKey: string, text: string, senderKey: string): number;
+  readonly id = "web";
+  isSessionMirrored(sessionId: string): boolean;                    // is this DSH session mirrored from a chat?
+  getMirrorSource(sessionId: string): string | undefined;           // "channel:chatKey" of the source chat
+  // sendText / sendCard / streamText / promptChoice / closeMenu — contract no-ops
 }
 ```
 
-### BindingStore Extensions
+## Limitations
 
-The `BindingStore` has been extended with:
-
-```typescript
-// Subscribe to binding changes
-onChange(callback: (binding: ChatBinding, changeType: "add" | "update" | "delete") => void): () => void;
-
-// Iterate over all bindings
-entries(): IterableIterator<ChatBinding>;
-list(): ChatBinding[];
-
-// Find bindings by webMirrorSessionId
-findByWebMirror(sessionId: string): ChatBinding[];
-```
-
-## Configuration
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `pollIntervalMs` | number | 1000 | Polling interval for mirror detection (ms) |
-
-## Troubleshooting
-
-### Mirror not appearing in Web GUI
-
-1. Verify `/mirror` was sent successfully in Feishu
-2. Check DSH logs for `connect-web: Web adapter registered` message
-3. Ensure `dsh-connect` service is loaded before `connect-web`
-
-### Messages not sending from Web
-
-1. Check lock status: is Feishu currently executing a task?
-2. Wait for lock timeout (5 minutes) or use `/unlock` in Feishu
-3. Verify message appears in queue (check logs)
-
-### High CPU usage
-
-Reduce polling frequency:
-```yaml
-plugins:
-  connect-web:
-    pollIntervalMs: 5000  # Poll every 5 seconds
-```
+- **No inbound path**: messages typed in the Web GUI are not routed through this adapter; the GUI talks to the shared DSH session directly.
+- **No locking guarantee for Web writers**: the mutual-exclusion lock is one-sided (enforced by the Feishu adapter's runner only).
+- **Mirror visibility depends on `dsh-connect`**: if the `connect` service or its `bindingStore` is unavailable, mirror detection is disabled (a warning is logged).
 
 ## License
 

@@ -5,7 +5,9 @@
 #      Generate at: https://www.npmjs.com/settings/~/tokens → "Automation" type.
 #   2. Create a GitHub Release → the workflow runs automatically.
 #
-# Packages are published in dependency order (connect first, adapters after).
+# Packages are published sequentially in dependency order (connect first,
+# adapters after) — a parallel matrix would race the peerDependency.
+# `pnpm build` runs before test and publish because lib/ is gitignored.
 
 name: Publish to npm
 
@@ -26,20 +28,13 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck
       - run: pnpm test
 
   publish-npm:
     needs: test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # Order matters: connect must be published first because the adapter
-        # packages have it as a peerDependency.
-        package:
-          - packages/connect
-          - packages/connect-feishu
-          - packages/connect-telegram
-          - packages/connect-dingtalk
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -51,7 +46,25 @@ jobs:
           registry-url: https://registry.npmjs.org/
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm publish --filter ${{ matrix.package }} --no-git-checks
+      - run: pnpm build
+      - name: Publish dsh-connect (core, first)
+        run: pnpm publish --filter packages/connect --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish dsh-connect-web
+        run: pnpm publish --filter packages/connect-web --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish dsh-connect-feishu
+        run: pnpm publish --filter packages/connect-feishu --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish dsh-connect-telegram
+        run: pnpm publish --filter packages/connect-telegram --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish dsh-connect-dingtalk
+        run: pnpm publish --filter packages/connect-dingtalk --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           # npm automation token (no OTP needed). Set this in GitHub repo

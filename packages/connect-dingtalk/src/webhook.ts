@@ -8,7 +8,7 @@
  *
  * @module dsh-connect-dingtalk/webhook
  */
-import { createHmac, createHash, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 /** DingTalk webhook configuration. */
 export interface DingtalkWebhookConfig {
@@ -18,6 +18,10 @@ export interface DingtalkWebhookConfig {
   secret?: string;
   /** HTTP timeout in ms (default 10s). */
   timeoutMs?: number;
+  /** Backoff delays between retries for transient network errors (default 1s/2s/4s). */
+  retryDelaysMs?: readonly number[];
+  /** Extra delay for the 130101 frequency-limit retry (default 10s). */
+  rateLimitDelayMs?: number;
 }
 
 /** Body shape accepted by the DingTalk robot API. */
@@ -47,6 +51,11 @@ export interface DingtalkAt {
   all?: boolean;
 }
 
+/** DingTalk caps markdown body text at 20000 chars. */
+export const MARKDOWN_LIMIT = 20_000;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * Compute the DingTalk webhook signature. The SDK expects
  * `timestamp + "\n" + secret` signed with HMAC-SHA256, base64-encoded, then
@@ -58,11 +67,32 @@ export function signDingtalk(secret: string, timestampMs: number): string {
   return encodeURIComponent(mac);
 }
 
-/** Verify an incoming signature against a secret (used by webhook receivers, if ever needed). */
-export function verifyDingtalkSignature(secret: string, timestampMs: string, sign: string): boolean {
-  const expected = signDingtalk(secret, Number(timestampMs));
-  const a = Buffer.from(sign);
-  const b = Buffer.from(expected);
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value; // not URL-encoded — compare as-is
+  }
+}
+
+/**
+ * Verify an incoming signature against a secret (used by webhook receivers, if
+ * ever needed). Both sides are compared after URL-decoding, so a sender that
+ * encoded `+` as `%2B` (or vice versa) still verifies, and the timestamp must
+ * be fresh (default: ±5 minutes) to be replay-resistant.
+ */
+export function verifyDingtalkSignature(
+  secret: string,
+  timestampMs: string,
+  sign: string,
+  nowMs: number = Date.now(),
+  maxAgeMs: number = 5 * 60_000,
+): boolean {
+  const ts = Number(timestampMs);
+  if (!Number.isFinite(ts) || Math.abs(nowMs - ts) > maxAgeMs) return false;
+  const expected = signDingtalk(secret, ts);
+  const a = Buffer.from(safeDecode(sign));
+  const b = Buffer.from(safeDecode(expected));
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
@@ -73,9 +103,28 @@ function withSignature(url: string, secret: string, timestampMs: number): string
   return `${url}${sep}timestamp=${timestampMs}&sign=${sign}`;
 }
 
+/** Errors that are safe to retry: transient network issues and the frequency limit. */
+function isRetryable(error: unknown): boolean {
+  const errcode = (error as { errcode?: number }).errcode;
+  if (errcode === 130101) return true; // 发送频率限制 (20/min per robot)
+  if (error instanceof TypeError) return true; // fetch network failure
+  return false;
+}
+
+function delayFor(config: DingtalkWebhookConfig, error: unknown, attempt: number): number {
+  const errcode = (error as { errcode?: number }).errcode;
+  if (errcode === 130101) return config.rateLimitDelayMs ?? 10_000; // rate limit: wait for the window to pass
+  const backoff = config.retryDelaysMs;
+  if (backoff !== undefined && backoff.length > 0) return backoff[Math.min(attempt, backoff.length - 1)] ?? 1_000;
+  return 1_000 * 2 ** attempt; // 1s, 2s, 4s…
+}
+
+const MAX_ATTEMPTS = 3;
+
 /**
  * Minimal DingTalk group-robot webhook client built on the global `fetch`
- * (Node ≥ 18 / ≥ 20 — no third-party HTTP dependency).
+ * (Node ≥ 18 / ≥ 20 — no third-party HTTP dependency). Transient failures
+ * (network errors, the 20/min frequency limit) are retried with backoff.
  */
 export class DingtalkWebhook {
   readonly config: DingtalkWebhookConfig;
@@ -89,10 +138,12 @@ export class DingtalkWebhook {
 
   /**
    * Send a markdown message. `title` is shown as the message's card title in
-   * DingTalk; `text` is the markdown body. Optionally @-mention people.
+   * DingTalk; `text` is the markdown body (truncated to 20000 chars, the API
+   * limit). Optionally @-mention people.
    */
   async sendMarkdown(title: string, text: string, at?: DingtalkAt): Promise<DingtalkResponse> {
-    return this.send({ msgtype: "markdown", markdown: { title, text }, at: atBody(at) });
+    const body = text.length > MARKDOWN_LIMIT ? `${text.slice(0, MARKDOWN_LIMIT)}\n\n…(已截断)` : text;
+    return this.send({ msgtype: "markdown", markdown: { title, text: body }, at: atBody(at) });
   }
 
   /** Send a plain-text message (content shown verbatim, `\n` newlines allowed). */
@@ -100,7 +151,7 @@ export class DingtalkWebhook {
     return this.send({ msgtype: "text", text: { content }, at: atBody(at) });
   }
 
-  private async send(body: DingtalkBody): Promise<DingtalkResponse> {
+  private async send(body: DingtalkBody, attempt = 0): Promise<DingtalkResponse> {
     const { webhookUrl, secret, timeoutMs = 10_000 } = this.config;
     const url = secret ? withSignature(webhookUrl, secret, Date.now()) : webhookUrl;
 
@@ -118,9 +169,17 @@ export class DingtalkWebhook {
       }
       const parsed = (await response.json()) as DingtalkResponse;
       if (parsed.errcode !== 0) {
-        throw new Error(`connect-dingtalk: DingTalk error ${parsed.errcode}: ${parsed.errmsg}`);
+        const error = new Error(`connect-dingtalk: DingTalk error ${parsed.errcode}: ${parsed.errmsg}`);
+        (error as { errcode?: number }).errcode = parsed.errcode;
+        throw error;
       }
       return parsed;
+    } catch (error) {
+      if (isRetryable(error) && attempt < MAX_ATTEMPTS) {
+        await sleep(delayFor(this.config, error, attempt));
+        return this.send(body, attempt + 1);
+      }
+      throw error;
     } finally {
       clearTimeout(timer);
     }
@@ -140,9 +199,4 @@ function atBody(at?: DingtalkAt): AtPayload | undefined {
     ...(at.userIds !== undefined && at.userIds.length > 0 ? { atUserIds: [...at.userIds] } : {}),
     ...(at.all === true ? { isAtAll: true } : {}),
   };
-}
-
-/** MD5 helper kept for parity with the official SDK's nonce flows (unused now). */
-export function md5Hex(input: string): string {
-  return createHash("md5").update(input, "utf8").digest("hex");
 }

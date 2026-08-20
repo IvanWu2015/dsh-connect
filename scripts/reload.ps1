@@ -3,11 +3,17 @@
 $ws = "D:\ACOINFO\code\dsh_feishu"
 Set-Location $ws
 
-Write-Host "[1/3] 重建插件..." -ForegroundColor Cyan
+Write-Host "[1/3] 按依赖顺序重建 5 个插件..." -ForegroundColor Cyan
 node "$ws\node_modules\typescript\bin\tsc" -p "$ws\packages\connect\tsconfig.json"
 if ($LASTEXITCODE -ne 0) { Write-Host "connect 构建失败，已中止（未重启）" -ForegroundColor Red; exit 1 }
+node "$ws\node_modules\typescript\bin\tsc" -p "$ws\packages\connect-web\tsconfig.json"
+if ($LASTEXITCODE -ne 0) { Write-Host "connect-web 构建失败，已中止（未重启）" -ForegroundColor Red; exit 1 }
 node "$ws\node_modules\typescript\bin\tsc" -p "$ws\packages\connect-feishu\tsconfig.json"
 if ($LASTEXITCODE -ne 0) { Write-Host "connect-feishu 构建失败，已中止（未重启）" -ForegroundColor Red; exit 1 }
+node "$ws\node_modules\typescript\bin\tsc" -p "$ws\packages\connect-telegram\tsconfig.json"
+if ($LASTEXITCODE -ne 0) { Write-Host "connect-telegram 构建失败，已中止（未重启）" -ForegroundColor Red; exit 1 }
+node "$ws\node_modules\typescript\bin\tsc" -p "$ws\packages\connect-dingtalk\tsconfig.json"
+if ($LASTEXITCODE -ne 0) { Write-Host "connect-dingtalk 构建失败，已中止（未重启）" -ForegroundColor Red; exit 1 }
 
 Write-Host "[2/3] 停止旧 dsh web（占用 3080 端口的进程）..." -ForegroundColor Cyan
 $conns = Get-NetTCPConnection -LocalPort 3080 -State Listen -ErrorAction SilentlyContinue

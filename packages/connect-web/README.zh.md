@@ -2,180 +2,55 @@
 
 [English](README.md) | 中文
 
-`dsh-connect` 的 Web 渠道适配器：让 DSH Web GUI 能够自动镜像飞书会话并与之交互。
+面向 [dsh-connect](https://www.npmjs.com/package/dsh-connect) 的 Web 渠道适配器：跟踪哪些会话被**镜像**到 DSH Web GUI。它监视绑定路由存储中已镜像的聊天（`webMirrorSessionId` 已设置——由 `dsh-connect` 为每个新聊天自动创建），使 GUI 可以打开共享会话。
 
-## 概述
+## 它做什么
 
-本包在 `dsh-connect` 的镜像会话与 DSH Web GUI 之间提供一座桥梁。
-
-**✨ 新特性：自动镜像** —— 从最新版本开始，每个飞书会话都会**自动**创建 Web 镜像。无需手动执行 `/mirror` 命令！
-
-适配器监视 `BindingStore` 中设置了 `webMirrorSessionId`（由 dsh-connect 自动创建）的聊天，并将这些会话提供给 Web 界面使用。
-
-## 功能特性
-
-- **自动镜像检测**：监视 `BindingStore` 中设置了 `webMirrorSessionId` 的聊天
-- **事件驱动更新**：通过变更事件实时发现新镜像
-- **会话锁感知**：遵循锁的所有权，防止并发写入冲突
-- **消息队列**：当飞书持有锁时将 Web 消息排队，锁释放后处理
-- **兜底轮询**：定期扫描作为事件遗漏时的安全网
+- **镜像跟踪** —— 监视 `BindingStore`（通过 `onChange` 事件加兜底轮询），记录每个镜像会话：`isSessionMirrored(sessionId)` 与 `getMirrorSource(sessionId)`（返回 `"channel:chatKey"`）。
+- **不合成入站消息** —— 镜像检测纯粹是簿记。本适配器刻意**不**为"镜像已创建"发出入站消息，因为那会启动一个多余的 `web` runner，白白消耗一次真实的 agent turn。
+- **出站方法为契约空操作** —— `sendText` / `sendCard` / `streamText` / `promptChoice` / `closeMenu` 仅用于满足 `ChannelAdapter` 接口。Web GUI 直接渲染 DSH 共享会话存储中的 agent 会话事件，而不是通过适配器调用。
+- **锁互斥是单侧的** —— 镜像"锁"（binding 中的 `lockOwner`）**仅由 `dsh-connect` 在飞书一侧**执行。Web GUI 直接读取镜像会话，从本仓库的角度看它是永远可写的；这种不对称无法在本包内修复。
 
 ## 安装
 
-添加到你的 DSH profile 配置中：
-
-```yaml
-plugins:
-  connect-web: {}
+```sh
+dsh plugin --profile web add dsh-connect dsh-connect-web
 ```
 
-或使用自定义选项：
-
-```yaml
-plugins:
-  connect-web:
-    pollIntervalMs: 2000  # Poll every 2 seconds instead of default 1s
-```
-
-## 使用
-
-### 自动镜像（默认）
-
-**无需任何配置！**每个飞书会话都会自动获得 Web 镜像：
-
-1. 在飞书中与机器人开始对话
-2. 打开 DSH Web GUI，地址为 http://127.0.0.1:3080
-3. 会话自动出现 ✨
-
-镜像在以下时机创建：
-- 新会话启动时
-- 恢复已有会话时
-
-### 手动镜像控制（可选）
-
-`/mirror` 命令仍然可用于查看状态：
-
-```
-/mirror
-```
-
-它会显示：
-- 当前镜像会话 ID
-- 锁的所有者与超时时间
-- 排队消息数量
-
-### 在 Web GUI 中查看镜像
-
-一旦飞书中的会话开始：
-1. 打开 DSH Web GUI，地址为 http://127.0.0.1:3080
-2. 镜像会话自动出现
-3. 你可以查看完整的会话历史
-4. 发送消息（受锁所有权约束）
-
-### 会话锁
-
-为防止飞书与 Web 同时活跃时发生冲突：
-
-- **锁所有者**：只有锁所有者可以发送触发智能体执行的消息
-- **只读模式**：非所有者可以查看，但消息会被排队
-- **超时**：锁在 5 分钟无活动后自动释放
-- **手动释放**：在飞书中使用 `/unlock` 提前释放锁
-
-### 命令
-
-在飞书中：
-- `/mirror` —— 创建或显示 Web 镜像状态
-- `/unlock` —— 手动释放会话锁
-
-在 Web GUI 中：
-- 如果锁由飞书持有，消息会自动排队
-- 锁释放后处理队列
-
-## 架构
-
-```
-┌─────────────┐         ┌──────────────────┐         ┌─────────────┐
-│   Feishu    │◄───────►│   dsh-connect    │◄───────►│  DSH Web    │
-│   Adapter   │         │   BindingStore   │         │   Adapter   │
-└─────────────┘         └──────────────────┘         └─────────────┘
-                               ▲
-                               │ onChange events
-                               │
-                        ┌──────┴──────┐
-                        │  WebAdapter │
-                        │  (monitor)  │
-                        └─────────────┘
-```
-
-## API 参考
-
-### WebAdapter
-
-```typescript
-class WebAdapter implements ChannelAdapter {
-  constructor(bindings: BindingStore, options?: { pollIntervalMs?: number });
-  
-  // Check if a session is mirrored
-  isSessionMirrored(sessionId: string): boolean;
-  
-  // Get the source chat key for a mirrored session
-  getMirrorSource(sessionId: string): string | undefined;
-  
-  // Get lock status for a session
-  getSessionLock(sessionId: string): "feishu" | "web" | undefined;
-  
-  // Check if Web can write to a session
-  canWrite(channel: string, chatKey: string): boolean;
-  
-  // Queue a message for later processing
-  queueMessageForSession(channel: string, chatKey: string, text: string, senderKey: string): number;
-}
-```
-
-### BindingStore 扩展
-
-`BindingStore` 已扩展以下能力：
-
-```typescript
-// Subscribe to binding changes
-onChange(callback: (binding: ChatBinding, changeType: "add" | "update" | "delete") => void): () => void;
-
-// Iterate over all bindings
-entries(): IterableIterator<ChatBinding>;
-list(): ChatBinding[];
-
-// Find bindings by webMirrorSessionId
-findByWebMirror(sessionId: string): ChatBinding[];
-```
+需要先加载 `dsh-connect` 服务（通过 `inject: ["connect"]` 声明），并通过 `dsh-connect` 的公开 `bindingStore` getter 读取绑定存储（类型来自 `dsh-connect/binding` 导出子路径）。
 
 ## 配置
 
-| 选项 | 类型 | 默认值 | 说明 |
-|--------|------|---------|-------------|
-| `pollIntervalMs` | number | 1000 | 镜像检测的轮询间隔（毫秒） |
-
-## 故障排查
-
-### Web GUI 中不显示镜像
-
-1. 确认已在飞书中成功发送 `/mirror`
-2. 在 DSH 日志中查找 `connect-web: Web adapter registered` 消息
-3. 确保 `dsh-connect` 服务先于 `connect-web` 加载
-
-### 无法从 Web 发送消息
-
-1. 检查锁状态：飞书当前是否正在执行任务？
-2. 等待锁超时（5 分钟）或在飞书中使用 `/unlock`
-3. 确认消息出现在队列中（查看日志）
-
-### CPU 占用过高
-
-降低轮询频率：
 ```yaml
-plugins:
-  connect-web:
-    pollIntervalMs: 5000  # Poll every 5 seconds
+- insert:
+    - id: connect
+      name: dsh-connect
+    - id: connect-web
+      name: dsh-connect-web
+      config:
+        # pollIntervalMs: 1000   # 兜底镜像扫描间隔（默认 1000）
 ```
+
+| 键 | 默认值 | 说明 |
+|---|---|---|
+| `pollIntervalMs` | `1000` | 事件遗漏时检测新镜像会话的兜底轮询间隔（毫秒） |
+
+## API
+
+```ts
+class WebAdapter implements ChannelAdapter {
+  readonly id = "web";
+  isSessionMirrored(sessionId: string): boolean;                    // 该 DSH 会话是否来自某个聊天的镜像？
+  getMirrorSource(sessionId: string): string | undefined;           // 来源聊天的 "channel:chatKey"
+  // sendText / sendCard / streamText / promptChoice / closeMenu —— 契约空操作
+}
+```
+
+## 限制
+
+- **无入站通道**：在 Web GUI 中输入的消息不会经过此适配器路由；GUI 直接与共享的 DSH 会话交互。
+- **对 Web 写入方无锁保证**：互斥锁是单侧的（仅由飞书适配器的 runner 执行）。
+- **镜像可见性依赖 `dsh-connect`**：如果 `connect` 服务或其 `bindingStore` 不可用，镜像检测将被禁用（记录一条警告日志）。
 
 ## 许可
 

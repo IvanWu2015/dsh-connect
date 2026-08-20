@@ -9,7 +9,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "node packages/connect/test/unit.test.mjs && node packages/connect/test/smoke.mjs && node packages/connect-dingtalk/test/unit.test.mjs && node packages/connect-telegram/test/unit.test.mjs"
+    "test": "node packages/connect/test/unit.test.mjs && node packages/connect/test/smoke.mjs && node packages/connect-dingtalk/test/unit.test.mjs && node packages/connect-telegram/test/unit.test.mjs && node packages/connect-feishu/test/unit.test.mjs && node packages/connect-web/test/unit.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

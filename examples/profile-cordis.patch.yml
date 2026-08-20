@@ -32,6 +32,11 @@
         requireMention: true          # groups only respond when @mentioned
         dmMode: open                  # DM policy: open / allowlist / pair / disabled
         # language: en                # user-facing message language: zh (default) / en
+        # --- only for transport: webhook ---
+        # webhookPort: 9000           # HTTP port the built-in webhook server listens on (default 9000)
+        # webhookPath: /              # URL path Feishu event callbacks post to (default "/")
+        # verificationToken: "xxx"    # webhook verification token (secret)
+        # encryptKey: "xxx"           # webhook encrypt key (secret)
 
     - id: connect-telegram
       name: dsh-connect-telegram
@@ -39,6 +44,8 @@
         botToken: "123456:ABC-YourBotToken"  # from @BotFather; or env TELEGRAM_BOT_TOKEN
         requireMention: true                 # groups only respond when @mentioned
         # language: en
+        # pollingTimeoutSeconds: 50          # getUpdates long-poll timeout in seconds (default 50)
+        # baseUrl: "http://localhost:8081"   # Bot API base URL override (local Bot API server)
 
     - id: connect-dingtalk
       name: dsh-connect-dingtalk

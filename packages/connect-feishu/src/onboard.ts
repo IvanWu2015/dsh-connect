@@ -6,7 +6,7 @@
  * developer-console work. Credentials are persisted for later startups.
  * @module dsh-connect-feishu/onboard
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { registerApp } from "@larksuiteoapi/node-sdk";
 import type { Language } from "dsh-connect";
@@ -39,6 +39,13 @@ export function saveCredentials(credentials: FeishuCredentials): void {
     const file = credentialFile();
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, JSON.stringify(credentials, null, 2), "utf8");
+    // Secrets on disk must not be world-readable: owner-only rw on POSIX
+    // (a no-op on Windows, where ACLs apply instead).
+    try {
+      chmodSync(file, 0o600);
+    } catch {
+      // Platform without chmod support — best effort.
+    }
   } catch {
     // Best-effort persistence; the running instance still works in memory.
   }

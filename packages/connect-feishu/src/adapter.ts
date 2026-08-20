@@ -4,8 +4,9 @@
  * streaming typewriter cards, and media — the adapter only maps DSH shapes.
  * @module dsh-connect-feishu/adapter
  */
-import { createLarkChannel, LoggerLevel, type CardActionEvent } from "@larksuiteoapi/node-sdk";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createLarkChannel, adaptDefault, LoggerLevel, type CardActionEvent } from "@larksuiteoapi/node-sdk";
+import { createServer, type Server } from "node:http";
+import { readdir, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -127,13 +128,50 @@ export function buildChoiceElements(prompt: ChoicePrompt, defaultColumns: number
   return elements;
 }
 
-/** Collect a Node.js readable stream into a single Buffer. */
-function collectStream(stream: NodeJS.ReadableStream): Promise<Buffer> {
+/** Collect a Node.js readable stream into a single Buffer with a size cap and a hard timeout. */
+function collectStream(stream: NodeJS.ReadableStream, maxBytes = 20 * 1024 * 1024, timeoutMs = 60_000): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    stream.on("data", (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
-    stream.on("error", reject);
+    let total = 0;
+    let settled = false;
+    // Abort the stream on overflow/timeout. The SDK hands us a web
+    // ReadableStream (no .destroy) — cancel it; Node streams also accept cancel
+    // semantics via destroy.
+    const abortStream = (): void => {
+      const anyStream = stream as { destroy?: () => void; cancel?: () => Promise<unknown> };
+      anyStream.destroy?.();
+      const cancel = anyStream.cancel?.();
+      if (cancel !== undefined) void cancel.catch(() => undefined);
+    };
+    const done = (value: Buffer): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const failed = (err: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    };
+    const timer = setTimeout(() => {
+      abortStream();
+      failed(new Error(`download timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+    stream.on("data", (chunk: Buffer | string) => {
+      if (settled) return;
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.length;
+      if (total > maxBytes) {
+        abortStream();
+        failed(new Error(`download exceeds the ${Math.round(maxBytes / 1024 / 1024)}MB limit`));
+        return;
+      }
+      chunks.push(buf);
+    });
+    stream.on("end", () => done(Buffer.concat(chunks)));
+    stream.on("error", (err: Error) => failed(err));
   });
 }
 
@@ -174,6 +212,10 @@ export interface FeishuConfig {
   transport?: "websocket" | "webhook";
   verificationToken?: string;
   encryptKey?: string;
+  /** HTTP port for `transport: "webhook"` (default 9000). */
+  webhookPort?: number;
+  /** HTTP path the Feishu event callback posts to (default "/"). */
+  webhookPath?: string;
   /** Group messages must @-mention the bot (default true). */
   requireMention?: boolean;
   /** Single-chat policy (SDK values): open / allowlist / pair / disabled. */
@@ -206,10 +248,19 @@ export class FeishuAdapter implements ChannelAdapter {
   private readonly pendingChoices = new Map<string, PendingChoice>();
   /** Cards whose stale-button tap was already noticed (dedupe, self-clearing). */
   private readonly staleNoticed = new Set<string>();
+  private readonly staleTimers = new Set<NodeJS.Timeout>();
   private readonly t: FeishuMessages;
+  private readonly transport: "websocket" | "webhook";
+  private readonly webhookPort: number;
+  private readonly webhookPath: string;
+  private server?: Server;
   private handler?: (msg: InboundMessage) => void | Promise<void>;
 
-  constructor(config: FeishuConfig, private readonly logger?: { warn?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void }) {
+  constructor(
+    config: FeishuConfig,
+    private readonly logger?: { warn?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void },
+    private readonly isChatAllowed?: (channel: string, chatKey: string, senderKey: string) => boolean,
+  ) {
     const appId = config.appId ?? process.env.FEISHU_APP_ID;
     const appSecret = config.appSecret ?? process.env.FEISHU_APP_SECRET;
     if (!appId || !appSecret) {
@@ -217,12 +268,14 @@ export class FeishuAdapter implements ChannelAdapter {
     }
     this.t = feishuMessages(config.language ?? "zh");
 
-    const transport = config.transport ?? "websocket";
+    this.transport = config.transport ?? "websocket";
+    this.webhookPort = config.webhookPort ?? 9000;
+    this.webhookPath = config.webhookPath ?? "/";
     this.channel = createLarkChannel({
       appId,
       appSecret,
-      transport,
-      ...(transport === "webhook"
+      transport: this.transport,
+      ...(this.transport === "webhook"
         ? {
             webhook: {
               ...(config.verificationToken ? { verificationToken: config.verificationToken } : {}),
@@ -257,8 +310,8 @@ export class FeishuAdapter implements ChannelAdapter {
     const imagesDir = join(tmpdir(), "dsh-connect-images");
     const filesDir = join(tmpdir(), "dsh-connect-files");
     try {
-      mkdirSync(imagesDir, { recursive: true });
-      mkdirSync(filesDir, { recursive: true });
+      await mkdir(imagesDir, { recursive: true });
+      await mkdir(filesDir, { recursive: true });
     } catch (error) {
       return { images: [], files: [], imageError: this.t.tempDirFailed(String(error)), fileError: this.t.tempDirFailed(String(error)) };
     }
@@ -278,7 +331,7 @@ export class FeishuAdapter implements ChannelAdapter {
           ? `${msg.messageId}-${r.fileKey.replace(/[^a-zA-Z0-9]/g, "_")}`
           : `${msg.messageId}-${sanitizeFileName(r.fileName ?? `${r.type}-${r.fileKey}`)}`;
         const file = join(dir, name);
-        writeFileSync(file, buf);
+        await writeFile(file, buf);
         target.push(file);
       } catch (error) {
         const detail = extractErrorDetail(error);
@@ -325,8 +378,45 @@ export class FeishuAdapter implements ChannelAdapter {
     return await collectStream(res.getReadableStream());
   }
 
+  /**
+   * Housekeeping for the per-channel temp dirs: remove downloads older than
+   * 24h so a busy bot doesn't fill the OS temp partition. Best-effort — a
+   * failure to clean is logged, never fatal.
+   */
+  private async cleanupTempDirs(): Promise<void> {
+    const dirs = [join(tmpdir(), "dsh-connect-images"), join(tmpdir(), "dsh-connect-files")];
+    const MAX_AGE_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    for (const dir of dirs) {
+      let entries: string[];
+      try {
+        entries = await readdir(dir);
+      } catch {
+        continue; // directory never created — nothing to clean
+      }
+      for (const entry of entries) {
+        const p = join(dir, entry);
+        try {
+          const st = await stat(p);
+          if (now - st.mtimeMs > MAX_AGE_MS) await rm(p, { force: true });
+        } catch (error) {
+          this.logger?.warn?.(`connect-feishu: temp cleanup failed for ${p}: ${String(error)}`);
+        }
+      }
+    }
+  }
+
   async start(): Promise<void> {
+    // Sweep stale downloads once at startup (cheap, bounded by dir size).
+    await this.cleanupTempDirs().catch(() => undefined);
+
     this.channel.on("message", async (msg: NormalizedMsg) => {
+      // Allowlist gate BEFORE downloading anything: rejected senders' files
+      // never touch disk (the core re-checks later for the full policy).
+      if (this.isChatAllowed !== undefined && !this.isChatAllowed("feishu", msg.chatId, msg.senderId)) {
+        this.logger?.warn?.(`connect-feishu: message from chat=${msg.chatId} sender=${msg.senderId} rejected by allowlist (skipped download)`);
+        return;
+      }
       const dl = await this.downloadResources(msg);
       await this.handler?.({
         channel: "feishu",
@@ -355,7 +445,11 @@ export class FeishuAdapter implements ChannelAdapter {
         if (value?.choice !== undefined && !this.staleNoticed.has(evt.messageId)) {
           this.staleNoticed.add(evt.messageId);
           // Keep the notice once per card to avoid spam on repeated taps.
-          setTimeout(() => this.staleNoticed.delete(evt.messageId), 30_000);
+          const timer = setTimeout(() => {
+            this.staleNoticed.delete(evt.messageId);
+            this.staleTimers.delete(timer);
+          }, 30_000);
+          this.staleTimers.add(timer);
           void this.sendText({ chatKey: evt.chatId, chatType: "p2p" }, this.t.actionStale).catch(() => undefined);
         }
         return;
@@ -367,7 +461,12 @@ export class FeishuAdapter implements ChannelAdapter {
     });
 
     this.channel.on("reject", (evt: unknown) => {
-      this.logger?.warn?.(`connect-feishu: rejected inbound message: ${JSON.stringify(evt)}`);
+      // Log a compact reason — never the full event JSON (it carries message
+      // content / sender PII).
+      const e = evt as { reason?: unknown; code?: unknown; message?: unknown; msg?: { chatId?: string } } | undefined;
+      const why = [e?.reason, e?.code, e?.message].map((v) => String(v)).filter((v) => v !== "" && v !== "undefined").join(" / ");
+      const where = e?.msg?.chatId === undefined ? "" : ` chat=${e.msg.chatId}`;
+      this.logger?.warn?.(`connect-feishu: inbound message rejected — ${why || "no detail"}${where}`);
     });
 
     this.channel.on("error", (err: unknown) => {
@@ -375,9 +474,48 @@ export class FeishuAdapter implements ChannelAdapter {
     });
 
     await this.channel.connect();
+
+    // Webhook transport: the SDK's doConnect only wires the dispatcher for WS;
+    // for `transport: "webhook"` it expects the host to plug `channel.dispatcher`
+    // into an HTTP handler. We host it here (URL verification is answered
+    // automatically by the SDK's adaptDefault with autoChallenge).
+    if (this.transport === "webhook") {
+      // TS marks LarkChannel#dispatcher private even though it is public at
+      // runtime; the SDK ships no exported type for it either.
+      const dispatcher = (this.channel as unknown as { dispatcher: never }).dispatcher;
+      const handler = adaptDefault(this.webhookPath, dispatcher, { autoChallenge: true });
+      this.server = createServer((req, res) => {
+        void handler(req, res).catch((error: unknown) => {
+          this.logger?.error?.(`connect-feishu: webhook dispatch failed: ${String(error)}`);
+          res.statusCode = 500;
+          res.end("internal error");
+        });
+      });
+      await new Promise<void>((resolve, reject) => {
+        this.server!.once("error", reject);
+        this.server!.listen(this.webhookPort, () => {
+          this.server!.removeListener("error", reject);
+          resolve();
+        });
+      });
+      this.logger?.warn?.(`connect-feishu: webhook transport listening on http://0.0.0.0:${this.webhookPort}${this.webhookPath === "/" ? "" : this.webhookPath}`);
+    }
   }
 
   async stop(): Promise<void> {
+    // Release the webhook listener first so no new callbacks arrive mid-teardown.
+    const server = this.server;
+    this.server = undefined;
+    if (server !== undefined) {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    // Cancel outstanding choice/stale timers so stop() doesn't leave handles
+    // that fire after disconnect.
+    for (const pending of this.pendingChoices.values()) clearTimeout(pending.timer);
+    this.pendingChoices.clear();
+    for (const timer of this.staleTimers) clearTimeout(timer);
+    this.staleTimers.clear();
+    this.staleNoticed.clear();
     await this.channel.disconnect();
   }
 

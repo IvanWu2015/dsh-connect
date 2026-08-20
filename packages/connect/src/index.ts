@@ -59,6 +59,8 @@ export const Config = z.object({
   allowChats: z.array(z.string()),
   /** Directory for the bindings.json routing store. */
   stateDir: z.string(),
+  /** Automatically create a Web mirror for new sessions (default: true). */
+  autoMirror: z.boolean(),
   /** Liveness heartbeat interval ms for the streaming card; 0 disables it (default: 60000). */
   streamHeartbeatMs: z.number(),
   /** Default notification level for streaming replies (default: `important`). */

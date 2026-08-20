@@ -12,13 +12,34 @@ test("signDingtalk produces a stable HMAC-SHA256 base64 signature", () => {
   assert.notEqual(a, signDingtalk("SEC123", 1700000000001));
 });
 
-test("verifyDingtalkSignature accepts a matching signature and rejects others", () => {
+test("verifyDingtalkSignature accepts a matching fresh signature and rejects others", () => {
   const secret = "SECabc";
   const ts = "1700000000000";
   const good = signDingtalk(secret, Number(ts));
-  assert.equal(verifyDingtalkSignature(secret, ts, good), true);
-  assert.equal(verifyDingtalkSignature(secret, ts, "tampered"), false);
-  assert.equal(verifyDingtalkSignature("SECother", ts, good), false);
+  assert.equal(verifyDingtalkSignature(secret, ts, good, Number(ts)), true);
+  assert.equal(verifyDingtalkSignature(secret, ts, "tampered", Number(ts)), false);
+  assert.equal(verifyDingtalkSignature("SECother", ts, good, Number(ts)), false);
+});
+
+test("verifyDingtalkSignature compares URL-decoded values (regression: + vs %2B mismatch)", () => {
+  const secret = "SEC+abc/def=";
+  const ts = "1700000000000";
+  const encoded = signDingtalk(secret, Number(ts)); // encodeURIComponent form
+  // Simulate a sender that encoded the base64 with a different-but-equivalent
+  // encoding (raw '+' vs '%2B'); both decode to the same bytes.
+  const raw = decodeURIComponent(encoded);
+  const reEncoded = raw.replace(/\+/g, "%2B");
+  assert.notEqual(encoded, reEncoded);
+  assert.equal(verifyDingtalkSignature(secret, ts, reEncoded, Number(ts)), true);
+});
+
+test("verifyDingtalkSignature rejects stale timestamps (replay guard)", () => {
+  const secret = "SECabc";
+  const ts = "1700000000000";
+  const good = signDingtalk(secret, Number(ts));
+  // 10 minutes in the future from the claimed timestamp: outside the 5-min window.
+  assert.equal(verifyDingtalkSignature(secret, ts, good, Number(ts) + 10 * 60_000), false);
+  assert.equal(verifyDingtalkSignature(secret, "not-a-number", good, Number(ts)), false);
 });
 
 test("DingtalkWebhook requires an https:// webhookUrl", () => {
@@ -74,16 +95,70 @@ test("DingtalkWebhook.sendText posts a text body without at when omitted", async
   }
 });
 
-test("DingtalkWebhook surfaces DingTalk business errors", async () => {
+test("DingtalkWebhook truncates markdown bodies past 20000 chars", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ errcode: 310000, errmsg: "keywords not in content" }),
-  });
+  let captured;
+  globalThis.fetch = async (_input, init) => {
+    captured = JSON.parse(String(init?.body));
+    return { ok: true, status: 200, json: async () => ({ errcode: 0, errmsg: "ok" }) };
+  };
+  try {
+    const webhook = new DingtalkWebhook({ webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=abc" });
+    await webhook.sendMarkdown("长文", "x".repeat(25_000));
+    assert.ok(captured.markdown.text.length < 21_000);
+    assert.ok(captured.markdown.text.endsWith("…(已截断)"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("DingtalkWebhook retries transient network failures", async () => {
+  const originalFetch = globalThis.fetch;
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts += 1;
+    if (attempts === 1) throw new TypeError("fetch failed");
+    return { ok: true, status: 200, json: async () => ({ errcode: 0, errmsg: "ok" }) };
+  };
+  try {
+    const webhook = new DingtalkWebhook({ webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=abc", retryDelaysMs: [1, 1] });
+    const result = await webhook.sendText("retry me");
+    assert.deepEqual(result, { errcode: 0, errmsg: "ok" });
+    assert.ok(attempts >= 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("DingtalkWebhook retries the 130101 frequency limit", async () => {
+  const originalFetch = globalThis.fetch;
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts += 1;
+    if (attempts < 3) return { ok: true, status: 200, json: async () => ({ errcode: 130101, errmsg: "send too fast" }) };
+    return { ok: true, status: 200, json: async () => ({ errcode: 0, errmsg: "ok" }) };
+  };
+  try {
+    const webhook = new DingtalkWebhook({ webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=abc", rateLimitDelayMs: 1 });
+    const result = await webhook.sendText("rate limited");
+    assert.deepEqual(result, { errcode: 0, errmsg: "ok" });
+    assert.equal(attempts, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("DingtalkWebhook surfaces non-retryable DingTalk business errors", async () => {
+  const originalFetch = globalThis.fetch;
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts += 1;
+    return { ok: true, status: 200, json: async () => ({ errcode: 310000, errmsg: "keywords not in content" }) };
+  };
   try {
     const webhook = new DingtalkWebhook({ webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=abc" });
     await assert.rejects(() => webhook.sendText("boom"), /310000/);
+    assert.equal(attempts, 1); // no retry for non-transient errors
   } finally {
     globalThis.fetch = originalFetch;
   }

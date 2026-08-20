@@ -13,7 +13,7 @@ export { TelegramAdapter } from "./adapter.js";
 export type { TelegramConfig } from "./adapter.js";
 export { TelegramClient } from "./client.js";
 export type { TelegramClientConfig, TelegramMessage, TelegramUpdate } from "./client.js";
-export { markdownToTelegramHtml, escapeHtml, buildInlineKeyboard, encodeMessageRef, decodeMessageRef } from "./adapter.js";
+export { markdownToTelegramHtml, escapeHtml, buildInlineKeyboard, encodeMessageRef, decodeMessageRef, isBotMentioned } from "./adapter.js";
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = "connect-telegram";
@@ -36,7 +36,7 @@ interface ConnectLike {
 
 function start(connect: ConnectLike, config: TelegramConfig, logger?: { warn?: (...args: unknown[]) => void }): void {
   try {
-    const adapter = new TelegramAdapter(config);
+    const adapter = new TelegramAdapter(config, logger);
     connect.registerAdapter(adapter);
     void adapter.start().catch((error) => {
       logger?.warn?.(`connect-telegram: start failed: ${String(error)}`);

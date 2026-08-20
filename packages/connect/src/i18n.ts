@@ -75,8 +75,6 @@ export interface Messages {
   approvalStale: string;
   /** Shown when answering an interactive question failed (e.g. it was already answered elsewhere). */
   questionStale: string;
-  /** Inline status shown inside the approval card while the decision is being submitted. */
-  approvalSubmitting: string;
 
   // First-time welcome card (sent once per chat).
   welcomeTitle: string;
@@ -123,8 +121,6 @@ export interface Messages {
   imageDownloadFailed(imageError: string): string;
   fileDownloadFailed(fileError: string): string;
   imagesStaged(locations: string, description: string): string;
-  imageDescriptionLabel(description: string): string;
-  imageNoDescription: string;
   visionPrompt: string;
   filesStaged(count: number, locations: string): string;
   taskEnded(reasonLabel: string): string;
@@ -165,8 +161,6 @@ export interface Messages {
   languageEn: string;
   languageSet(lang: string): string;
 
-  streamLabel(on: boolean): string;
-  summaryLabel(on: boolean): string;
   statusNoSession(workdir: string): string;
   statusRunning: string;
   statusIdle: string;
@@ -218,7 +212,6 @@ export interface Messages {
   sessionRunning: string;
   compactionUnavailable: string;
   nothingToCompact: string;
-  contextCompacted: string;
   compactFailed(message: string): string;
 
   noActiveSession: string;
@@ -250,11 +243,8 @@ export interface Messages {
 
   // Mirror / session sharing.
   mirrorCreated(sessionId: string): string;
-  mirrorAlreadyExists(sessionId: string): string;
   mirrorNotConfigured: string;
   sessionLockedBy(channel: string): string;
-  sessionReadOnly: string;
-  lockReleased: string;
   lockTimeoutReleased(minutes: number): string;
   unlockSuccess: string;
   unlockNoLock: string;
@@ -267,7 +257,6 @@ export interface Messages {
   exportFailed(error: string): string;
   mirrorStatus(sessionId: string, lockedBy?: string, timeoutMin?: number, queuedCount?: number): string;
   webMirrorIndicator: string;
-  sessionAvailableOnWeb: string;
 
   // `/help` command lines.
   helpHeader: string;
@@ -350,7 +339,6 @@ const zh: Messages = {
     outcome === "allowed-once" ? `✅ 已同意授权：\`${toolName}\`` : `已拒绝授权：\`${toolName}\``,
   approvalStale: "⚠️ 此授权请求已失效（可能已被处理或已过期），本次操作未生效。",
   questionStale: "⚠️ 此问题已失效（可能已被处理或已过期），本次回答未生效。",
-  approvalSubmitting: "⏳ 正在提交授权结果…",
   welcomeTitle: "👋 欢迎使用 dsh-connect",
   welcomeBody: (workdir) =>
     [
@@ -399,8 +387,6 @@ const zh: Messages = {
     description !== ""
       ? `[用户发送了图片，图片已保存到以下路径（可用工具查看）：\n${locations}\n图片内容说明：\n${description}]`
       : `[用户发送了图片，图片已保存到以下路径（可用工具查看）：\n${locations}\n（未能自动分析图片内容，请用文件/终端工具查看这些图片。）]`,
-  imageDescriptionLabel: (description) => `图片内容说明：\n${description}`,
-  imageNoDescription: "（未能自动分析图片内容，请用文件/终端工具查看这些图片。）",
   visionPrompt:
     "请详细描述这些图片的内容（物体、场景、文字、布局、氛围等），供一个无法直接查看图片的主模型理解。",
   filesStaged: (count, locations) => `[用户发送了 ${count} 个文件，已保存到以下路径（可用工具查看）：\n${locations}]`,
@@ -442,8 +428,6 @@ const zh: Messages = {
   languageEn: "English",
   languageSet: (lang) => `语言已切换为 ${lang}。`,
 
-  streamLabel: (on) => `流式输出：${on ? "开" : "关"}`,
-  summaryLabel: (on) => `结束摘要：${on ? "开" : "关"}`,
   statusNoSession: (workdir) => `状态：无活动会话\n工作目录：${workdir}`,
   statusRunning: "🟢 执行中",
   statusIdle: "⚪ 空闲",
@@ -495,7 +479,7 @@ const zh: Messages = {
   sessionRunning: "当前会话正在运行，请稍后再试（或先 /stop）。",
   compactionUnavailable: "压缩服务不可用（当前预设未挂载压缩后端）。",
   nothingToCompact: "没有可压缩的历史。",
-  contextCompacted: "上下文已压缩。",
+
   compactFailed: (message) => `压缩失败：${message}`,
 
   noActiveSession: "当前没有活动会话。",
@@ -527,11 +511,8 @@ const zh: Messages = {
   currentDir: "当前目录",
 
   mirrorCreated: (sessionId) => `✅ Web 镜像会话已创建：${sessionId}\n在 DSH Web 中打开此会话即可查看飞书对话历史。`,
-  mirrorAlreadyExists: (sessionId) => `Web 镜像会话已存在：${sessionId}`,
   mirrorNotConfigured: "当前会话未配置 Web 镜像。使用 /mirror 命令创建。",
   sessionLockedBy: (channel) => `⚠️ 会话正被 ${channel === "feishu" ? "飞书" : "Web"} 占用，当前为只读模式`,
-  sessionReadOnly: "🔒 会话锁定中，只能查看不能发送消息",
-  lockReleased: "🔓 会话锁已释放",
   lockTimeoutReleased: (minutes) => `⏰ 会话锁已超时（${minutes} 分钟无活动），自动释放`,
   unlockSuccess: "🔓 会话锁已手动释放",
   unlockNoLock: "当前没有活跃的会话锁",
@@ -549,7 +530,6 @@ const zh: Messages = {
     return `Web 镜像会话：${sessionId}${lockInfo}${timeoutInfo}${queueInfo}`;
   },
   webMirrorIndicator: "🌐",
-  sessionAvailableOnWeb: "（同时在 Web 上可用）",
 
   helpHeader: "可用命令（本地执行，不消耗模型）：",
   helpMenu: "打开主菜单（层级点选，可返回）",
@@ -631,7 +611,6 @@ const en: Messages = {
     outcome === "allowed-once" ? `✅ Approved: \`${toolName}\`` : `Rejected: \`${toolName}\``,
   approvalStale: "⚠️ This approval request is no longer active (already handled or expired) — this action had no effect.",
   questionStale: "⚠️ This question is no longer active (already handled or expired) — this answer had no effect.",
-  approvalSubmitting: "⏳ Submitting your decision…",
   welcomeTitle: "👋 Welcome to dsh-connect",
   welcomeBody: (workdir) =>
     [
@@ -680,8 +659,6 @@ const en: Messages = {
     description !== ""
       ? `[The user sent images, saved to the following paths (viewable with tools):\n${locations}\nImage description:\n${description}]`
       : `[The user sent images, saved to the following paths (viewable with tools):\n${locations}\n(No image analysis available — inspect the files with the file/terminal tools.)]`,
-  imageDescriptionLabel: (description) => `Image description:\n${description}`,
-  imageNoDescription: "(No image analysis available — inspect the files with the file/terminal tools.)",
   visionPrompt:
     "Describe these images in detail (objects, scene, text, layout, atmosphere, etc.) for a main model that cannot view images directly.",
   filesStaged: (count, locations) => `[The user sent ${count} file(s), saved to the following paths (viewable with tools):\n${locations}]`,
@@ -723,8 +700,6 @@ const en: Messages = {
   languageEn: "English",
   languageSet: (lang) => `Language switched to ${lang}.`,
 
-  streamLabel: (on) => `Streaming output: ${on ? "on" : "off"}`,
-  summaryLabel: (on) => `End-of-turn summary: ${on ? "on" : "off"}`,
   statusNoSession: (workdir) => `Status: no active session\nWorkdir: ${workdir}`,
   statusRunning: "🟢 Executing",
   statusIdle: "⚪ Idle",
@@ -776,7 +751,6 @@ const en: Messages = {
   sessionRunning: "The session is running — try again later (or `/stop` first).",
   compactionUnavailable: "Compaction service unavailable (the current preset does not mount a compaction backend).",
   nothingToCompact: "Nothing to compact.",
-  contextCompacted: "Context compacted.",
   compactFailed: (message) => `Compaction failed: ${message}`,
 
   noActiveSession: "No active session.",
@@ -808,11 +782,8 @@ const en: Messages = {
   currentDir: "Current directory",
 
   mirrorCreated: (sessionId) => `✅ Web mirror session created: ${sessionId}\nOpen this session in DSH Web to view the Feishu conversation history.`,
-  mirrorAlreadyExists: (sessionId) => `Web mirror session already exists: ${sessionId}`,
   mirrorNotConfigured: "No Web mirror configured for this session. Use /mirror to create one.",
   sessionLockedBy: (channel) => `⚠️ Session is locked by ${channel === "feishu" ? "Feishu" : "Web"}, currently in read-only mode`,
-  sessionReadOnly: "🔒 Session locked, view-only mode",
-  lockReleased: "🔓 Session lock released",
   lockTimeoutReleased: (minutes) => `⏰ Session lock timed out (${minutes} minutes of inactivity), auto-released`,
   unlockSuccess: "🔓 Session lock manually released",
   unlockNoLock: "No active session lock",
@@ -830,7 +801,6 @@ const en: Messages = {
     return `Web mirror session: ${sessionId}${lockInfo}${timeoutInfo}${queueInfo}`;
   },
   webMirrorIndicator: "🌐",
-  sessionAvailableOnWeb: "(also available on Web)",
 
   helpHeader: "Available commands (run locally, no model tokens):",
   helpMenu: "open the main menu (hierarchical, back supported)",

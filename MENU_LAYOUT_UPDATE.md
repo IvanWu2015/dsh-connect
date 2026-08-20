@@ -174,7 +174,7 @@ private rootMenuSections() {
 
 ## 🔧 修改的文件
 
-### 1. `packages/connect-feishu/node_modules/dsh-connect/src/types.ts`
+### 1. `packages/connect/src/types.ts`
 - 添加 `ChoicePrompt.columnsPerRow` 字段
 - 添加 `ChoiceSection.columnsPerRow` 字段
 
@@ -183,7 +183,7 @@ private rootMenuSections() {
 - 修改 `buildChoiceElements()` 支持 section 级别列数
 - 修改 `promptChoice()` 读取并使用 `columnsPerRow`
 
-### 3. `packages/connect-feishu/node_modules/dsh-connect/src/runner.ts`
+### 3. `packages/connect/src/runner.ts`
 - 修改 `openMenu()` 根据菜单类型设置列数
 - 修改 `rootMenuSections()` 为不同 section 设置列数
 

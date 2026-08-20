@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-面向 [dsh-connect](https://www.npmjs.com/package/dsh-connect) 的 **飞书 / Lark 渠道适配器**：通过飞书开放平台的**长连接（WebSocket）**接收消息，转发给 DSH 智能体，并将回复**流式**返回飞书，支持交互式菜单卡片。
+面向 [dsh-connect](https://www.npmjs.com/package/dsh-connect) 的 **飞书 / Lark 渠道适配器**：通过飞书开放平台的**长连接（WebSocket）**或自建 **webhook** 端点接收消息，转发给 DSH 智能体，并将回复**流式**返回飞书，支持交互式菜单卡片。
 
 ## 安装
 
@@ -31,7 +31,11 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu
 | 键 | 默认值 | 说明 |
 |---|---|---|
 | `appId` / `appSecret` | env `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书自建应用凭据 |
-| `transport` | `websocket` | 长连接（无需公网）；`webhook` 需要公网 HTTPS |
+| `transport` | `websocket` | 长连接（无需公网）；`webhook` 运行内置 HTTP 服务，需要公网 HTTPS |
+| `verificationToken` | — | Webhook 验证令牌（仅 webhook 传输） |
+| `encryptKey` | — | Webhook 加密密钥（仅 webhook 传输） |
+| `webhookPort` | `9000` | `transport: "webhook"` 时内置 webhook 服务的 HTTP 端口 |
+| `webhookPath` | `/` | 飞书事件回调所 POST 的 URL 路径（webhook 传输） |
 | `requireMention` | `true` | 群聊中仅在 @机器人 时才会响应 |
 | `dmMode` | `open` | 私聊策略：open / allowlist / pair / disabled |
 | `language` | `zh` | 面向用户的消息语言：`zh` / `en` |

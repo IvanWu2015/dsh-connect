@@ -156,7 +156,9 @@ try {
     Write-Host "  1. Review changes: git diff"
     Write-Host "  2. Commit: git commit -m `"chore: bump version to $NewVersion`""
     Write-Host "  3. Tag: git tag v$NewVersion && git push origin v$NewVersion"
-    Write-Host "  4. Publish: cd packages/connect && npm publish && cd ../connect-feishu && npm publish"
+    Write-Host "  4. Publish: create a GitHub Release for v$NewVersion — .github/workflows/publish.yml builds, typechecks, tests and publishes all 5 packages (connect, connect-web, connect-feishu, connect-telegram, connect-dingtalk) automatically, connect first."
+    Write-Host "     Manual alternative (connect first, then adapters):"
+    Write-Host "     cd packages/connect && npm publish && cd ../connect-web && npm publish && cd ../connect-feishu && npm publish && cd ../connect-telegram && npm publish && cd ../connect-dingtalk && npm publish"
     Write-Host ""
     
 } catch {

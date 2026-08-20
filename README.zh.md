@@ -19,8 +19,8 @@
 - **安全**：群聊默认要求 @提及；用户/会话允许列表；飞书凭据通过环境变量或配置提供。
 - **交互式菜单**：`/menu` 提供层级化点按导航（workdir / chats / settings / plugins / compact 等）——同一张卡片就地更新，支持返回/退出，连续操作中持续可用。
 - **智能图片与文件处理**：发送给机器人的图片自动下载；主模型若支持视觉则直接查看，否则由视觉模型子任务生成描述并注入——纯文本主模型不会在图片上卡住。附件/音频/视频也会下载到 workdir。
-- **Web 镜像**：每个会话可将其 DSH 会话镜像到 DSH Web GUI（`/mirror`，或通过 `autoMirror` 自动开启），共享同一对话并带互斥锁。
-- **本地命令**（不消耗模型 token）：`/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/goals` `/schedule` `/model` `/notify` `/progress` `/mirror` `/new` `/clear` `/stop` `/settings` `/help`。
+- **Web 镜像**：每个会话可将其 DSH 会话镜像到 DSH Web GUI（`/mirror`，或通过 `autoMirror` 自动开启）。镜像锁只在飞书侧强制（`lockOwner`）：Web GUI 直接读写 DSH 会话、从不查询锁，因此互斥是单侧的（仓库层面无法修复，已如实记录）。`/new`、`/clear` 或切换会话会重置镜像指向；`autoMirror` 会为新会话重建镜像。
+- **本地命令**（不消耗模型 token）：`/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/export` `/goals` `/schedule` `/model` `/notify` `/progress` `/mirror` `/unlock` `/renew` `/new` `/clear` `/stop` `/settings` `/help`。
 - **可扩展、多平台**：`dsh-connect`（通道无关核心）+ 各通道适配器包——`dsh-connect-feishu`（飞书/Lark 双向）、`dsh-connect-telegram`（Telegram 双向）、`dsh-connect-dingtalk`（钉钉单向群推送）。新增一个通道只需再写一个适配器包。
 
 ## 仓库结构
@@ -31,6 +31,7 @@ packages/
   connect-feishu/    dsh-connect-feishu Feishu adapter: createLarkChannel long connection, normalization, streaming replies
   connect-telegram/  dsh-connect-telegram Telegram adapter: Bot API long-polling, streaming edits, inline-keyboard choices
   connect-dingtalk/  dsh-connect-dingtalk DingTalk group-webhook push: text/markdown/@-mention notices (one-way)
+  connect-web/       dsh-connect-web Web mirror adapter: tracks mirror sessions for DSH Web GUI (no synthesized messages; outbound is a contract no-op)
 docs/
   QUICKSTART.md      step-by-step run guide (DSH side + Feishu side)
   feishu-setup.md    Feishu Open Platform configuration manual
@@ -47,7 +48,7 @@ examples/
 |---|---|---|---|---|
 | 飞书 / Lark | `dsh-connect-feishu` | 双向 | WebSocket 长连接 | 功能完整（流式、菜单、图片） |
 | Telegram | `dsh-connect-telegram` | 双向 | Bot API 长轮询 | 功能完整（流式编辑、内联键盘） |
-| 钉钉 | `dsh-connect-dingtalk` | 单向推送 | 群机器人 webhook | 任务进度 / 结果 / 告警推送到群 |
+| 钉钉 | `dsh-connect-dingtalk` | 单向推送 | 群机器人 webhook | 单向推送服务（sendMarkdown / sendText / @提及）——不能接收消息 |
 
 所有双向适配器共享同一个 `dsh-connect` 核心：命令、`/menu`、通知级别、主动进度看门狗、交互式选择与审批以及按会话设置，在每个通道上行为完全一致。
 
@@ -55,11 +56,13 @@ examples/
 
 ### 安装
 
-已发布到 npm——直接安装到你的 DSH profile：
+5 个包在每次 GitHub Release 时自动发布到 npm——[`.github/workflows/publish.yml`](.github/workflows/publish.yml) 会先运行 `pnpm build` + typecheck，再串行发布 5 个包。直接安装到你的 DSH profile：
 
 ```sh
 dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram dsh-connect-dingtalk
 ```
+
+本地开发（包尚未发布时）请按 [快速开始](docs/QUICKSTART.zh.md) 中的绝对路径方式加载本地构建的包。
 
 ### 配置
 
@@ -104,6 +107,8 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram
 | `/notify`（`/notice`） | 选择通知级别：`full` / `important` / `result`（立即生效） |
 | `/progress` | 选择静默任务在收到主动进度卡片前可运行多久（默认 5 分钟；`关闭` 可禁用） |
 | `/mirror [--timeout N]` | 为本会话创建（或显示）Web 镜像会话；可选锁超时分钟数 |
+| `/unlock` | 手动释放会话锁（仅飞书/Web 镜像场景） |
+| `/renew`（`/renew-lock`） | 续期当前会话锁超时 |
 | `/status` | 会话状态、模型、workdir、队列长度、**上下文 token**、会话 ID |
 | `/task`（`/tasks` `/todo`） | 显示当前任务列表 |
 | `/schedule`（`/reminders`） | 显示本会话的定时提醒 |
@@ -114,6 +119,7 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram
 | `/plugins` | 列出已安装插件 |
 | `/compact` | 压缩当前会话上下文 |
 | `/history [count]` | 显示最近的会话消息 |
+| `/export [markdown\|pdf]` | 导出对话历史为 Markdown（`pdf` 暂不支持，会提示） |
 | `/goals` | 显示当前目标 |
 | `/new`（`/reset`） | 开始新对话（请求确认） |
 | `/clear` | 清空当前对话（请求确认） |
@@ -146,10 +152,12 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram
 | 键 | 默认值 | 说明 |
 |---|---|---|
 | `appId` / `appSecret` | 环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，或**一键开通** | 应用凭据（未设置时进入开通模式，通过扫码创建应用） |
-| `transport` | `websocket` | 长连接（推荐）；`webhook` 需要公网 HTTPS URL |
+| `transport` | `websocket` | `websocket`（默认，长连接）；`webhook` 需要公网 HTTPS 回调地址，适配器自带 HTTP 服务并自动应答 `url_verification` 挑战 |
+| `webhookPort` | `9000` | webhook 传输模式的 HTTP 监听端口 |
+| `webhookPath` | `/` | 飞书事件回调路径 |
 | `verificationToken` / `encryptKey` | 空 | 仅 webhook 模式需要 |
 | `requireMention` | `true` | 群聊仅在 @提及机器人时响应 |
-| `dmMode` | `open` | 私聊策略：`open` 接收 / `closed` 忽略 |
+| `dmMode` | `open` | 私聊策略：`open` / `allowlist` / `pair` / `disabled`（`disabled` = 忽略私聊） |
 | `language` | `zh` | 面向用户的消息语言：`zh`（默认）或 `en` |
 
 > **一键开通**：不带 `appId`/`appSecret` 启动插件，它会打印一个开通链接（约 10 分钟有效）。用飞书扫码（或点击并确认），机器人应用即自动创建，权限与事件订阅均已预设；凭据保存到 `$DSH_HOME/.dsh-connect/feishu-credentials.json`。
@@ -165,13 +173,18 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram
 
 ## 测试
 
+5 个测试套件，全部使用 `node:test`（需先构建 `lib/`）：
+
 ```sh
 pnpm build        # build first (generates lib/)
-pnpm test         # unit tests (pure logic) + smoke test (Cordis runtime load contract)
+pnpm test         # 5 个测试套件，全部 node:test
 ```
 
-- `packages/connect/test/unit.test.mjs`：命令解析、绑定持久化、异步队列、回合结果推导。
-- `packages/connect/test/smoke.mjs`：将两个插件加载进真实 Cordis 上下文，验证 `ctx.connect` 服务注册、适配器注册、允许列表授权、主动 `notify` 推送以及飞书适配器构建。
+- `packages/connect/test/unit.test.mjs` + `packages/connect/test/smoke.mjs`（connect 核心套件）：命令解析、绑定持久化、异步队列、回合结果推导；以及把插件加载进真实 Cordis 上下文验证插件契约，含 `isChatAllowed` 允许列表预过滤断言。
+- `packages/connect-dingtalk/test/unit.test.mjs`：签名校验、重试/限流、20000 字符截断。
+- `packages/connect-telegram/test/unit.test.mjs`：HTML 转义、@提及判断、offset 确认语义。
+- `packages/connect-feishu/test/unit.test.mjs`：按钮网格、标签对齐、文件名清洗、错误提取。
+- `packages/connect-web/test/unit.test.mjs`：镜像记录、无合成消息回归测试。
 
 ## 文档
 

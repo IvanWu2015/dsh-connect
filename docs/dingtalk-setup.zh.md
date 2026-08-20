@@ -2,8 +2,10 @@
 
 [English](dingtalk-setup.md) | 中文
 
-本文说明如何创建钉钉群自定义机器人,并用 `dsh-connect-dingtalk` 把 DeepSeek Harness 的任务进度/结果推送到钉钉群。
+本文说明如何创建钉钉群自定义机器人,并用 `dsh-connect-dingtalk`——它提供**单向推送服务**(`ctx.dingtalk`):其他插件或脚本可调用它把消息推送到钉钉群。
 
+> ⚠️ **本包不做什么**:没有**自动的任务进度/结果/告警推送钩子**(connect 核心不会自己向钉钉推送),没有 **`/dingtalk` 命令**,通道**不能接收消息**。任何"任务进度/结果/告警推送"场景都意味着其他插件或脚本主动调用 `ctx.dingtalk`。
+>
 > ⚠️ 群自定义机器人是**单向 Webhook**:只能发消息,不能接收用户消息。双向对话需要企业内部应用机器人(Stream 模式),见文末说明。
 
 ## 1. 创建群机器人
@@ -33,6 +35,7 @@
         webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxx"
         secret: "SECxxxxxxxx"        # 仅当启用加签时
         language: zh
+        # defaultAt: { mobiles: ["13800000000"] }   # 可选:每次推送默认 @ 的人
 ```
 
 或设置环境变量 `DINGTALK_WEBHOOK_URL`(加签密钥用 `DINGTALK_WEBHOOK_SECRET`)。
@@ -52,7 +55,14 @@ await dingtalk.sendText("DSH 任务已开始");
 - **@ 指定人**:用 `{ mobiles: ["手机号"] }`(钉钉 Webhook 只认手机号)或 `{ userIds: [...] }`;`{ all: true }` 表示 @所有人。
 - **关键词安全设置**:若选择了「自定义关键词」,markdown 的**正文**(`text` 字段)必须包含该关键词,否则钉钉返回 `errcode 310000`。选择「加签」则无此限制。
 
-## 4. 验证
+## 4. 行为说明
+
+- **加签**:配置 `secret`(`SEC…`)后,每次请求按 `HMAC-SHA256(timestamp + "\n" + secret)` 签名,base64 编码后**再做 URL 编码**,连同 `timestamp` 作为 `sign` 查询参数发送。
+- **重试**:瞬时**网络错误**与钉钉 `errcode 130101`(每个机器人 20 次/分钟的频控)会自动退避重试(1s / 2s / 4s,频控额外等 10s),最多共 **3 次**。
+- **正文长度**:markdown 正文超过 **20000 字符**会在发送前自动截断(带省略标记)。
+- **配置键**:`webhookUrl`(或 `DINGTALK_WEBHOOK_URL`)、`secret`(或 `DINGTALK_WEBHOOK_SECRET`,可选)、`language`、`defaultAt`(可选,每次推送默认合并的 @ 列表)。
+
+## 5. 验证
 
 1. 重启 `dsh web`。
 2. 在任意脚本/插件里调用一次 `sendText("DSH 测试")`,群内应出现机器人消息。
@@ -63,6 +73,7 @@ await dingtalk.sendText("DSH 任务已开始");
 | 现象 | 处理 |
 |---|---|
 | `errcode 310000 keywords not in content` | 正文未含自定义关键词;改用「加签」安全设置即可 |
+| `errcode 130101` | 被频控(20 次/分钟);会自动退避重试 |
 | `errcode 330000` | 机器人被限流或群异常;稍后重试 |
 | HTTP 401 | webhook token 失效;重新生成机器人 |
 | 推送超时 | 检查本机到 `oapi.dingtalk.com` 的网络/代理 |

@@ -9,9 +9,12 @@
 | 对象 | 名称 | 说明 |
 |---|---|---|
 | GitHub 仓库 | `dsh-connect` | monorepo |
-| 核心包 | `dsh-connect` | 通道无关核心 |
+| 核心包 | `dsh-connect` | 通道无关核心(**最先发布**——所有适配器都依赖它) |
+| Web 镜像适配器 | `dsh-connect-web` | 把飞书会话镜像到 DSH Web GUI |
 | 飞书适配器 | `dsh-connect-feishu` | 飞书/Lark 通道 |
-| 未来的钉钉 | `dsh-connect-dingtalk` | 命名规则：`dsh-connect-<channel>` |
+| Telegram 适配器 | `dsh-connect-telegram` | Telegram 通道 |
+| 钉钉适配器 | `dsh-connect-dingtalk` | 单向钉钉群推送 |
+| 命名规则 | `dsh-connect-<channel>` | 未来的新通道沿用 |
 
 **为什么这样命名：**
 
@@ -57,13 +60,20 @@ deepseek-harness  dsh  dsh-plugin  feishu  lark  dingtalk  ai-agent  chatbot  co
 
 DSH 的插件安装命令是 `dsh plugin --profile web add <package>`（底层转发给 pnpm），所以**发布到 npm 是 DSH 用户一条命令安装的前提**。
 
+发布是**自动的**：`.github/workflows/publish.yml` 在每次 **GitHub Release** 时运行，按顺序发布全部 **5 个包**（`dsh-connect`、`dsh-connect-web`、`dsh-connect-feishu`、`dsh-connect-telegram`、`dsh-connect-dingtalk`）——`dsh-connect` **最先**（其他包以它为 peerDependency），随后 `connect-web` → `connect-feishu` → `connect-telegram` → `connect-dingtalk`。并行 matrix 会与 peerDependency 竞争，故必须串行。测试/发布前 CI 会先执行 `pnpm build`（`lib/` 被 gitignore）与 `pnpm typecheck`；`pnpm test` 也必须通过。
+
+手动发布时顺序相同：
+
 ```sh
-# In packages/connect and packages/connect-feishu respectively:
+# 按依赖顺序（connect 最先）；lib/ 必须先构建 → 先运行 pnpm build
 pnpm --filter dsh-connect publish --access public
+pnpm --filter dsh-connect-web publish --access public
 pnpm --filter dsh-connect-feishu publish --access public
+pnpm --filter dsh-connect-telegram publish --access public
+pnpm --filter dsh-connect-dingtalk publish --access public
 ```
 
-发布前，确认 package.json 中的占位 `"name"`/`"version"`，并填写 `description`、`keywords`、`repository`、`license`。npm 的 **`keywords` 字段**也参与 npm 搜索：
+发布前，确认每个 package.json 中的占位 `"name"`/`"version"`，并填写 `description`、`keywords`、`repository`、`license`。npm 的 **`keywords` 字段**也参与 npm 搜索：
 
 ```json
 "keywords": ["dsh", "deepseek-harness", "feishu", "lark", "dingtalk", "cordis", "ai-agent", "chatbot"]
@@ -83,5 +93,5 @@ pnpm --filter dsh-connect-feishu publish --access public
 - [ ] GitHub 仓库命名为 `dsh-connect`，描述中包含关键词
 - [ ] 已填写 About topics（见 2.2）
 - [ ] README 开头段包含 "DeepSeek Harness / Feishu"
-- [ ] 两个包都已发布到 npm 且填写了 `keywords`
+- [ ] 全部 5 个包都已发布到 npm 且填写了 `keywords`（随 GitHub Release 自动发布）
 - [ ] 在官方 DSH 仓库 + 至少一个 awesome list 中留下踪迹

@@ -25,13 +25,9 @@ interface SharedConfig {
   };
   state?: {
     stateDir?: string;
-    bindingsFile?: string;
-    sessionStorePath?: string;
   };
   mirror?: {
     autoCreate?: boolean;
-    defaultTimeoutMinutes?: number;
-    enableLocking?: boolean;
   };
   language?: "zh" | "en";
 }
@@ -176,10 +172,20 @@ export class ConnectService extends Service {
     return this.adapters.get(id);
   }
 
-  /** Allowlist check. Empty lists allow everyone on that axis. */
+  /** Allowlist gate for inbound messages (users + chats). Empty list = allow all. */
   isAllowed(msg: InboundMessage): boolean {
-    if (this.config.allowUsers.length > 0 && !this.config.allowUsers.includes(msg.senderKey)) return false;
-    if (this.config.allowChats.length > 0 && !this.config.allowChats.includes(msg.chatKey)) return false;
+    return this.isChatAllowed(msg.channel, msg.chatKey, msg.senderKey);
+  }
+
+  /**
+   * Adapter-side pre-check (channel + chat key + sender key only, no message
+   * object). Channel adapters call this *before* downloading message resources
+   * so rejected senders' files never touch disk.
+   */
+  isChatAllowed(channel: string, chatKey: string, senderKey: string): boolean {
+    if (this.config.allowUsers.length > 0 && !this.config.allowUsers.includes(senderKey)) return false;
+    if (this.config.allowChats.length > 0 && !this.config.allowChats.includes(chatKey)) return false;
+    void channel; // allowlists are global; kept for a future per-channel policy
     return true;
   }
 

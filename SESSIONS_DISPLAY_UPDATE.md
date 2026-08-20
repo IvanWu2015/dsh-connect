@@ -41,7 +41,7 @@
 
 ### 修改文件
 
-**`packages/connect-feishu/node_modules/dsh-connect/src/runner.ts`**
+**`packages/connect/src/runner.ts`**
 
 在 `menuItems()` 方法的 `case "chat"` 分支中：
 
@@ -73,7 +73,7 @@ case "chat": {
 
 ### i18n 消息
 
-**`packages/connect-feishu/node_modules/dsh-connect/src/i18n.ts`**
+**`packages/connect/src/i18n.ts`**
 
 新增消息：
 
@@ -179,10 +179,10 @@ Web 用户：看到同一个对话（带 🌐 标识）
 
 ## 📝 相关文件
 
-- `packages/connect-feishu/node_modules/dsh-connect/src/runner.ts` - 菜单显示逻辑
-- `packages/connect-feishu/node_modules/dsh-connect/src/i18n.ts` - 国际化消息
+- `packages/connect/src/runner.ts` - 菜单显示逻辑
+- `packages/connect/src/i18n.ts` - 国际化消息
 - `AUTO_MIRROR_UPDATE.md` - 自动镜像功能说明
-- `WEB_MIRROR_IMPLEMENTATION.md` - 完整实现文档
+- `docs/WEB_MIRROR_IMPLEMENTATION.zh.md` - 完整实现文档
 
 ## ✨ 总结
 

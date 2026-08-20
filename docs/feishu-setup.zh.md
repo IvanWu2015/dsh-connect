@@ -2,7 +2,7 @@
 
 [English](feishu-setup.md) | 中文
 
-本插件默认使用飞书**长连接（WebSocket）事件订阅**模式——无需公网 IP / 域名 / 隧道，事件在本地接收。
+本插件默认使用飞书**长连接（WebSocket）事件订阅**模式——无需公网 IP / 域名 / 隧道，事件在本地接收。**Webhook 模式也已实现**（见 [Webhook 传输](#webhook-传输)），供必须使用公网 HTTPS 回调地址的场景使用。
 
 ## 1. 创建自建应用
 
@@ -11,6 +11,8 @@
 3. 进入应用 → **凭证与基础信息**：
    - 记下 **App ID**（`cli_xxx`）和 **App Secret**。
    - 将它们填入插件配置的 `appId` / `appSecret`（或使用环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`）。
+
+> **一键开通**：当配置和环境变量都没有提供凭据时，插件不会报错退出，而是进入扫码注册流程：在 `dsh web` 日志中打印一个二维码/链接（约 10 分钟有效）。用飞书扫码后，机器人应用会自动创建并预置好权限与事件订阅；返回的凭据保存到 `$DSH_HOME/.dsh-connect/feishu-credentials.json`（权限 `0600`），后续启动自动复用。
 
 ## 2. 开通机器人能力
 
@@ -62,7 +64,14 @@
 
 启动 `dsh web`；当日志显示连接成功后，就可以在飞书中聊天了。
 
-## 7. 常见问题
+## 7. 行为说明
+
+- **群消息 @提及策略**：群消息只有 @提及机器人时才会回复（`requireMention` 默认 `true`）；设为 `requireMention: false` 则响应群里每条消息。
+- **允许列表预过滤**：适配器在**下载任何消息资源之前**就执行 `allowUsers` / `allowChats` 检查——被拒绝的发送者的图片/文件不会落盘（核心服务之后会按完整策略再检查一遍）。
+- **附件下载**：用户发送的图片/文件/音频/视频下载到系统临时目录（图片在 `dsh-connect-images`，其余在 `dsh-connect-files`）。单文件上限 20 MB、下载超时 60 秒；超过 24 小时的文件会自动清理。
+- <a id="webhook-传输"></a>**Webhook 传输**：设置 `transport: webhook` 后，适配器自带 `node:http` 服务，监听 `webhookPort`（默认 `9000`）+ `webhookPath`（默认 `/`），经 SDK 的 `adaptDefault` + `autoChallenge` 自动应答 `url_verification` 挑战。把飞书回调地址指向能到达该端口的**公网 HTTPS** 地址即可。`verificationToken` / `encryptKey` 仅在 webhook 模式需要；长连接模式下忽略它们。
+
+## 8. 常见问题
 
 - **收不到消息**：确认版本已发布；群聊需要 @提及（或关闭 `requireMention`）；确认已订阅 `im.message.receive_v1`。
 - **卡片按钮无响应**：确认已订阅 `card.action.trigger` 并发布新版本。
@@ -72,4 +81,3 @@
   - **在哪里看真实错误码**：在 `dsh web` 进程控制台日志中找 `connect-feishu: 图片下载失败 (...)` 一行（目前为本地化文案，意为"图片下载失败"）——聊天消息里也包含详情（修复版）。其他错误码（资源过期、file_key 无效等）参见 [飞书错误码 FAQ](https://open.feishu.cn/document/faq/trouble-shooting/how-to-fix-the-99991672-error) 和 API 文档。
 - **3 秒超时重投**：长连接模式下事件必须在 3 秒内 ACK；SDK 内部处理。业务侧保持 `handleInbound` 快速返回（本插件将消息入队后立即返回；智能体处理在队列中异步进行，不受影响）。
 - **多实例**：长连接是集群模式——同一应用有多个客户端时，每条消息只会随机被其中一个收到（本插件按单进程设计）。
-- **Webhook 模式**：如需公网回调，设置 `transport: webhook` 并配置 `verificationToken` / `encryptKey`，同时还需要一个本地 HTTP 服务来承载 SDK 的 express 适配器（目前未内置 HTTP 服务——优先使用长连接）。

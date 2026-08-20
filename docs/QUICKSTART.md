@@ -27,7 +27,7 @@ Build output goes to `packages/connect/lib` and `packages/connect-feishu/lib`.
 dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect D:\ACOINFO\code\dsh_feishu\packages\connect-feishu
 ```
 
-(Once published to npm, use the package names instead: `dsh plugin --profile web add dsh-connect dsh-connect-feishu`.)
+> The npm packages are published automatically by `.github/workflows/publish.yml` whenever a GitHub Release is created, so in a released setup you can install by package name instead: `dsh plugin --profile web add dsh-connect dsh-connect-feishu`. During local development the absolute-path install above is the way to go.
 
 ## 3. Configure the profile's cordis.patch.yml
 

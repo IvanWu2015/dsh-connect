@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The **Feishu / Lark channel adapter** for [dsh-connect](https://www.npmjs.com/package/dsh-connect): receives messages over the Feishu Open Platform **long connection (WebSocket)**, forwards them to the DSH agent, and **streams** replies back to Feishu, with interactive menu cards.
+The **Feishu / Lark channel adapter** for [dsh-connect](https://www.npmjs.com/package/dsh-connect): receives messages over the Feishu Open Platform **long connection (WebSocket)** or a self-hosted **webhook** endpoint, forwards them to the DSH agent, and **streams** replies back to Feishu, with interactive menu cards.
 
 ## Install
 
@@ -31,7 +31,11 @@ In the DSH profile's `cordis.patch.yml`:
 | Key | Default | Description |
 |---|---|---|
 | `appId` / `appSecret` | env `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | Feishu custom app credentials |
-| `transport` | `websocket` | Long connection (no public network needed); `webhook` needs public HTTPS |
+| `transport` | `websocket` | Long connection (no public network needed); `webhook` runs the built-in HTTP server and needs public HTTPS |
+| `verificationToken` | — | Webhook verification token (webhook transport only) |
+| `encryptKey` | — | Webhook encrypt key (webhook transport only) |
+| `webhookPort` | `9000` | HTTP port for the built-in webhook server when `transport: "webhook"` |
+| `webhookPath` | `/` | URL path Feishu event callbacks post to (webhook transport) |
 | `requireMention` | `true` | Groups only respond when the bot is @mentioned |
 | `dmMode` | `open` | DM policy: open / allowlist / pair / disabled |
 | `language` | `zh` | User-facing message language: `zh` / `en` |

@@ -1,231 +1,103 @@
-# Web Mirror Session 增强功能实现总结
+# dsh-connect 0.6.2 本轮修复 - 实现总结
 
-[English](ENHANCEMENTS_SUMMARY.md) | 中文
+English | [中文](ENHANCEMENTS_SUMMARY.zh.md)
 
 ## 📋 概述
 
-本次更新实现了 Web Mirror Session 的所有计划增强功能，将 v0.5.1 的功能完整度从基础版本提升到生产就绪状态。
+本轮修复让仓库行为与代码事实保持一致：核心的崩溃/挂死修复、Telegram 适配器的正确性与流式修复、飞书适配器的真实 webhook 支持与安全下载、钉钉适配器的重试/截断行为、重构后的 connect-web 适配器、串行 5 包发布流水线，以及死配置清理。版本 **0.6.2**。
 
 ---
 
-## ✅ 已完成的功能
+## ✅ 改动内容
 
-### 1. 📥 队列消息自动执行
+### 核心（`dsh-connect`）
 
-**问题**：之前 Web 端排队的消息只是被清除并通知用户，但不会真正执行。
+- **命令分发不再崩溃**：命令处理器现在带 catch 调用——`/…` 分发过程中的瞬时通道错误不再变成未处理的 Promise rejection（Node ≥ 15 默认会因此崩溃进程）。
+- **`streamText` 错误路径保证 chunk 流终结**：`followup` / `whenIdle` / `flush` 抛错时无条件 `end()` chunk 队列并释放适配器的 `for await`（其 rejection 被吞掉）——流式卡片不再永久卡在 "streaming" 状态、不再泄漏队列/适配器 promise。
+- **`buildUserContent` 更多场景包含附件**：非图片附件（文件/音频/视频）现在对纯文件消息和视觉主模型场景也会暂存并附加——之前无图片的消息会静默丢弃它们。
+- **会话变更重置镜像**：`/new`、`/clear` 和切换会话（`/chat`）清除 `webMirrorSessionId` / `lockOwner`，陈旧镜像不会指向已废弃会话；`autoMirror` 为新会话重建镜像。
+- **锁的作用范围收窄**：互斥锁只对镜像会话的 `feishu` / `web` 通道生效；telegram / dingtalk 不参与。
+- **`/settings` 清理**：移除了设置菜单中无效的"流式/摘要"开关。
+- **i18n 死键清理**；`Config` schema 现在声明了 `autoMirror`。
 
-**解决方案**：
-- 修改 `queueMessage()` 存储完整的消息对象（包括 text, senderKey, replyRef, images, files）
-- 修改 `processQueuedMessages()` 将队列中的消息重新构造为 `InboundMessage` 并加入 runner 的处理队列
-- 锁释放后自动触发 `drain()` 处理所有排队消息
+### Telegram（`dsh-connect-telegram`）
 
-**影响文件**：
-- `packages/connect/src/binding.ts` - 扩展 `queuedMessages` 类型
-- `packages/connect/src/runner.ts` - 修改队列处理和消息重入队逻辑
+- 修复导致编译失败的缺失大括号。
+- **回声循环防护**：忽略机器人自己的消息（`is_bot`），确认/回复不再回环触发 agent。
+- **流式重写**：`streamText` 累积全文，通过 `editMessageText` 每次刷新整个消息（约 700ms 节流），超过 4096 字符截断并带省略标记——旧的增量式做法会抹掉前面的内容。
+- **长轮询不再被掐断**：`getUpdates` 使用高于 50 秒服务端窗口的客户端超时，空闲轮询不再被通用 15 秒 HTTP 超时切断。
+- **按 update 确认 offset**：每个 update 完整处理后才推进轮询 offset——批次中途失败不会丢批。
+- **HTML 全量转义**：普通文本的 `& < >` 在所有位置（含转换后的 markdown 片段内部）都被转义，LLM 输出的 `R&D`、`x < y` 等不会破坏解析模式。
+- **精确 @提及检测**：从 `getMe` 缓存机器人 id/用户名，用于精确的 @提及 / 回复目标判断。
+- **选项按键按 (chat, option) 复合键存储**：不同聊天中的并发菜单互不覆盖；超时后按键键盘替换为过期提示。
+- **更多媒体类型**：支持语音/视频/音频下载（在图片/文件之上）；忽略 `edited_message`。
 
-**用户体验**：
-```
-Web 用户发送消息（锁被飞书占用）
-→ 📥 消息已加入队列（第 1 位），等待锁释放后自动执行
+### 飞书（`dsh-connect-feishu`）
 
-飞书任务完成，锁释放
-→ ✅ 已处理队列中的 1 条消息
-→ [Agent 开始处理排队的消息]
-```
+- **允许列表预过滤**：在下载任何消息资源之前检查 `allowUsers` / `allowChats`——被拒绝发送者的图片/文件不会落盘。
+- **安全下载**：单文件 20 MB 上限、60 秒超时、异步写入临时目录（`dsh-connect-images` / `dsh-connect-files`），超过 24 小时自动清理。
+- **Webhook 传输真正实现**：适配器自带 `node:http` 服务（`webhookPort` 默认 9000、`webhookPath` 默认 "/"），经 SDK 的 `adaptDefault` + `autoChallenge` 自动应答 `url_verification` 挑战——不再需要外部 express 宿主。
+- **reject 日志去 PII**：入站 `reject` 处理器只记录精简原因，不打印完整事件 JSON。
+- **凭据文件权限收紧**：onboarding 保存的 `feishu-credentials.json` 权限为 `0600`。
+- **`stop()` 清理资源**：webhook 服务器、选项定时器、过期提示定时器全部拆除。
+- 纯函数（`padLabels`、`buildButtonGrid` 等）导出并有测试覆盖。
 
----
+### 钉钉（`dsh-connect-dingtalk`）
 
-### 2. ⏱️ 自定义超时时间
+- **自动退避重试**：瞬时网络错误与 `errcode 130101`（20 次/分钟频控）自动重试，最多 3 次。
+- **markdown 20000 字符截断**：超过 API 上限时发送前自动截断。
+- **签名校验修复**：比较前对两侧做 URL 解码，并强制时间戳新鲜度窗口。
+- 删除死导出与死 i18n 键。
 
-**问题**：超时时间硬编码为 5 分钟，无法根据任务复杂度调整。
+### Web 镜像（`dsh-connect-web`）
 
-**解决方案**：
-- 在 `/mirror` 命令中支持 `--timeout N` 参数（N 为分钟数）
-- 解析命令行参数并应用到新创建的镜像会话
-- 在创建成功消息中显示自定义超时时间
+- **核心包新增 `dsh-connect/binding` 导出子路径**——修复导入 `BindingStore` / `ChatBinding` 时的 `TS2307`（缺类型）与运行时 `ERR_PACKAGE_PATH_NOT_EXPORTED`。
+- **改用公开 bindingStore getter**：适配器通过 connect 服务的公开 `bindingStore` getter 获取存储，不再触碰内部字段。
+- **删除合成的 `[Mirror]` 入站消息**：适配器不再向 handler 派发假的"镜像已创建"消息——此前会创建多余的 web runner 并白烧一次真实 LLM turn。现在只记录已知镜像（`isSessionMirrored` / `getMirrorSource`）。
+- **测试改为 `node:test`** 并接入根 `pnpm test`（见下）。
 
-**影响文件**：
-- `packages/connect/src/commands.ts` - 添加 `timeoutMin` 字段到 `mirror` 命令
-- `packages/connect/src/runner.ts` - 修改 `handleMirror()` 支持自定义超时
+### CI / 配置
 
-**使用示例**：
-```bash
-/mirror --timeout 10
-→ ✅ Web 镜像会话已创建：connect-xxx
-   在 DSH Web 中打开此会话即可查看飞书对话历史。（超时时间：10 分钟）
-```
-
----
-
-### 3. 🔄 锁续期命令
-
-**问题**：长任务可能在超时前未完成，需要一种方式延长锁的有效期。
-
-**解决方案**：
-- 新增 `/renew` 或 `/renew-lock` 命令
-- 重置 `lockAcquiredAt` 时间戳，使锁从当前时刻重新开始计时
-- 只有锁的拥有者才能续期
-
-**影响文件**：
-- `packages/connect/src/commands.ts` - 添加 `renew` 命令类型
-- `packages/connect/src/runner.ts` - 实现 `handleRenewLock()` 方法
-- `packages/connect/src/i18n.ts` - 添加 `lockRenewed` 消息
-
-**使用示例**：
-```bash
-/renew
-→ 🔄 会话锁已续期 5 分钟
-```
+- **`publish.yml`**：测试/发布前先 `pnpm build`（`lib/` 被 gitignore），新增 `pnpm typecheck`，发布改为**串行 5 包**（`dsh-connect` 最先，然后 connect-web → feishu → telegram → dingtalk），不再用并行矩阵。
+- **`dsh.shared.config.json`**：删除死键（`state.bindingsFile`、`state.sessionStorePath`、`mirror.defaultTimeoutMinutes`、`mirror.enableLocking`）；只读取 `workspace.defaultWorkDir`、`workspace.additionalWorkspaces`、`state.stateDir`、`mirror.autoCreate`、`language`。
 
 ---
 
-### 4. 📄 导出对话历史
+## 🧪 测试
 
-**问题**：用户需要将对话历史保存为文件以便分享或归档。
+测试需先构建（`pnpm build`——`lib/` 被 gitignore）。根 `pnpm test` 现在跑 **6 个套件**，全部 `node:test`：
 
-**解决方案**：
-- 新增 `/export [markdown|pdf]` 命令
-- 遍历 session events 生成结构化的 Markdown 文档
-- 保存到工作目录，文件名包含 session ID 和时间戳
-- PDF 导出暂不支持（返回友好提示）
-
-**影响文件**：
-- `packages/connect/src/commands.ts` - 添加 `export` 命令类型
-- `packages/connect/src/runner.ts` - 实现 `handleExport()` 和 `generateMarkdown()` 方法
-- `packages/connect/src/i18n.ts` - 添加导出相关消息
-
-**导出的 Markdown 包含**：
-- 会话元数据（ID、导出时间、事件总数）
-- 所有用户和助手的消息
-- 任务开始/结束的状态标记
-
-**使用示例**：
-```bash
-/export
-→ 📄 对话历史已导出为 Markdown：
-   D:\projects\conversation-connect-xxx-1234567890.md
-
-/export markdown
-→ 📄 对话历史已导出为 Markdown：
-   D:\projects\conversation-connect-xxx-1234567890.md
-
-/export pdf
-→ ⚠️ PDF 导出暂不支持，请使用 Markdown 格式
-```
-
----
-
-## 📊 修改统计
-
-| 文件 | 新增行数 | 修改行数 | 说明 |
-|------|---------|---------|------|
-| `packages/connect/src/binding.ts` | +7 | -1 | 扩展 queuedMessages 类型 |
-| `packages/connect/src/commands.ts` | +18 | -3 | 添加 renew 和 export 命令 |
-| `packages/connect/src/runner.ts` | +120 | -15 | 实现队列自动执行、续期、导出 |
-| `packages/connect/src/i18n.ts` | +8 | -0 | 添加新消息键的中英文实现 |
-| `docs/MIRROR_SESSION.md` | +60 | -10 | 更新文档说明新功能 |
-| **总计** | **+213** | **-29** | |
-
----
-
-## 🧪 测试场景
-
-### 场景 1：队列消息自动执行
-```bash
-# 飞书正在执行任务
-# Web 端发送消息
-你好
-→ 📥 消息已加入队列（第 1 位），等待锁释放后自动执行
-
-# 飞书任务完成
-→ ✅ 已处理队列中的 1 条消息
-→ [Agent 自动开始处理 "你好"]
-```
-
-### 场景 2：自定义超时
-```bash
-/mirror --timeout 15
-→ ✅ Web 镜像会话已创建：connect-xxx
-   （超时时间：15 分钟）
-
-/mirror
-→ Web 镜像会话：connect-xxx
-   锁定方：飞书
-   超时时间：15 分钟
-   排队消息：0 条
-```
-
-### 场景 3：锁续期
-```bash
-# 任务执行了 4 分钟，快超时了
-/renew
-→ 🔄 会话锁已续期 5 分钟
-
-# 锁的超时时间从当前时刻重新计算
-```
-
-### 场景 4：导出对话
-```bash
-/export
-→ 📄 对话历史已导出为 Markdown：
-   D:\ACOINFO\code\dsh_feishu\conversation-connect-xxx-1234567890.md
-
-# 查看导出的文件
-cat conversation-connect-xxx-1234567890.md
-→ # Conversation History
-   - **Session ID**: connect-xxx
-   - **Exported At**: 2024-01-15T10:30:00.000Z
-   ...
-```
-
----
-
-## 🔒 技术亮点
-
-1. **消息完整性**：队列现在存储完整的消息对象，包括附件和引用信息
-2. **自动重入队**：锁释放后自动将消息加入处理队列，无需用户干预
-3. **参数化配置**：超时时间可通过命令行参数灵活设置
-4. **权限检查**：只有锁的拥有者才能续期，防止误操作
-5. **结构化导出**：生成的 Markdown 包含完整的会话元数据和消息历史
-6. **错误处理**：所有操作都有完善的错误提示和边界情况处理
+1. `packages/connect/test/unit.test.mjs` — 核心单元测试（命令解析、绑定持久化、异步队列、回合结果等）
+2. `packages/connect/test/smoke.mjs` — Cordis 运行时加载契约（服务注册、适配器、允许列表、notify）
+3. `packages/connect-dingtalk/test/unit.test.mjs`
+4. `packages/connect-telegram/test/unit.test.mjs`
+5. `packages/connect-feishu/test/unit.test.mjs`
+6. `packages/connect-web/test/unit.test.mjs`
 
 ---
 
 ## 📝 注意事项
 
-### Web UI 锁定状态指示
+### 诚实的限制：镜像锁是单侧的
 
-该功能需要修改 DSH Web 的源代码（位于 `@deepseek-ai/dsh` 项目），不在当前 `dsh_feishu` 项目范围内。
+`lockOwner` 只由飞书侧 runner 强制；DSH Web GUI 直接读写 DSH 会话、从不查询锁，因此 Web 侧实际上永远可写。这是 DSH Web 的架构限制，无法在本仓库修复。详见 [Web Mirror Session](./MIRROR_SESSION.zh.md)。
 
-**建议的实现方案**：
-1. 在 DSH Web 的会话界面中添加锁定状态图标
-2. 通过 BindingStore 的 `onChange` 回调监听锁定状态变化
-3. 显示当前锁定方、超时剩余时间和排队消息数
-4. 提供手动解锁和续期的按钮
+### 镜像命令
 
----
-
-## 🚀 后续优化建议
-
-1. **PDF 导出**：集成 PDF 生成库（如 `puppeteer` 或 `pdf-lib`）
-2. **队列优先级**：支持标记重要消息优先处理
-3. **自定义续期时间**：`/renew --timeout 15` 指定续期时长
-4. **自动清理**：定期删除过期的导出文件
-5. **批量导出**：支持导出多个会话的历史
-6. **Web UI 集成**：在 DSH Web 中显示实时锁定状态
+`/mirror [--timeout N]`、`/unlock`（手动释放锁）、`/renew`（续期锁超时）、`/export [markdown|pdf]`；`autoMirror` 配置（默认 `true`）。
 
 ---
 
 ## 📚 相关文档
 
-- [Web Mirror Session 完整文档](./MIRROR_SESSION.zh.md)
+- [Web Mirror Session](./MIRROR_SESSION.zh.md)
+- [共享工作区配置](./SHARED_WORKSPACE_SETUP.zh.md)
+- [Web 镜像实现](./WEB_MIRROR_IMPLEMENTATION.zh.md)
 - [Binding Store API](../packages/connect/src/binding.ts)
 - [Runner 实现](../packages/connect/src/runner.ts)
-- [命令解析](../packages/connect/src/commands.ts)
-- [国际化消息](../packages/connect/src/i18n.ts)
 
 ---
 
-**版本**：v0.5.1  
-**更新日期**：2024-01-15  
+**版本**：v0.6.2  
+**更新日期**：2026-08-20  
 **作者**：DSH Connect Team

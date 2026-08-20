@@ -36,14 +36,11 @@ Create `dsh.shared.config.json` in the project root:
   },
   
   "state": {
-    "stateDir": ".dsh-connect",
-    "sessionStorePath": ".dsh/sessions"
+    "stateDir": ".dsh-connect"
   },
   
   "mirror": {
-    "autoCreate": true,
-    "defaultTimeoutMinutes": 5,
-    "enableLocking": true
+    "autoCreate": true
   },
   
   "language": "zh"
@@ -238,7 +235,7 @@ Feishu and Web **both read this file**, so they see exactly the same history.
 **Cause**: The DSH session files are not shared.
 
 **Solution**:
-1. Make sure Feishu and Web use the same `sessionStorePath`
+1. Make sure Feishu and Web run in the same DSH instance and use the same `stateDir` (default `.dsh-connect`)
 2. Check whether the `.dsh/sessions/` directory exists and is readable/writable
 3. Make sure no multiple independent DSH instances are running
 
@@ -295,5 +292,5 @@ Feishu and Web **both read this file**, so they see exactly the same history.
 
 ---
 
-**Updated**: 2024-01-15  
-**Version**: v0.5.1
+**Updated**: 2026-08-20  
+**Version**: v0.6.2

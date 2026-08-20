@@ -2,9 +2,9 @@
 
 [English](README.md) | 中文
 
-**与渠道无关的核心**，用于将 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（**DSH**）智能体连接到聊天平台（首先支持飞书 / Lark，更多平台陆续到来）：会话绑定、智能体驱动、流式回复桥接、交互式菜单卡片与本地命令。
+**与渠道无关的核心**，用于将 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（**DSH**）智能体连接到聊天平台（飞书 / Lark、Telegram、钉钉，更多平台陆续到来）：会话绑定、智能体驱动、流式回复桥接、交互式菜单卡片与本地命令。
 
-> 请与渠道适配器一起安装——例如 [dsh-connect-feishu](https://www.npmjs.com/package/dsh-connect-feishu)——或可选的 [dsh-connect-web](https://www.npmjs.com/package/dsh-connect-web) 镜像监视器。
+> 请与渠道适配器一起安装——例如 [dsh-connect-feishu](https://www.npmjs.com/package/dsh-connect-feishu)、[dsh-connect-telegram](https://www.npmjs.com/package/dsh-connect-telegram) 或仅推送的 [dsh-connect-dingtalk](https://www.npmjs.com/package/dsh-connect-dingtalk)——或可选的 [dsh-connect-web](https://www.npmjs.com/package/dsh-connect-web) 镜像监视器。
 
 ## 概述
 
@@ -122,6 +122,8 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 | `transport` | `websocket` | `websocket` = 长连接（无需公网）；`webhook` 需要公网 HTTPS |
 | `verificationToken` | — | Webhook 验证令牌（**机密**） |
 | `encryptKey` | — | Webhook 加密密钥（**机密**） |
+| `webhookPort` | `9000` | `transport: "webhook"` 时内置 webhook 服务的 HTTP 端口 |
+| `webhookPath` | `/` | 飞书事件回调所 POST 的 URL 路径（webhook 传输） |
 | `requireMention` | `true` | 群聊中仅在 @机器人 时才会响应 |
 | `dmMode` | `open` | 私聊策略：`open` / `allowlist` / `pair` / `disabled` |
 | `language` | `zh` | 面向用户的消息语言：`zh` / `en` |
@@ -171,9 +173,11 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 
 ```
 packages/
-  connect/        # this package — channel-agnostic core
-  connect-feishu/ # Feishu / Lark adapter
-  connect-web/    # optional Web mirror monitor
+  connect/          # 本包 — 与渠道无关的核心
+  connect-feishu/   # 飞书 / Lark 适配器
+  connect-telegram/ # Telegram 适配器（getUpdates 长轮询）
+  connect-dingtalk/ # 钉钉群机器人 Webhook 推送渠道
+  connect-web/      # 可选的 Web 镜像监视器
 ```
 
 ```sh

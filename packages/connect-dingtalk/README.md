@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
 
 DingTalk group-webhook push channel for [dsh-connect](../connect/README.md).
 
-The DingTalk **group custom robot (群自定义机器人)** is a *one-way* webhook: it can send text / markdown / @-mention messages into a group, but it **cannot receive messages** (message callbacks are only available to internal-enterprise apps). This package therefore delivers **task progress, results, and alerts into a DingTalk group** — a natural companion to the bidirectional Feishu / Telegram adapters.
+The DingTalk **group custom robot (群自定义机器人)** is a *one-way* webhook: it can send text / markdown / @-mention messages into a group, but it **cannot receive messages** (message callbacks are only available to internal-enterprise apps). This package therefore exposes a **push service** (`ctx.dingtalk`) that any other plugin or script can call to deliver notices — progress, results, alerts — into a DingTalk group, a natural companion to the bidirectional Feishu / Telegram adapters. There is no inbound path and no `/dingtalk` command: nothing is pushed automatically by this package itself.
 
 - **Push text & markdown cards** into any DingTalk group.
 - **@-mention** people by phone number (DingTalk's requirement) or user id, or @all.

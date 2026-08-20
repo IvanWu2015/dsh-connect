@@ -464,8 +464,6 @@ export class AgentRunner {
   private handle?: AgentHandle;
   private turn?: ActiveTurn;
   private workDir: string;
-  private streamEnabled = true;
-  private summaryEnabled = true;
   private language: Language;
   private notifyLevel: NotifyLevel;
   private progressTimeoutMs: number;
@@ -553,7 +551,12 @@ export class AgentRunner {
   enqueue(msg: InboundMessage): void {
     const command = parseCommand(msg.text);
     if (command.kind !== "message") {
-      void this.handleCommand(command, msg);
+      // Command handlers touch the adapter directly (no per-call catch) — a
+      // transient channel error here must never become an unhandled rejection
+      // (Node ≥ 15 crashes the process on those by default).
+      void this.handleCommand(command, msg).catch((error) => {
+        this.log(`connect: command ${command.kind} failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
       return;
     }
     this.queue.push(msg);
@@ -678,16 +681,20 @@ export class AgentRunner {
   }
 
   private async runTurn(msg: InboundMessage): Promise<void> {
-    // Check session lock - only allow if this channel owns the lock or no lock exists
+    // The mutual-exclusion lock arbitrates between the Feishu side and the Web
+    // mirror of the *same* session. Channels without a mirror (Telegram /
+    // DingTalk) must not be classified as "web" and must not take part in the
+    // lock at all.
+    const usesLock = this.channel === "feishu" || this.channel === "web";
     const currentChannel: "feishu" | "web" = this.channel === "feishu" ? "feishu" : "web";
-    
+
     // Check timeout before attempting to acquire
-    this.checkAndReleaseTimeoutLock();
-    
-    if (!this.acquireLock(currentChannel)) {
+    if (usesLock) this.checkAndReleaseTimeoutLock();
+
+    if (usesLock && !this.acquireLock(currentChannel)) {
       const binding = this.bindings.get(this.channel, this.chatKey);
       const lockedBy = binding?.lockOwner ?? "unknown";
-      
+
       // If from Web channel, queue the message instead of rejecting
       if (currentChannel === "web") {
         const position = this.queueMessage(msg);
@@ -718,20 +725,20 @@ export class AgentRunner {
       const agent = await this.ensureAgent(msg);
       const outcome = await this.driveAgent(agent, msg);
       this.touchBinding(msg);
-      
+
       // Task-end stats: model, tokens, elapsed, and a compaction suggestion.
       await this.sendTurnStats(msg, outcome);
 
       // Release lock after task completion
-      this.releaseLock();
-      
-      if (outcome.reason !== "completed" && this.summaryEnabled) {
+      if (usesLock) this.releaseLock();
+
+      if (outcome.reason !== "completed") {
         await this.sendSummary(msg, outcome);
       }
     } catch (error) {
       // Release lock even on error
-      this.releaseLock();
-      
+      if (usesLock) this.releaseLock();
+
       const detail = error instanceof Error ? error.message : String(error);
       await this.adapter
         .sendText(this.target(msg), this.t.processingFailedAdvice(truncate(detail, 400), this.errorAdvice(detail)))
@@ -895,16 +902,6 @@ export class AgentRunner {
       const content = await this.buildUserContent(msg);
       return createUserMessage({ content, source: { kind: "user" } });
     };
-    if (!this.streamEnabled) {
-      agent.followup(await userMessage());
-      await agent.whenIdle();
-      await this.sessions.flush(agent.session);
-      const outcome = summarizeTurn(agent.session.events, firstSeq);
-      if (outcome.text !== "") {
-        await this.adapter.sendText(this.target(msg), outcome.text).catch(() => undefined);
-      }
-      return outcome;
-    }
 
     const chunks = createAsyncQueue<string>();
     const now = Date.now();
@@ -953,17 +950,35 @@ export class AgentRunner {
         }, PROGRESS_WATCHDOG_CHECK_MS)
       : undefined;
 
+    // End the chunk stream unconditionally: if `followup` / `whenIdle` /
+    // `flush` throws, the adapter's `for await` over `chunks` must still be
+    // released, otherwise the streaming card hangs in "streaming" forever and
+    // the chunk queue / adapter promise leak. On the error path we also await
+    // (and swallow) the stream promise so its rejection can't escape as an
+    // unhandled rejection while the original error propagates.
+    const endChunks = (): void => {
+      try {
+        chunks.end();
+      } catch {
+        // no-op
+      }
+    };
+    let streamPromise: Promise<void> | undefined;
     try {
-      const streamPromise = this.adapter.streamText(this.target(msg), chunks);
+      streamPromise = this.adapter.streamText(this.target(msg), chunks);
       agent.followup(await userMessage());
       await agent.whenIdle();
       await this.sessions.flush(agent.session);
-      chunks.end();
-      await streamPromise;
+    } catch (error) {
+      endChunks();
+      await streamPromise?.catch(() => undefined);
+      throw error;
     } finally {
       if (heartbeat !== undefined) clearInterval(heartbeat);
       if (progressWatchdog !== undefined) clearInterval(progressWatchdog);
     }
+    endChunks();
+    await streamPromise;
 
     const outcome = summarizeTurn(agent.session.events, firstSeq);
     const text = outcome.text !== "" ? outcome.text : this.turn.lastText;
@@ -980,34 +995,35 @@ export class AgentRunner {
   private async buildUserContent(msg: InboundMessage): Promise<ContentBlock[]> {
     const content: ContentBlock[] = [{ type: "text", text: msg.text }];
     const rawImages = msg.images;
-    if (rawImages === undefined || rawImages.length === 0) {
-      if (msg.imageError !== undefined) {
-        content.push({ type: "text", text: this.t.imageDownloadFailed(msg.imageError) });
+
+    // Images: pass directly to the main model when it supports vision,
+    // otherwise run a vision sub-task and inject its description as text —
+    // a text-only main model never stalls on images.
+    if (rawImages !== undefined && rawImages.length > 0) {
+      const paths = await this.stageImages(rawImages);
+      const locationText = paths.map((p) => `- ${p}`).join("\n");
+
+      const mainVision = await this.modelSupportsVision(this.agent?.options.provider, this.agent?.options.model);
+      if (mainVision) {
+        const imageBlocks = await this.imageBlocks(paths);
+        if (imageBlocks.length > 0) {
+          this.log(`connect: main model supports vision — passing ${imageBlocks.length} image block(s) directly`);
+          content.push(...imageBlocks);
+        } else {
+          this.log("connect: main model supports vision but image blocks failed to attach — falling back to paths");
+          content.push({ type: "text", text: this.t.imagesStaged(locationText, "") });
+        }
+      } else {
+        const description = await this.describeImages(paths);
+        content.push({ type: "text", text: this.t.imagesStaged(locationText, description) });
       }
-      return content;
+    } else if (msg.imageError !== undefined) {
+      content.push({ type: "text", text: this.t.imageDownloadFailed(msg.imageError) });
     }
 
-    // Copy images into the agent's work directory so its tools can access them.
-    const paths = await this.stageImages(rawImages);
-    const locationText = paths.map((p) => `- ${p}`).join("\n");
-
-    const mainVision = await this.modelSupportsVision(this.agent?.options.provider, this.agent?.options.model);
-    if (mainVision) {
-      const imageBlocks = await this.imageBlocks(paths);
-      if (imageBlocks.length > 0) {
-        this.log(`connect: main model supports vision — passing ${imageBlocks.length} image block(s) directly`);
-        return [{ type: "text", text: msg.text }, ...imageBlocks];
-      }
-      this.log("connect: main model supports vision but image blocks failed to attach — falling back to paths");
-      return content;
-    }
-
-    const description = await this.describeImages(paths);
-    const note = this.t.imagesStaged(locationText, description);
-    content.push({ type: "text", text: note });
-
-    // Non-image attachments (files / audio / video): stage them into the work
-    // directory and hand the agent the paths — it can open them with its tools.
+    // Non-image attachments (files / audio / video) are staged independently of
+    // images: a pure-file message, or a vision-capable main model, must never
+    // silently drop them.
     const rawFiles = msg.files;
     if (rawFiles !== undefined && rawFiles.length > 0) {
       const stagedFiles = await this.stageFiles(rawFiles);
@@ -1473,7 +1489,18 @@ export class AgentRunner {
     await this.disposeAgent();
     const binding = this.bindings.get(this.channel, this.chatKey);
     if (binding !== undefined) {
-      this.bindings.put({ ...binding, sessionId: "", ownerKey: msg.senderKey, lastActiveAt: Date.now() });
+      // A new chat gets a brand-new session; the previous mirror points at the
+      // abandoned session and must be cleared so the next session re-mirrors.
+      this.bindings.put({
+        ...binding,
+        sessionId: "",
+        webMirrorSessionId: undefined,
+        lockOwner: undefined,
+        lockAcquiredAt: undefined,
+        queuedMessages: [],
+        ownerKey: msg.senderKey,
+        lastActiveAt: Date.now(),
+      });
     }
   }
 
@@ -1483,7 +1510,17 @@ export class AgentRunner {
     await this.disposeAgent();
     if (binding !== undefined && current !== undefined && current !== "") {
       const sessions = binding.sessions.filter((s) => s.sessionId !== current);
-      this.bindings.put({ ...binding, sessionId: "", sessions, ownerKey: msg.senderKey, lastActiveAt: Date.now() });
+      this.bindings.put({
+        ...binding,
+        sessionId: "",
+        sessions,
+        webMirrorSessionId: undefined,
+        lockOwner: undefined,
+        lockAcquiredAt: undefined,
+        queuedMessages: [],
+        ownerKey: msg.senderKey,
+        lastActiveAt: Date.now(),
+      });
     }
   }
 
@@ -1491,7 +1528,19 @@ export class AgentRunner {
     const binding = this.bindings.get(this.channel, this.chatKey);
     if (binding === undefined) return;
     const sessions = binding.sessions.map((s) => (s.sessionId === sessionId ? { ...s, lastActiveAt: Date.now() } : s));
-    this.bindings.put({ ...binding, sessionId, sessions, ownerKey, lastActiveAt: Date.now() });
+    // The mirror follows the active session: clear the stale mapping and let
+    // `autoCreateWebMirror` re-create it for the newly selected session.
+    this.bindings.put({
+      ...binding,
+      sessionId,
+      sessions,
+      webMirrorSessionId: undefined,
+      lockOwner: undefined,
+      lockAcquiredAt: undefined,
+      queuedMessages: [],
+      ownerKey,
+      lastActiveAt: Date.now(),
+    });
     await this.disposeAgent();
   }
 
@@ -1739,7 +1788,7 @@ export class AgentRunner {
       if (event.type === "turn/end") {
         const reason = mapReason(event.data.reason.kind);
         // Use the event's timestamp if available, otherwise approximate
-        const completedAt = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const completedAt = new Date().toLocaleTimeString(this.language === "en" ? "en-US" : "zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
         return { reason, completedAt };
       }
     }
@@ -1774,8 +1823,6 @@ export class AgentRunner {
     ];
     for (const w of this.config.workspaces) lines.push(`  - ${w}`);
     lines.push(this.t.chatCountField(binding?.sessions.length ?? 0));
-    lines.push(this.t.streamLabel(this.streamEnabled));
-    lines.push(this.t.summaryLabel(this.summaryEnabled));
     lines.push(this.t.progressSetting(this.progressTimeoutMs === 0 ? this.t.progressOff : this.t.progressMinutes(Math.round(this.progressTimeoutMs / 60_000))));
     lines.push(this.t.allowUsersField(this.config.allowUsers.length, this.config.allowUsers.length === 0));
     lines.push(this.t.allowChatsField(this.config.allowChats.length, this.config.allowChats.length === 0));
@@ -2158,7 +2205,7 @@ export class AgentRunner {
       return;
     }
     const now = Date.now();
-    const locale = this.config.language === "en" ? "en-US" : "zh-CN";
+    const locale = this.language === "en" ? "en-US" : "zh-CN";
     const lines = reminders.map((r) => {
       const due = Date.parse(r.scheduledAt) <= now;
       const state = due ? this.t.reminderDue : this.t.reminderClock;

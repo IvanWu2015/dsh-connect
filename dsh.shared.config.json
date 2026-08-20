@@ -1,5 +1,4 @@
 {
-  "$schema": "./dsh.shared.config.schema.json",
   "description": "Shared configuration for DSH Feishu and DSH Web to ensure consistent workspace and session experience",
   
   "workspace": {
@@ -11,15 +10,11 @@
   },
   
   "state": {
-    "stateDir": ".dsh-connect",
-    "bindingsFile": "bindings.json",
-    "sessionStorePath": ".dsh/sessions"
+    "stateDir": ".dsh-connect"
   },
   
   "mirror": {
-    "autoCreate": true,
-    "defaultTimeoutMinutes": 5,
-    "enableLocking": true
+    "autoCreate": true
   },
   
   "language": "zh"

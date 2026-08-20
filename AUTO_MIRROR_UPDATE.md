@@ -23,7 +23,7 @@
 
 ### 代码位置
 
-**修改文件**: `packages/connect-feishu/node_modules/dsh-connect/src/runner.ts`
+**修改文件**: `packages/connect/src/runner.ts`
 
 **新增方法**:
 ```typescript
@@ -170,9 +170,9 @@ A: 不需要。自动镜像功能内置于 dsh-connect。`connect-web` 插件提
 
 ## 相关文件
 
-- `packages/connect-feishu/node_modules/dsh-connect/src/runner.ts` - 核心实现
-- `WEB_MIRROR_IMPLEMENTATION.md` - 完整文档
-- `packages/connect-web/README.md` - Web 适配器文档
+- `packages/connect/src/runner.ts` - 核心实现
+- `docs/WEB_MIRROR_IMPLEMENTATION.zh.md` - 完整文档
+- `packages/connect-web/README.zh.md` - Web 适配器文档
 
 ## 总结
 

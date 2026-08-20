@@ -2,7 +2,7 @@
 
 English | [中文](feishu-setup.zh.md)
 
-This plugin uses Feishu's **long-connection (WebSocket) event subscription** mode by default — no public IP / domain / tunnel is required, and events are received locally.
+This plugin uses Feishu's **long-connection (WebSocket) event subscription** mode by default — no public IP / domain / tunnel is required, and events are received locally. A **webhook mode is also implemented** (see [Webhook transport](#webhook-transport)) for setups that must use a public HTTPS callback URL.
 
 ## 1. Create a custom app
 
@@ -11,6 +11,8 @@ This plugin uses Feishu's **long-connection (WebSocket) event subscription** mod
 3. Inside the app → **Credentials & Basic Info**:
    - Note the **App ID** (`cli_xxx`) and **App Secret**.
    - Put these into the plugin config as `appId` / `appSecret` (or the environment variables `FEISHU_APP_ID` / `FEISHU_APP_SECRET`).
+
+> **One-click onboarding**: when neither the config nor the environment variables provide credentials, the plugin enters an onboarding flow instead of failing: it prints a QR-code / link (valid ~10 minutes) in the `dsh web` log. Scan it with Feishu and the bot app is created automatically with the permissions and event subscriptions pre-set; the returned credentials are saved to `$DSH_HOME/.dsh-connect/feishu-credentials.json` (permissions `0600`) and reused on later startups.
 
 ## 2. Enable the bot capability
 
@@ -62,7 +64,14 @@ Enable and release the following permissions in **Permission Management** (at le
 
 Start `dsh web`; once the log shows a successful connection you can chat in Feishu.
 
-## 7. FAQ
+## 7. Behavior
+
+- **Group @mention policy**: group messages are only answered when the bot is @-mentioned (`requireMention: true` by default); set `requireMention: false` to respond to every group message.
+- **Allowlist pre-filter**: `allowUsers` / `allowChats` are enforced by the adapter **before** any message resource is downloaded — a rejected sender's images/files are never written to disk (the core re-checks the same lists later for the full policy).
+- **Attachment downloads**: images / files / audio / video sent by users are downloaded into the system temp directory (`dsh-connect-images` for images, `dsh-connect-files` for the rest). A single file is capped at 20 MB with a 60-second download timeout, and files older than 24 hours are cleaned up automatically.
+- <a id="webhook-transport"></a>**Webhook transport**: set `transport: webhook` and the adapter starts its own `node:http` server listening on `webhookPort` (default `9000`) at `webhookPath` (default `/`), wired through the SDK's `adaptDefault` with `autoChallenge`, so the `url_verification` challenge is answered automatically. Point the Feishu callback URL at a **public HTTPS** address that reaches this port. `verificationToken` / `encryptKey` are only needed in webhook mode; in long-connection mode they are ignored.
+
+## 8. FAQ
 
 - **Messages not received**: confirm the version is released; groups need @mention (or disable `requireMention`); confirm `im.message.receive_v1` is subscribed.
 - **Card buttons don't respond**: confirm `card.action.trigger` is subscribed and release a new version.
@@ -72,4 +81,3 @@ Start `dsh web`; once the log shows a successful connection you can chat in Feis
   - **Where to see the real error code**: look for the `connect-feishu: 图片下载失败 (...)` line (currently localized; means "image download failed") in the `dsh web` process console log — the chat message also includes the detail (in the fixed version). For other error codes (resource expired, invalid file_key, etc.) see the [Feishu error-code FAQ](https://open.feishu.cn/document/faq/trouble-shooting/how-to-fix-the-99991672-error) and the API docs.
 - **3-second timeout redelivery**: in long-connection mode events must be ACKed within 3 seconds; the SDK handles this internally. Keep `handleInbound` fast on the business side (this plugin enqueues the message and returns immediately; agent processing happens asynchronously in the queue, unaffected).
 - **Multiple instances**: the long connection is cluster-mode — with multiple clients on the same app only one randomly receives each message (this plugin is designed single-process).
-- **Webhook mode**: for public callbacks, set `transport: webhook` with `verificationToken` / `encryptKey`, and you also need a local HTTP service to host the SDK's express adapter (an HTTP service is not built in at this stage — prefer long connection).

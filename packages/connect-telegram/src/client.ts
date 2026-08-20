@@ -15,17 +15,17 @@ const API_BASE = "https://api.telegram.org";
 export interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
-  edited_message?: TelegramMessage;
   callback_query?: TelegramCallbackQuery;
 }
 
 export interface TelegramMessage {
   message_id: number;
   chat: { id: number; type: string; title?: string };
-  from?: { id: number; first_name?: string; username?: string };
+  from?: { id: number; is_bot?: boolean; first_name?: string; username?: string };
   text?: string;
   caption?: string;
   reply_to_message?: TelegramMessage;
+  entities?: { type: string; offset: number; length: number }[];
   photo?: { file_id: string; file_unique_id: string; width: number; height: number }[];
   document?: { file_id: string; file_name?: string };
   voice?: { file_id: string };
@@ -59,13 +59,6 @@ export interface TelegramClientConfig {
   timeoutMs?: number;
   /** Optional base URL override (e.g. for a local Bot API server). */
   baseUrl?: string;
-}
-
-/** One settled update batch from getUpdates. */
-export interface UpdateBatch {
-  updates: TelegramUpdate[];
-  /** Offset to use for the next call (last update_id + 1). */
-  nextOffset: number;
 }
 
 /** Normalized photo/file location after download. */
@@ -109,18 +102,27 @@ export class TelegramClient {
     }
   }
 
-  /** Poll for new updates (long polling); resolves with the batch and next offset. */
-  async pollUpdates(): Promise<UpdateBatch> {
-    const result = await this.call<TelegramUpdate[]>("getUpdates", {
-      offset: this.offset,
-      timeout: this.config.pollingTimeoutSeconds ?? 50,
-      allowed_updates: ["message", "edited_message", "callback_query"],
-    });
-    if (result.length === 0) return { updates: [], nextOffset: this.offset };
-    const last = result[result.length - 1].update_id;
-    const next = last + 1;
-    this.offset = next;
-    return { updates: result, nextOffset: next };
+  /** Long-poll for new updates. Does NOT advance the offset — the caller confirms each update via {@link confirmOffset} after processing it, so a failure mid-batch never loses the remaining updates. */
+  async pollUpdates(): Promise<TelegramUpdate[]> {
+    // The generic per-call HTTP timeout (15s) must not kill a long poll:
+    // give getUpdates a client-side timeout comfortably above the server-side
+    // long-poll window (otherwise every idle poll is aborted at 15s and the
+    // "50s long poll" degrades into short polling + sleep churn).
+    const longPollMs = ((this.config.pollingTimeoutSeconds ?? 50) + 10) * 1000;
+    return this.call<TelegramUpdate[]>(
+      "getUpdates",
+      {
+        offset: this.offset,
+        timeout: this.config.pollingTimeoutSeconds ?? 50,
+        allowed_updates: ["message", "callback_query"],
+      },
+      { timeoutMs: longPollMs },
+    );
+  }
+
+  /** Advance the polling offset past `updateId` — call only after the update was fully handled. */
+  confirmOffset(updateId: number): void {
+    this.offset = Math.max(this.offset, updateId + 1);
   }
 
   /** Skip all pending updates (used on startup so we don't replay history). */
@@ -129,6 +131,11 @@ export class TelegramClient {
     if (result.length > 0) {
       this.offset = result[result.length - 1].update_id + 1;
     }
+  }
+
+  /** Fetch the bot's own identity (id + username) — used for @-mention / reply-to checks. */
+  async getMe(): Promise<{ id: number; username?: string }> {
+    return this.call<{ id: number; username?: string }>("getMe", {});
   }
 
   async sendMessage(chatId: number | string, text: string, opts: SendMessageOptions = {}): Promise<TelegramMessage> {
@@ -189,11 +196,13 @@ export class TelegramClient {
 
   /** Download a file (photo / document / …) by file_id into a temp dir; returns the local path. */
   async downloadFile(fileId: string, dir: string, fileName?: string): Promise<DownloadedResource> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 30_000);
     try {
       const file = await this.call<{ file_path?: string }>("getFile", { file_id: fileId });
       if (file.file_path === undefined) throw new Error("getFile returned no file_path");
       const url = `${this.base()}/file/bot${this.config.botToken}/${file.file_path}`;
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: controller.signal });
       if (!response.ok) throw new Error(`download HTTP ${response.status}`);
       const buffer = Buffer.from(await response.arrayBuffer());
       const safeName = sanitizeFileName(fileName ?? file.file_path.split("/").pop() ?? fileId);
@@ -203,6 +212,8 @@ export class TelegramClient {
       return { path: dest, kind: "file" };
     } catch (error) {
       return { path: "", kind: "file", error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      clearTimeout(timer);
     }
   }
 

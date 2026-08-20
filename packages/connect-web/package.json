@@ -1,6 +1,6 @@
-﻿{
+{
     "name":  "dsh-connect-web",
-    "version":  "0.6.2",
+    "version":  "0.6.3",
     "description":  "Web channel adapter for dsh-connect: mirrors Feishu conversations to DSH Web GUI",
     "type":  "module",
     "main":  "./lib/index.js",
@@ -11,9 +11,16 @@
                               "import":  "./lib/index.js"
                           }
                 },
+    "files":  [
+                  "lib",
+                  "README.md",
+                  "README.zh.md",
+                  "README.i18n.yaml"
+              ],
     "scripts":  {
                     "build":  "tsc",
-                    "typecheck":  "tsc --noEmit"
+                    "typecheck":  "tsc --noEmit",
+                    "test":  "node test/unit.test.mjs"
                 },
     "dependencies":  {
                          "@deepseek-ai/cordis":  "^4.0.1",
@@ -31,5 +38,14 @@
                      "mirror",
                      "chatbot"
                  ],
-    "license":  "MIT"
+    "license":  "MIT",
+    "repository":  {
+                       "type":  "git",
+                       "url":  "https://github.com/IvanWu2015/dsh-connect.git",
+                       "directory":  "packages/connect-web"
+                   },
+    "homepage":  "https://github.com/IvanWu2015/dsh-connect",
+    "bugs":  {
+                 "url":  "https://github.com/IvanWu2015/dsh-connect/issues"
+             }
 }

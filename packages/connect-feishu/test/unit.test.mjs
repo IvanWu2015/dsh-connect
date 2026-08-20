@@ -1,0 +1,83 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+import { padLabels, buildButtonGrid, buildChoiceElements, sanitizeFileName, extractErrorDetail } from "../lib/index.js";
+
+test("padLabels pads CJK labels to equal display width", () => {
+  const options = [
+    { id: "a", label: "短" },
+    { id: "b", label: "很长很长" },
+  ];
+  const padded = padLabels(options);
+  // The long label (4 CJK chars = width 8) sets the target; the short one (width 2) gets 6 units of padding.
+  assert.equal(padded[1].label, "很长很长");
+  assert.ok(padded[0].label.startsWith("短"));
+  assert.ok(padded[0].label.length > "短".length); // padded
+  assert.ok(padded[0].label.length >= padded[1].label.length); // display widths equalized
+});
+
+test("padLabels caps padding at 20 display units", () => {
+  const options = [
+    { id: "a", label: "x" },
+    { id: "b", label: "y".repeat(40) },
+  ];
+  const padded = padLabels(options);
+  assert.ok(padded[0].label.length <= 40);
+});
+
+test("buildButtonGrid renders 2 weighted columns per row, padded last row", () => {
+  const rows = buildButtonGrid([{ id: "a", label: "A" }, { id: "b", label: "B" }, { id: "c", label: "C" }], 2);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].columns.length, 2);
+  assert.equal(rows[1].columns.length, 2); // padded
+  assert.equal(rows[1].columns[1].elements.length, 0); // empty filler column
+  assert.equal(rows[0].columns[0].elements[0].value.choice, "a");
+});
+
+test("buildButtonGrid marks ❌ labels as danger buttons", () => {
+  const rows = buildButtonGrid([{ id: "del", label: "❌ 删除" }], 1);
+  assert.equal(rows[0].columns[0].elements[0].type, "danger");
+});
+
+test("buildChoiceElements splits options into titled sections + rest", () => {
+  const prompt = {
+    title: "菜单",
+    options: [
+      { id: "new", label: "新对话" },
+      { id: "clear", label: "清空" },
+      { id: "exit", label: "退出" },
+    ],
+    sections: [{ title: "会话", ids: ["new", "clear"] }],
+  };
+  const elements = buildChoiceElements(prompt, 2);
+  const captions = elements
+    .filter((e) => e.tag === "div" && e.text?.content !== undefined)
+    .map((e) => e.text.content);
+  assert.ok(captions.some((c) => c.includes("会话")));
+  // The section group renders as a button grid; the unlisted option lands in the rest grid.
+  const grids = elements.filter((e) => e.tag === "column_set");
+  assert.equal(grids.length, 2);
+  const restGrid = grids[1];
+  assert.equal(restGrid.columns[0].elements[0].value.choice, "exit");
+});
+
+test("sanitizeFileName strips path separators and control chars", () => {
+  assert.equal(sanitizeFileName('a/b\\c:d*e?f"g<h>i|j\u0000k'), "a_b_c_d_e_f_g_h_i_j_k");
+  assert.equal(sanitizeFileName("   "), "file");
+  assert.equal(sanitizeFileName("x".repeat(300)).length, 200);
+});
+
+test("extractErrorDetail prefers the Feishu business error body", () => {
+  const err = {
+    response: { status: 400, data: { code: 230003, msg: "app not found" } },
+  };
+  const detail = extractErrorDetail(err);
+  assert.ok(detail.includes("400"));
+  assert.ok(detail.includes("230003"));
+  assert.ok(detail.includes("app not found"));
+});
+
+test("extractErrorDetail falls back to Error message", () => {
+  assert.equal(extractErrorDetail(new Error("boom")), "boom");
+  assert.equal(extractErrorDetail("plain string"), "plain string");
+});

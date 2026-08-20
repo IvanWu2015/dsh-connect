@@ -2,9 +2,9 @@
 
 English | [中文](README.zh.md)
 
-The **channel-agnostic core** for connecting [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**DSH**) agents to chat platforms (Feishu / Lark first, more to come): session binding, agent driving, streaming reply bridging, interactive menu cards, and local commands.
+The **channel-agnostic core** for connecting [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**DSH**) agents to chat platforms (Feishu / Lark, Telegram, DingTalk; more to come): session binding, agent driving, streaming reply bridging, interactive menu cards, and local commands.
 
-> Install together with a channel adapter — e.g. [dsh-connect-feishu](https://www.npmjs.com/package/dsh-connect-feishu) — or the optional [dsh-connect-web](https://www.npmjs.com/package/dsh-connect-web) mirror monitor.
+> Install together with a channel adapter — e.g. [dsh-connect-feishu](https://www.npmjs.com/package/dsh-connect-feishu), [dsh-connect-telegram](https://www.npmjs.com/package/dsh-connect-telegram) or the push-only [dsh-connect-dingtalk](https://www.npmjs.com/package/dsh-connect-dingtalk) — or the optional [dsh-connect-web](https://www.npmjs.com/package/dsh-connect-web) mirror monitor.
 
 ## Overview
 
@@ -122,6 +122,8 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under each plu
 | `transport` | `websocket` | `websocket` = long connection (no public network); `webhook` needs public HTTPS |
 | `verificationToken` | — | Webhook verification token (**secret**) |
 | `encryptKey` | — | Webhook encrypt key (**secret**) |
+| `webhookPort` | `9000` | HTTP port for the built-in webhook server when `transport: "webhook"` |
+| `webhookPath` | `/` | URL path the Feishu event callback posts to (webhook transport) |
 | `requireMention` | `true` | Groups only respond when the bot is @mentioned |
 | `dmMode` | `open` | DM policy: `open` / `allowlist` / `pair` / `disabled` |
 | `language` | `zh` | User-facing message language: `zh` / `en` |
@@ -171,9 +173,11 @@ This is a pnpm workspace; the plugins are independent npm packages under `packag
 
 ```
 packages/
-  connect/        # this package — channel-agnostic core
-  connect-feishu/ # Feishu / Lark adapter
-  connect-web/    # optional Web mirror monitor
+  connect/          # this package — channel-agnostic core
+  connect-feishu/   # Feishu / Lark adapter
+  connect-telegram/ # Telegram adapter (getUpdates long polling)
+  connect-dingtalk/ # DingTalk group-webhook push channel
+  connect-web/      # optional Web mirror monitor
 ```
 
 ```sh

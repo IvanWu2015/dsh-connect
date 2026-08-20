@@ -42,6 +42,11 @@ assert.equal(service.isAllowed(allowed), true);
 assert.equal(service.isAllowed({ ...allowed, chatKey: "c2" }), false);
 assert.equal(service.isAllowed({ ...allowed, senderKey: "u9" }), false);
 
+// adapter-side pre-filter shares the same allowlist (no message object needed)
+assert.equal(service.isChatAllowed("stub", "c1", "u1"), true);
+assert.equal(service.isChatAllowed("stub", "c2", "u1"), false);
+assert.equal(service.isChatAllowed("stub", "c1", "u9"), false);
+
 // a service with empty allowlists allows everyone
 const openCtx = new Context();
 openCtx.provide("agents", {});

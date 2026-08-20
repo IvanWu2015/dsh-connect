@@ -27,7 +27,7 @@ pnpm build
 dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect D:\ACOINFO\code\dsh_feishu\packages\connect-feishu
 ```
 
-（发布到 npm 后改用包名：`dsh plugin --profile web add dsh-connect dsh-connect-feishu`。）
+> npm 包会在每次创建 GitHub Release 时由 `.github/workflows/publish.yml` 自动发布，因此正式发布后可直接用包名安装：`dsh plugin --profile web add dsh-connect dsh-connect-feishu`。本地开发时请使用上面的绝对路径安装方式。
 
 ## 3. 配置 profile 的 cordis.patch.yml
 

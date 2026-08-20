@@ -2,6 +2,60 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [0.6.3] - 2026-08-20
+
+### Fixed
+
+- **core (`dsh-connect`)**:
+  - Command dispatch errors no longer crash the host: a failed command's promise rejection is now handled, so an unhandled rejection can't take the process down.
+  - `driveAgent`'s streaming error path now guarantees the chunk stream terminates — the streaming card no longer hangs forever, and queues / iterators no longer leak.
+  - `buildUserContent` now includes attachments for pure-file messages and vision-capable main models too (previously files were silently dropped).
+  - `/new` `/clear` `/switchTo` now reset `webMirrorSessionId` / `lockOwner` and queued messages, so a stale mirror can no longer point at an old session.
+  - The mirror mutual-exclusion lock now applies only to the feishu/web channels (telegram/dingtalk are no longer misjudged as web).
+  - `getLastTurnInfo` and reminder times use the session language instead of hardcoded `zh-CN`.
+  - `/settings` no longer shows the invalid "streaming output / end-of-turn summary" toggles; 10 unused i18n keys removed.
+  - The Config schema now explicitly declares `autoMirror`.
+- **telegram (`dsh-connect-telegram`)**:
+  - Fixed a missing-brace compile error (TS1128).
+  - The bot's own messages are now ignored (`is_bot` filter), eliminating the echo loop.
+  - `streamText` now accumulates the full text, truncates at 4096 chars and throttles to ~700 ms (previously only deltas were sent, losing content).
+  - `getUpdates` long polling is no longer cut short by the 15 s client timeout — the 50 s polling window now actually applies.
+  - The offset is confirmed per single update (a failed update no longer loses the whole batch).
+  - HTML conversion now fully escapes `& < >` in plain text (previously it could break parse mode).
+  - @-mentions now match exactly against the cached `getMe` identity (replying to a normal user no longer misfires).
+  - Choice buttons are keyed by the composite `(chatId, optionId)` (concurrent menus no longer overwrite each other).
+  - After the timeout, the keyboard is replaced with a "menu expired" notice.
+  - Voice / video / audio downloads are now supported.
+  - `edited_message` is ignored (streaming edits no longer re-trigger the agent).
+  - Unit tests added (escaping / mentions / offset semantics, mocked fetch).
+- **feishu (`dsh-connect-feishu`)**:
+  - Allowlists can pre-filter before the adapter downloads resources (new public `isChatAllowed` on the connect service).
+  - Downloads now have a 20 MB cap and 60 s timeout, async writes, and a 24 h automatic cleanup of the temp dirs.
+  - `transport: "webhook"` is truly implemented (bundled `node:http` server + automatic `url_verification` response; `webhookPort` / `webhookPath` configurable).
+  - `reject` event logs no longer include PII.
+  - Credential files are saved with `chmod 0600`.
+  - `stop()` clears choice / stale-reminder timers.
+  - Pure functions exported and 8 new unit tests added.
+- **dingtalk (`dsh-connect-dingtalk`)**:
+  - Network errors and the `errcode 130101` frequency limit now retry with automatic backoff (up to 3 attempts, configurable delay).
+  - Markdown bodies are truncated at 20000 chars.
+  - `verifyDingtalkSignature` now compares after URL-decoding and enforces a ±5-minute timestamp freshness window (previously encoding mismatches made the signature always fail).
+  - Removed the unused `md5Hex` export and 4 dead i18n keys.
+  - Tests expanded to 11 (retry / rate-limit / truncation).
+- **connect-web / packaging**:
+  - `dsh-connect` gained a `"./binding"` export subpath (fixes TS2307 and the runtime `ERR_PACKAGE_PATH_NOT_EXPORTED`).
+  - `getBindingStore` now uses the public `bindingStore` getter.
+  - Removed the synthetic `[Mirror]` inbound message (it used to create a spurious web runner and burn a real agent turn).
+  - `connect-web` tests migrated from vitest to `node:test` and wired into the root `pnpm test`.
+  - `dsh-connect-web` `package.json` now ships `README.zh.md` / `README.i18n.yaml` via a `files` field and declares `repository` / `homepage` / `bugs` like the other packages.
+
+### Changed
+
+- **CI / configuration**: `publish.yml` now runs `pnpm build` before test and publish, adds a typecheck step, and publishes the 5 packages serially (connect first). `dsh.shared.config.json` dropped dead keys nobody reads (`bindingsFile` / `sessionStorePath` / `defaultTimeoutMinutes` / `enableLocking`).
+- **Documentation sync**: all docs updated to match the code (root README + package READMEs, QUICKSTART, feishu/telegram/dingtalk setup guides, PUBLISHING, MIRROR_SESSION, SHARED_WORKSPACE_SETUP, ENHANCEMENTS_SUMMARY, and a new bilingual `docs/WEB_MIRROR_IMPLEMENTATION.md` + `docs/WEB_MIRROR_IMPLEMENTATION.zh.md`); DingTalk is now honestly described as a one-way push service (no inbound, no automatic lifecycle hooks), the mirror lock is documented as one-sided (Feishu-side only), dead config keys and the broken `$schema` reference were removed, and the publish claims were unified across README and QUICKSTART.
+
 ## [0.6.2] - 2026-08-19
 
 ### Added
