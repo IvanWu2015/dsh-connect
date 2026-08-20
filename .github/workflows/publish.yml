@@ -48,23 +48,23 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Publish dsh-connect (core, first)
-        run: pnpm publish --filter packages/connect --no-git-checks
+        run: pnpm publish --filter dsh-connect --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish dsh-connect-web
-        run: pnpm publish --filter packages/connect-web --no-git-checks
+        run: pnpm publish --filter dsh-connect-web --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish dsh-connect-feishu
-        run: pnpm publish --filter packages/connect-feishu --no-git-checks
+        run: pnpm publish --filter dsh-connect-feishu --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish dsh-connect-telegram
-        run: pnpm publish --filter packages/connect-telegram --no-git-checks
+        run: pnpm publish --filter dsh-connect-telegram --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish dsh-connect-dingtalk
-        run: pnpm publish --filter packages/connect-dingtalk --no-git-checks
+        run: pnpm publish --filter dsh-connect-dingtalk --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           # npm automation token (no OTP needed). Set this in GitHub repo
