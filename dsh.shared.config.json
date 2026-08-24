@@ -1,21 +1,17 @@
 {
   "description": "Shared configuration for DSH Feishu and DSH Web to ensure consistent workspace and session experience",
-  
   "workspace": {
-    "defaultWorkDir": "D:\\ACOINFO\\code\\dsh_feishu",
+    "defaultWorkDir": "C:\\code\\dsh_feishu",
     "additionalWorkspaces": [
-      "D:\\ACOINFO\\code\\dsh_feishu\\packages",
-      "D:\\ACOINFO\\code\\dsh_feishu\\docs"
+      "C:\\code\\dsh_feishu\\packages",
+      "C:\\code\\dsh_feishu\\docs"
     ]
   },
-  
   "state": {
     "stateDir": ".dsh-connect"
   },
-  
   "mirror": {
     "autoCreate": true
   },
-  
   "language": "zh"
 }

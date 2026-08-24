@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.6.7] - 2026-08-21
+## [0.6.7] - 2026-08-24
 
 ### Added
 
@@ -13,6 +13,11 @@ All notable changes to this project are documented following [Keep a Changelog](
 
 - **dsh refuses to boot (`duplicate loader entry id: connect`)** when this plugin is installed on a fresh profile: since 0.6.4 each package auto-registers via its `dsh.bundle.patch` manifest, so the profile's `cordis.patch.yml` must only *override* their config — re-`insert`ing the same ids (`connect`, `connect-feishu`, …) makes the loader throw `duplicate loader entry id` and dsh aborts at startup. The docs and `examples/profile-cordis.patch.yml` now show the override form (plus `disabled: true` for disabling) instead of `insert` blocks.
 - **`config: null` crash on load**: the DSH loader passes `null` (not `undefined`) as plugin config for entries without an explicit config, and does not run schema coercion on this path. `ConnectService` (constructed directly as the default export) and every adapter's `apply()` dereferenced the raw config and threw `Cannot read properties of null (reading 'workDir')`, so even a correct profile failed to boot until `connect` was given a non-null `config`. All five packages now normalize `config ?? {}` before use.
+
+### Changed
+
+- **inbound errors are never silent**: the core no longer fire-and-forgets `handleInbound` — failures are caught and logged as `connect: inbound handling failed` instead of vanishing as unhandled rejections, so adapter-side crashes surface in the `dsh web` log.
+- **feishu inbound visibility**: the adapter logs each received message at `info` level (`connect-feishu: received message chat=… sender=… type=… len=…`) before the allowlist gate, so "sent but bot silent" is instantly diagnosable as events-not-arriving vs. events-rejected.
 
 ## [0.6.6] - 2026-08-21
 

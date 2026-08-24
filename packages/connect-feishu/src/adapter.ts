@@ -258,7 +258,7 @@ export class FeishuAdapter implements ChannelAdapter {
 
   constructor(
     config: FeishuConfig,
-    private readonly logger?: { warn?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void },
+    private readonly logger?: { info?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void },
     private readonly isChatAllowed?: (channel: string, chatKey: string, senderKey: string) => boolean,
   ) {
     const appId = config.appId ?? process.env.FEISHU_APP_ID;
@@ -411,6 +411,10 @@ export class FeishuAdapter implements ChannelAdapter {
     await this.cleanupTempDirs().catch(() => undefined);
 
     this.channel.on("message", async (msg: NormalizedMsg) => {
+      // First-line diagnostic: if the Feishu app is subscribed to
+      // im.message.receive_v1 this fires for every inbound message. Its absence
+      // when the user sends a message means events aren't being delivered at all.
+      this.logger?.info?.(`connect-feishu: received message chat=${msg.chatId} sender=${msg.senderId} type=${msg.chatType} len=${String(msg.content?.length ?? 0)}`);
       // Allowlist gate BEFORE downloading anything: rejected senders' files
       // never touch disk (the core re-checks later for the full policy).
       if (this.isChatAllowed !== undefined && !this.isChatAllowed("feishu", msg.chatId, msg.senderId)) {

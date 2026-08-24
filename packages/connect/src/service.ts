@@ -168,7 +168,13 @@ export class ConnectService extends Service {
     }
     this.adapters.set(adapter.id, adapter);
     adapter.onInbound((msg) => {
-      void this.handleInbound(msg);
+      void this.handleInbound(msg).catch((error) => {
+        // Inbound handling runs detached; surface failures instead of letting
+        // them become silent unhandled rejections.
+        this.ctx.logger?.error?.(
+          `connect: inbound handling failed (${msg.channel}/${msg.chatKey}): ${String(error)}`,
+        );
+      });
     });
   }
 

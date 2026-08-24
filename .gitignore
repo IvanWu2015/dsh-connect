@@ -8,3 +8,4 @@ dist/
 .DS_Store
 .dsh-connect/
 .dsh-connect-images/
+.pnpm-tools/
