@@ -33,19 +33,22 @@ dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect D:\ACOI
 
 Edit `%DSH_HOME%\profiles\web\cordis.patch.yml` (usually `C:\Users\you\.dsh\profiles\web\cordis.patch.yml`) and replace the empty array `[]` with:
 
+> The plugins register themselves automatically via their bundle manifests, so
+> this file only **overrides** their config. Do not `insert` them here again —
+> a duplicate `id` makes dsh refuse to boot with `duplicate loader entry id`.
+
 ```yaml
-- insert:
-    - id: connect
-      name: dsh-connect
-    - id: connect-feishu
-      name: dsh-connect-feishu
-      config:
-        appId: cli_yourAppId
-        appSecret: yourAppSecret
-        transport: websocket      # long connection, no public network needed
-        requireMention: true      # groups need @mention
-        dmMode: open              # DMs open
-        # language: en            # user-facing message language: zh (default) / en
+- id: connect
+  name: dsh-connect
+- id: connect-feishu
+  name: dsh-connect-feishu
+  config:
+    appId: cli_yourAppId
+    appSecret: yourAppSecret
+    transport: websocket      # long connection, no public network needed
+    requireMention: true      # groups need @mention
+    dmMode: open              # DMs open
+    # language: en            # user-facing message language: zh (default) / en
 ```
 
 > Instead of putting credentials in the file you can use the environment variables `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and omit `appId`/`appSecret` in the config.

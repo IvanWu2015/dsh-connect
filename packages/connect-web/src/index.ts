@@ -42,7 +42,9 @@ interface ConnectLike {
  * - Send messages (subject to lock ownership)
  * - Receive real-time updates through DSH's session event system
  */
-export function apply(ctx: Context, config: ConnectWebConfig = {}): void {
+export function apply(ctx: Context, config: ConnectWebConfig | null = {}): void {
+  // The DSH loader passes `null` for entries without an explicit config.
+  config = config ?? {};
   const connect = ctx.get("connect") as ConnectLike | undefined;
   if (connect === undefined) {
     throw new Error("connect-web: the dsh-connect service is not present; load it before this adapter");

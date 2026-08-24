@@ -21,14 +21,15 @@ dsh plugin --profile web add dsh-connect dsh-connect-web
 
 ## 配置
 
+这些插件会通过各自的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它们的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）：
+
 ```yaml
-- insert:
-    - id: connect
-      name: dsh-connect
-    - id: connect-web
-      name: dsh-connect-web
-      config:
-        # pollIntervalMs: 1000   # 兜底镜像扫描间隔（默认 1000）
+- id: connect
+  name: dsh-connect
+- id: connect-web
+  name: dsh-connect-web
+  config:
+    # pollIntervalMs: 1000   # 兜底镜像扫描间隔（默认 1000）
 ```
 
 | 键 | 默认值 | 说明 |

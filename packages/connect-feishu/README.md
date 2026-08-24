@@ -12,20 +12,19 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu
 
 ## Configuration
 
-In the DSH profile's `cordis.patch.yml`:
+In the DSH profile's `cordis.patch.yml`. The plugins register themselves via their bundle manifests, so only override their config — do **not** `insert` them again (duplicate ids crash dsh at boot):
 
 ```yaml
-- insert:
-    - id: connect
-      name: dsh-connect
-    - id: connect-feishu
-      name: dsh-connect-feishu
-      config:
-        appId: cli_xxx
-        appSecret: cli_secret_xxx
-        transport: websocket
-        requireMention: true
-        dmMode: open
+- id: connect
+  name: dsh-connect
+- id: connect-feishu
+  name: dsh-connect-feishu
+  config:
+    appId: cli_xxx
+    appSecret: cli_secret_xxx
+    transport: websocket
+    requireMention: true
+    dmMode: open
 ```
 
 | Key | Default | Description |

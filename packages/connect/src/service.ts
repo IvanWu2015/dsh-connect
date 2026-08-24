@@ -65,9 +65,13 @@ export class ConnectService extends Service {
   private readonly interaction: InteractionBridge;
   private workspacesRegistered = false;
 
-  constructor(ctx: Context, config: ConnectConfig = {}) {
+  constructor(ctx: Context, config: ConnectConfig | null = {}) {
     super(ctx, "connect");
-    
+
+    // The DSH loader constructs this class directly and passes `null` when the
+    // plugin has no explicit config (no schema coercion on this path).
+    config = config ?? {};
+
     // Load shared configuration and merge with provided config
     const sharedConfig = loadSharedConfig();
     const mergedConfig: ConnectConfig = {

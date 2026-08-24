@@ -21,14 +21,15 @@ Requires the `dsh-connect` service to be loaded first (it is declared via `injec
 
 ## Configure
 
+The plugins register themselves via their bundle manifests, so only override their config — do **not** `insert` them again (duplicate ids crash dsh at boot):
+
 ```yaml
-- insert:
-    - id: connect
-      name: dsh-connect
-    - id: connect-web
-      name: dsh-connect-web
-      config:
-        # pollIntervalMs: 1000   # fallback mirror scan interval (default 1000)
+- id: connect
+  name: dsh-connect
+- id: connect-web
+  name: dsh-connect-web
+  config:
+    # pollIntervalMs: 1000   # fallback mirror scan interval (default 1000)
 ```
 
 | Key | Default | Description |

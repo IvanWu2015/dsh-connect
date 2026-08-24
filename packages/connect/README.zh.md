@@ -50,12 +50,12 @@ dsh plugin --profile web add dsh-connect-web
 dsh plugin --profile web update dsh-connect dsh-connect-feishu
 ```
 
-**禁用** —— 从 profile patch 中删除相应条目，插件即停止加载（参见 `~/.dsh/profiles/<profile>/cordis.patch.yml`）：
+**禁用** —— 在 profile patch 中将 bundle 注册的条目覆盖为 `disabled: true`（参见 `~/.dsh/profiles/<profile>/cordis.patch.yml`）：
 
 ```yaml
-- insert:
-    - id: connect        # delete this block (and connect-feishu) to disable
-      name: dsh-connect
+- id: connect            # set disabled: true (and connect-feishu) to disable
+  name: dsh-connect
+  disabled: true
 ```
 
 **彻底移除** —— 卸载软件包并删除它们产生的数据：
@@ -70,21 +70,20 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 ## 快速开始
 
 1. **安装插件**（见上文）。
-2. **添加最小配置**到 `~/.dsh/profiles/<profile>/cordis.patch.yml`（另见 [`examples/profile-cordis.patch.yml`](../../examples/profile-cordis.patch.yml)）：
+2. **添加最小配置**到 `~/.dsh/profiles/<profile>/cordis.patch.yml`（另见 [`examples/profile-cordis.patch.yml`](../../examples/profile-cordis.patch.yml)）。这些插件会通过各自的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它们的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）：
 
    ```yaml
-   - insert:
-       - id: connect
-         name: dsh-connect
-         # workDir: D:\your\workdir     # agent working directory (default: process cwd)
-       - id: connect-feishu
-         name: dsh-connect-feishu
-         config:
-           appId: cli_xxxx
-           appSecret: cli_secret_xxxx
-           transport: websocket
-           requireMention: true
-           dmMode: open
+   - id: connect
+     name: dsh-connect
+     # workDir: D:\your\workdir     # agent working directory (default: process cwd)
+   - id: connect-feishu
+     name: dsh-connect-feishu
+     config:
+       appId: cli_xxxx
+       appSecret: cli_secret_xxxx
+       transport: websocket
+       requireMention: true
+       dmMode: open
    ```
 
 3. **启动宿主** —— `dsh web`（或 `dsh run`）。未配置凭据时，`dsh-connect-feishu` 会进入**一键开通**流程：扫描日志中的二维码 / 打开链接以授权机器人。

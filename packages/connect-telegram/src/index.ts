@@ -50,7 +50,9 @@ function start(connect: ConnectLike, config: TelegramConfig, logger?: { warn?: (
  * Register and start the Telegram adapter. `connect` comes from `inject`, so
  * it is guaranteed present.
  */
-export function apply(ctx: Context, config: TelegramConfig = {}): void {
+export function apply(ctx: Context, config: TelegramConfig | null = {}): void {
+  // The DSH loader passes `null` for entries without an explicit config.
+  config = config ?? {};
   const connect = ctx.get("connect") as ConnectLike | undefined;
   if (connect === undefined) {
     throw new Error("connect-telegram: the dsh-connect service is not present; load it before this adapter");

@@ -25,17 +25,16 @@ This document explains how to create a DingTalk group custom robot and use `dsh-
 
 ## 2. Configuring the Plugin
 
-In the `cordis.patch.yml` of your DSH profile:
+In the `cordis.patch.yml` of your DSH profile. The plugin registers itself via its bundle manifest, so only override its config — do **not** `insert` it again (duplicate ids crash dsh at boot):
 
 ```yaml
-- insert:
-    - id: connect-dingtalk
-      name: dsh-connect-dingtalk
-      config:
-        webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxx"
-        secret: "SECxxxxxxxx"        # only needed when signing is enabled
-        language: zh
-        # defaultAt: { mobiles: ["13800000000"] }   # optional default @-mentions for every push
+- id: connect-dingtalk
+  name: dsh-connect-dingtalk
+  config:
+    webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxx"
+    secret: "SECxxxxxxxx"        # only needed when signing is enabled
+    language: zh
+    # defaultAt: { mobiles: ["13800000000"] }   # optional default @-mentions for every push
 ```
 
 Or set the environment variable `DINGTALK_WEBHOOK_URL` (use `DINGTALK_WEBHOOK_SECRET` for the signing secret).

@@ -19,16 +19,15 @@ dsh plugin --profile web add dsh-connect dsh-connect-telegram
 
 ## Configure
 
-Create a bot with [@BotFather](https://t.me/BotFather) and copy the token. Append to the profile's `cordis.patch.yml`:
+Create a bot with [@BotFather](https://t.me/BotFather) and copy the token. Append to the profile's `cordis.patch.yml`. The plugin registers itself via its bundle manifest, so only override its config — do **not** `insert` it again (duplicate ids crash dsh at boot):
 
 ```yaml
-- insert:
-    - id: connect-telegram
-      name: dsh-connect-telegram
-      config:
-        botToken: "123456:ABC-YourBotToken"
-        requireMention: true   # groups must @-mention the bot (default true)
-        language: zh           # zh | en
+- id: connect-telegram
+  name: dsh-connect-telegram
+  config:
+    botToken: "123456:ABC-YourBotToken"
+    requireMention: true   # groups must @-mention the bot (default true)
+    language: zh           # zh | en
 ```
 
 The token may also come from the `TELEGRAM_BOT_TOKEN` environment variable.

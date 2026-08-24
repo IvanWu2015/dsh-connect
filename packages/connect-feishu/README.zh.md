@@ -12,20 +12,19 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu
 
 ## 配置
 
-在 DSH profile 的 `cordis.patch.yml` 中：
+在 DSH profile 的 `cordis.patch.yml` 中。这些插件会通过各自的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它们的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）：
 
 ```yaml
-- insert:
-    - id: connect
-      name: dsh-connect
-    - id: connect-feishu
-      name: dsh-connect-feishu
-      config:
-        appId: cli_xxx
-        appSecret: cli_secret_xxx
-        transport: websocket
-        requireMention: true
-        dmMode: open
+- id: connect
+  name: dsh-connect
+- id: connect-feishu
+  name: dsh-connect-feishu
+  config:
+    appId: cli_xxx
+    appSecret: cli_secret_xxx
+    transport: websocket
+    requireMention: true
+    dmMode: open
 ```
 
 | 键 | 默认值 | 说明 |

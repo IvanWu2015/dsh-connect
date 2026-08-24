@@ -62,7 +62,9 @@ function start(connect: ConnectLike, config: FeishuConfig, logger?: { warn?: (..
  * one-click onboarding (scan a QR / open a link) and connects with the
  * credentials the flow returns.
  */
-export function apply(ctx: Context, config: FeishuConfig = {}): void {
+export function apply(ctx: Context, config: FeishuConfig | null = {}): void {
+  // The DSH loader passes `null` for entries without an explicit config.
+  config = config ?? {};
   const connect = ctx.get("connect") as ConnectLike | undefined;
   if (connect === undefined) {
     throw new Error("connect-feishu: the dsh-connect service is not present; load it before this adapter");

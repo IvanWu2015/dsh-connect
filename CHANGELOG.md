@@ -9,6 +9,11 @@ All notable changes to this project are documented following [Keep a Changelog](
 - **`/ps <note>` — append to the running task**: while a task is executing, `/ps <note>` (alias `/append`) injects the note into the in-flight task via the agent's steering inbox — a running driver consumes it at its next step boundary, so the user can steer the current task instead of queueing a new turn behind it. When the agent is idle it starts a turn like a normal message. While a task runs, ordinary messages now reply with a hint that `/ps <note>` can append to the running task (or `/stop` to cancel) instead of silently queueing.
 - **proactive context-high nudge**: while a turn runs, observed context usage vs. the model window is tracked; when it crosses 75% the user is asked (once per turn) whether to compact now. If the task is still running, compaction is deferred and runs automatically right after the turn ends.
 
+### Fixed
+
+- **dsh refuses to boot (`duplicate loader entry id: connect`)** when this plugin is installed on a fresh profile: since 0.6.4 each package auto-registers via its `dsh.bundle.patch` manifest, so the profile's `cordis.patch.yml` must only *override* their config — re-`insert`ing the same ids (`connect`, `connect-feishu`, …) makes the loader throw `duplicate loader entry id` and dsh aborts at startup. The docs and `examples/profile-cordis.patch.yml` now show the override form (plus `disabled: true` for disabling) instead of `insert` blocks.
+- **`config: null` crash on load**: the DSH loader passes `null` (not `undefined`) as plugin config for entries without an explicit config, and does not run schema coercion on this path. `ConnectService` (constructed directly as the default export) and every adapter's `apply()` dereferenced the raw config and threw `Cannot read properties of null (reading 'workDir')`, so even a correct profile failed to boot until `connect` was given a non-null `config`. All five packages now normalize `config ?? {}` before use.
+
 ## [0.6.6] - 2026-08-21
 
 ### Added

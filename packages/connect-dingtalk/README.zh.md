@@ -21,18 +21,17 @@ dsh plugin --profile web add dsh-connect-dingtalk
 
 1. 在钉钉群中：**设置 → 群机器人 → 添加机器人 → 自定义机器人**。
 2. 复制**Webhook 地址**（`https://oapi.dingtalk.com/robot/send?access_token=…`）；可选地启用**签名**并复制 `SEC…` 密钥。
-3. 追加到 profile 的 `cordis.patch.yml`：
+3. 追加到 profile 的 `cordis.patch.yml`。该插件会通过自身的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）：
 
 ```yaml
-- insert:
-    - id: connect-dingtalk
-      name: dsh-connect-dingtalk
-      config:
-        webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
-        secret: "SECxxx"        # only if signing is enabled
-        language: zh            # zh | en
-        # defaultAt:            # optional: @-mention on every push
-        #   mobiles: ["13800000000"]
+- id: connect-dingtalk
+  name: dsh-connect-dingtalk
+  config:
+    webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+    secret: "SECxxx"        # only if signing is enabled
+    language: zh            # zh | en
+    # defaultAt:            # optional: @-mention on every push
+    #   mobiles: ["13800000000"]
 ```
 
 Webhook 地址也可以来自 `DINGTALK_WEBHOOK_URL` 环境变量（密钥通过 `DINGTALK_WEBHOOK_SECRET`）。

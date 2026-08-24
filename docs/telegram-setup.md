@@ -20,17 +20,16 @@ This document explains how to create a Telegram bot and connect it to `dsh-conne
 
 ## 2. Providing the Token to the Plugin
 
-In the `cordis.patch.yml` of your DSH profile:
+In the `cordis.patch.yml` of your DSH profile. The plugin registers itself via its bundle manifest, so only override its config — do **not** `insert` it again (duplicate ids crash dsh at boot):
 
 ```yaml
-- insert:
-    - id: connect-telegram
-      name: dsh-connect-telegram
-      config:
-        botToken: "1234567890:AAHf7xHfZxHfxxxxxxxxxxxxxxxxxxxxxxxxxx"
-        requireMention: true
-        pollingTimeoutSeconds: 50   # getUpdates long-poll timeout (default 50)
-        language: zh
+- id: connect-telegram
+  name: dsh-connect-telegram
+  config:
+    botToken: "1234567890:AAHf7xHfZxHfxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    requireMention: true
+    pollingTimeoutSeconds: 50   # getUpdates long-poll timeout (default 50)
+    language: zh
         # baseUrl: "http://localhost:8081"   # optional: local Bot API server
 ```
 

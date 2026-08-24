@@ -66,29 +66,28 @@ For local development (before the packages are published), load the built packag
 
 ### Configure
 
-Append to the profile's `cordis.patch.yml` (`$DSH_HOME/profiles/web/cordis.patch.yml`) with an `insert` block (Host plane):
+Append to the profile's `cordis.patch.yml` (`$DSH_HOME/profiles/web/cordis.patch.yml`). The plugins register themselves automatically via their bundle manifests, so this file only overrides their config — do **not** `insert` them again (a duplicate `id` makes dsh refuse to boot with `duplicate loader entry id`):
 
 ```yaml
-- insert:
-    - id: connect
-      name: dsh-connect
-    - id: connect-feishu
-      name: dsh-connect-feishu
-      config:
-        appId: cli_xxxx
-        appSecret: cli_secret_xxxx
-        transport: websocket
-        requireMention: true
-        dmMode: open
-    - id: connect-telegram
-      name: dsh-connect-telegram
-      config:
-        botToken: "123456:ABC-YourBotToken"   # from @BotFather
-        requireMention: true
-    - id: connect-dingtalk
-      name: dsh-connect-dingtalk
-      config:
-        webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+- id: connect
+  name: dsh-connect
+- id: connect-feishu
+  name: dsh-connect-feishu
+  config:
+    appId: cli_xxxx
+    appSecret: cli_secret_xxxx
+    transport: websocket
+    requireMention: true
+    dmMode: open
+- id: connect-telegram
+  name: dsh-connect-telegram
+  config:
+    botToken: "123456:ABC-YourBotToken"   # from @BotFather
+    requireMention: true
+- id: connect-dingtalk
+  name: dsh-connect-dingtalk
+  config:
+    webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
 ```
 
 ### Run

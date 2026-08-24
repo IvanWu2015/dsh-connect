@@ -76,8 +76,10 @@ declare module "@deepseek-ai/cordis" {
 }
 
 /** Register the `connect` service; adapters resolve it via `inject: ["connect"]`. */
-export function apply(ctx: Context, config: ConnectConfig = {}): void {
-  void new ConnectService(ctx, config);
+export function apply(ctx: Context, config: ConnectConfig | null = {}): void {
+  // The DSH loader passes `null` for entries without an explicit config
+  // (and does not run schema coercion on this path), so treat it as empty.
+  void new ConnectService(ctx, config ?? {});
 }
 
 export default ConnectService;

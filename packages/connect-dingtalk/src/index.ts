@@ -95,7 +95,9 @@ export class DingtalkService extends Service {
   }
 }
 
-export function apply(ctx: Context, config: DingtalkConfig = {}): void {
+export function apply(ctx: Context, config: DingtalkConfig | null = {}): void {
+  // The DSH loader passes `null` for entries without an explicit config.
+  config = config ?? {};
   try {
     // `Service` construction registers `ctx.dingtalk` automatically.
     void new DingtalkService(ctx, config, ctx.logger);

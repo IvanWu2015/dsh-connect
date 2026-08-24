@@ -19,16 +19,15 @@ dsh plugin --profile web add dsh-connect dsh-connect-telegram
 
 ## 配置
 
-通过 [@BotFather](https://t.me/BotFather) 创建一个机器人并复制 token。追加到 profile 的 `cordis.patch.yml`：
+通过 [@BotFather](https://t.me/BotFather) 创建一个机器人并复制 token。追加到 profile 的 `cordis.patch.yml`。该插件会通过自身的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）：
 
 ```yaml
-- insert:
-    - id: connect-telegram
-      name: dsh-connect-telegram
-      config:
-        botToken: "123456:ABC-YourBotToken"
-        requireMention: true   # groups must @-mention the bot (default true)
-        language: zh           # zh | en
+- id: connect-telegram
+  name: dsh-connect-telegram
+  config:
+    botToken: "123456:ABC-YourBotToken"
+    requireMention: true   # groups must @-mention the bot (default true)
+    language: zh           # zh | en
 ```
 
 token 也可以来自 `TELEGRAM_BOT_TOKEN` 环境变量。

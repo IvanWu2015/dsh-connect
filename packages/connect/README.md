@@ -50,12 +50,12 @@ dsh plugin --profile web add dsh-connect-web
 dsh plugin --profile web update dsh-connect dsh-connect-feishu
 ```
 
-**Disable** — remove the entries from the profile patch so the plugins stop loading (see `~/.dsh/profiles/<profile>/cordis.patch.yml`):
+**Disable** — override the bundle-registered entries with `disabled: true` in the profile patch (see `~/.dsh/profiles/<profile>/cordis.patch.yml`):
 
 ```yaml
-- insert:
-    - id: connect        # delete this block (and connect-feishu) to disable
-      name: dsh-connect
+- id: connect            # set disabled: true (and connect-feishu) to disable
+  name: dsh-connect
+  disabled: true
 ```
 
 **Complete removal** — uninstall the packages and delete the data they created:
@@ -70,21 +70,20 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 ## Quick start
 
 1. **Install the plugins** (see above).
-2. **Add the minimal config** to `~/.dsh/profiles/<profile>/cordis.patch.yml` (also see [`examples/profile-cordis.patch.yml`](../../examples/profile-cordis.patch.yml)):
+2. **Add the minimal config** to `~/.dsh/profiles/<profile>/cordis.patch.yml` (also see [`examples/profile-cordis.patch.yml`](../../examples/profile-cordis.patch.yml)). The plugins register themselves via their bundle manifests, so only override their config — do **not** `insert` them again (duplicate ids crash dsh at boot):
 
    ```yaml
-   - insert:
-       - id: connect
-         name: dsh-connect
-         # workDir: D:\your\workdir     # agent working directory (default: process cwd)
-       - id: connect-feishu
-         name: dsh-connect-feishu
-         config:
-           appId: cli_xxxx
-           appSecret: cli_secret_xxxx
-           transport: websocket
-           requireMention: true
-           dmMode: open
+   - id: connect
+     name: dsh-connect
+     # workDir: D:\your\workdir     # agent working directory (default: process cwd)
+   - id: connect-feishu
+     name: dsh-connect-feishu
+     config:
+       appId: cli_xxxx
+       appSecret: cli_secret_xxxx
+       transport: websocket
+       requireMention: true
+       dmMode: open
    ```
 
 3. **Start the host** — `dsh web` (or `dsh run`). With no credentials configured, `dsh-connect-feishu` enters **one-click onboarding**: scan the QR / open the link from the log to authorize the bot.

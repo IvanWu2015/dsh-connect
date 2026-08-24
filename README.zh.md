@@ -66,29 +66,28 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram
 
 ### 配置
 
-在 profile 的 `cordis.patch.yml`（`$DSH_HOME/profiles/web/cordis.patch.yml`）末尾追加一个 `insert` 块（Host 平面）：
+在 profile 的 `cordis.patch.yml`（`$DSH_HOME/profiles/web/cordis.patch.yml`）末尾追加配置。这些插件会通过各自的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它们的配置——**不要**再用 `insert` 重新插入它们（重复的 `id` 会让 dsh 以 `duplicate loader entry id` 拒绝启动）：
 
 ```yaml
-- insert:
-    - id: connect
-      name: dsh-connect
-    - id: connect-feishu
-      name: dsh-connect-feishu
-      config:
-        appId: cli_xxxx
-        appSecret: cli_secret_xxxx
-        transport: websocket
-        requireMention: true
-        dmMode: open
-    - id: connect-telegram
-      name: dsh-connect-telegram
-      config:
-        botToken: "123456:ABC-YourBotToken"   # from @BotFather
-        requireMention: true
-    - id: connect-dingtalk
-      name: dsh-connect-dingtalk
-      config:
-        webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+- id: connect
+  name: dsh-connect
+- id: connect-feishu
+  name: dsh-connect-feishu
+  config:
+    appId: cli_xxxx
+    appSecret: cli_secret_xxxx
+    transport: websocket
+    requireMention: true
+    dmMode: open
+- id: connect-telegram
+  name: dsh-connect-telegram
+  config:
+    botToken: "123456:ABC-YourBotToken"   # from @BotFather
+    requireMention: true
+- id: connect-dingtalk
+  name: dsh-connect-dingtalk
+  config:
+    webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
 ```
 
 ### 运行

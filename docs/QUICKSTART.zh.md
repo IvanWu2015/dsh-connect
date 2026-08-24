@@ -33,19 +33,20 @@ dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect D:\ACOI
 
 编辑 `%DSH_HOME%\profiles\web\cordis.patch.yml`（通常是 `C:\Users\you\.dsh\profiles\web\cordis.patch.yml`），把空数组 `[]` 替换为：
 
+> 这些插件会通过各自的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它们的配置。**不要**再用 `insert` 重新插入它们——重复的 `id` 会让 dsh 以 `duplicate loader entry id` 拒绝启动。
+
 ```yaml
-- insert:
-    - id: connect
-      name: dsh-connect
-    - id: connect-feishu
-      name: dsh-connect-feishu
-      config:
-        appId: cli_yourAppId
-        appSecret: yourAppSecret
-        transport: websocket      # long connection, no public network needed
-        requireMention: true      # groups need @mention
-        dmMode: open              # DMs open
-        # language: en            # user-facing message language: zh (default) / en
+- id: connect
+  name: dsh-connect
+- id: connect-feishu
+  name: dsh-connect-feishu
+  config:
+    appId: cli_yourAppId
+    appSecret: yourAppSecret
+    transport: websocket      # long connection, no public network needed
+    requireMention: true      # groups need @mention
+    dmMode: open              # DMs open
+    # language: en            # user-facing message language: zh (default) / en
 ```
 
 > 也可以不把凭据写进文件，改用环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，并在配置中省略 `appId`/`appSecret`。

@@ -21,18 +21,17 @@ dsh plugin --profile web add dsh-connect-dingtalk
 
 1. In a DingTalk group: **Settings → Group robot → Add robot → Custom robot**.
 2. Copy the **Webhook URL** (`https://oapi.dingtalk.com/robot/send?access_token=…`); optionally enable **signing** and copy the `SEC…` secret.
-3. Append to the profile's `cordis.patch.yml`:
+3. Append to the profile's `cordis.patch.yml`. The plugin registers itself via its bundle manifest, so only override its config — do **not** `insert` it again (duplicate ids crash dsh at boot):
 
 ```yaml
-- insert:
-    - id: connect-dingtalk
-      name: dsh-connect-dingtalk
-      config:
-        webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
-        secret: "SECxxx"        # only if signing is enabled
-        language: zh            # zh | en
-        # defaultAt:            # optional: @-mention on every push
-        #   mobiles: ["13800000000"]
+- id: connect-dingtalk
+  name: dsh-connect-dingtalk
+  config:
+    webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+    secret: "SECxxx"        # only if signing is enabled
+    language: zh            # zh | en
+    # defaultAt:            # optional: @-mention on every push
+    #   mobiles: ["13800000000"]
 ```
 
 The webhook URL may also come from the `DINGTALK_WEBHOOK_URL` environment variable (secret via `DINGTALK_WEBHOOK_SECRET`).

@@ -20,16 +20,15 @@
 
 ## 2. 把 Token 配置给插件
 
-在 DSH profile 的 `cordis.patch.yml` 中:
+在 DSH profile 的 `cordis.patch.yml` 中。该插件会通过自身的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）:
 
 ```yaml
-- insert:
-    - id: connect-telegram
-      name: dsh-connect-telegram
-      config:
-        botToken: "1234567890:AAHf7xHfZxHfxxxxxxxxxxxxxxxxxxxxxxxxxx"
-        requireMention: true
-        pollingTimeoutSeconds: 50   # getUpdates 长轮询超时(默认 50)
+- id: connect-telegram
+  name: dsh-connect-telegram
+  config:
+    botToken: "1234567890:AAHf7xHfZxHfxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    requireMention: true
+    pollingTimeoutSeconds: 50   # getUpdates 长轮询超时(默认 50)
         language: zh
         # baseUrl: "http://localhost:8081"   # 可选:本地 Bot API 服务器
 ```
