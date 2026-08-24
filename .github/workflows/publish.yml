@@ -1,9 +1,15 @@
-# Publish all dsh-connect packages to npm when a GitHub Release is created.
+# Publish all dsh-connect packages to npm using npm Trusted Publishing (OIDC).
 #
-# Prerequisites:
-#   1. Add an npm "automation" token (bypasses 2FA OTP) to repository secrets as NPM_TOKEN.
-#      Generate at: https://www.npmjs.com/settings/~/tokens → "Automation" type.
-#   2. Create a GitHub Release → the workflow runs automatically.
+# No npm token is stored anywhere. The publish-npm job authenticates to npm via
+# GitHub Actions OIDC (short-lived credentials), so you must configure each
+# package on npmjs.com to trust this repo's publish.yml workflow:
+#   package → Settings → Publishing Access → "Add Trusted Publisher"
+#   - Platform: GitHub Actions
+#   - Repository: IvanWu2015/dsh-connect
+#   - Workflow filename: publish.yml
+# npm requires each package to already exist on the registry before OIDC can be
+# configured (it does — 0.6.6 is live), and the npm CLI must be >= 11.5.1
+# (upgraded in the publish job below).
 #
 # Packages are published sequentially in dependency order (connect first,
 # adapters after) — a parallel matrix would race the peerDependency.
@@ -14,6 +20,7 @@ name: Publish to npm
 on:
   release:
     types: [created]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -35,6 +42,9 @@ jobs:
   publish-npm:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write        # OIDC trusted publishing — GitHub issues the token npm verifies
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -42,30 +52,29 @@ jobs:
           version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: https://registry.npmjs.org/
           cache: pnpm
+      - name: Ensure npm CLI supports OIDC (>= 11.5.1)
+        run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Publish dsh-connect (core, first)
-        run: pnpm publish --filter dsh-connect --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        working-directory: packages/connect
+        run: npm publish --provenance
       - name: Publish dsh-connect-web
-        run: pnpm publish --filter dsh-connect-web --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        working-directory: packages/connect-web
+        run: |
+          # pnpm's workspace protocol is meaningless on the registry — pin the
+          # core dependency to this package's own version before publishing.
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('package.json'));j.dependencies['dsh-connect']=j.version;fs.writeFileSync('package.json',JSON.stringify(j,null,2)+'\n')"
+          npm publish --provenance
       - name: Publish dsh-connect-feishu
-        run: pnpm publish --filter dsh-connect-feishu --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        working-directory: packages/connect-feishu
+        run: npm publish --provenance
       - name: Publish dsh-connect-telegram
-        run: pnpm publish --filter dsh-connect-telegram --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        working-directory: packages/connect-telegram
+        run: npm publish --provenance
       - name: Publish dsh-connect-dingtalk
-        run: pnpm publish --filter dsh-connect-dingtalk --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          # npm automation token (no OTP needed). Set this in GitHub repo
-          # Settings → Secrets and variables → Actions → New repository secret.
+        working-directory: packages/connect-dingtalk
+        run: npm publish --provenance
