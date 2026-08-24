@@ -61,20 +61,49 @@ jobs:
       - run: pnpm build
       - name: Publish dsh-connect (core, first)
         working-directory: packages/connect
-        run: npm publish --provenance
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "dsh-connect@${VERSION}" version >/dev/null 2>&1; then
+            echo "dsh-connect@${VERSION} already published — skipping"
+          else
+            npm publish --provenance
+          fi
       - name: Publish dsh-connect-web
         working-directory: packages/connect-web
         run: |
           # pnpm's workspace protocol is meaningless on the registry — pin the
           # core dependency to this package's own version before publishing.
           node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('package.json'));j.dependencies['dsh-connect']=j.version;fs.writeFileSync('package.json',JSON.stringify(j,null,2)+'\n')"
-          npm publish --provenance
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "dsh-connect-web@${VERSION}" version >/dev/null 2>&1; then
+            echo "dsh-connect-web@${VERSION} already published — skipping"
+          else
+            npm publish --provenance
+          fi
       - name: Publish dsh-connect-feishu
         working-directory: packages/connect-feishu
-        run: npm publish --provenance
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "dsh-connect-feishu@${VERSION}" version >/dev/null 2>&1; then
+            echo "dsh-connect-feishu@${VERSION} already published — skipping"
+          else
+            npm publish --provenance
+          fi
       - name: Publish dsh-connect-telegram
         working-directory: packages/connect-telegram
-        run: npm publish --provenance
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "dsh-connect-telegram@${VERSION}" version >/dev/null 2>&1; then
+            echo "dsh-connect-telegram@${VERSION} already published — skipping"
+          else
+            npm publish --provenance
+          fi
       - name: Publish dsh-connect-dingtalk
         working-directory: packages/connect-dingtalk
-        run: npm publish --provenance
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "dsh-connect-dingtalk@${VERSION}" version >/dev/null 2>&1; then
+            echo "dsh-connect-dingtalk@${VERSION} already published — skipping"
+          else
+            npm publish --provenance
+          fi
