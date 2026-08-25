@@ -51,6 +51,8 @@ export interface ChatBinding {
     replyRef?: string;
     images?: readonly string[];
     files?: readonly string[];
+    /** Source channel of the message; preserved so replay routes to the right runner. */
+    channel?: string;
   }>;
   /** Every conversation ever opened in this chat, oldest last. */
   sessions: ChatSessionRecord[];
@@ -196,9 +198,9 @@ export class BindingStore {
           ...(b.lockOwner === "feishu" || b.lockOwner === "web" ? { lockOwner: b.lockOwner } : {}),
           ...(typeof b.lockAcquiredAt === "number" ? { lockAcquiredAt: b.lockAcquiredAt } : {}),
           ...(typeof b.lockTimeoutMs === "number" ? { lockTimeoutMs: b.lockTimeoutMs } : {}),
-          ...(Array.isArray(b.queuedMessages) ? { queuedMessages: b.queuedMessages.filter((m): m is { text: string; senderKey: string; timestamp: number } => 
+          ...(Array.isArray(b.queuedMessages) ? { queuedMessages: b.queuedMessages.filter((m): m is { text: string; senderKey: string; timestamp: number; channel?: string } => 
             typeof m === "object" && m !== null && typeof (m as any).text === "string" && typeof (m as any).senderKey === "string"
-          ) } : {}),
+          ).map((m) => (typeof (m as any).channel === "string" ? { ...m, channel: (m as any).channel } : m)) } : {}),
           sessions: normalizeSessions(b.sessions),
         });
       }

@@ -249,6 +249,23 @@ export interface Messages {
   reminderOnce: string;
   reminderLine(state: string, id: string, prompt: string, kind: string, when: string): string;
   remindersCount(n: number, list: string): string;
+  reminderFired(text: string): string;
+  reminderSet(atDisplay: string, text: string): string;
+  reminderNoText: string;
+  reminderParseFailed(arg: string): string;
+  reminderPersistedHeader: string;
+  broadcastUsage: string;
+  broadcastNotAdmin: string;
+  broadcastDisabled: string;
+  broadcastSent(n: number): string;
+  broadcastUnsupported: string;
+  sendUsage: string;
+  sendNotFound(path: string): string;
+  sendIsDir(path: string): string;
+  sendTooLarge(path: string): string;
+  sendUnsupported: string;
+  sendSent(path: string): string;
+  sendFailed(detail: string): string;
   noWorkspaces: string;
   workspaceSessions(n: number): string;
   workspacesCount(n: number, list: string): string;
@@ -268,7 +285,6 @@ export interface Messages {
   messageQueued(position: number): string;
   queueProcessed(count: number): string;
   exportMarkdown(path: string): string;
-  exportPdfNotSupported: string;
   exportNoSession: string;
   exportFailed(error: string): string;
   mirrorStatus(sessionId: string, lockedBy?: string, timeoutMin?: number, queuedCount?: number): string;
@@ -532,6 +548,23 @@ const zh: Messages = {
   reminderOnce: "一次性",
   reminderLine: (state, id, prompt, kind, when) => `${state} [${id}] ${prompt}（${kind}，${when}）`,
   remindersCount: (n, list) => `定时提醒（${n}）：\n${list}`,
+  reminderFired: (text) => `⏰ 提醒：${text}`,
+  reminderSet: (atDisplay, text) => `⏰ 已设置提醒（${atDisplay}）：${text}`,
+  reminderNoText: "用法：/remind <时间> <内容>，例如 /remind 10分钟 提醒我喝水",
+  reminderParseFailed: (arg) => `无法解析时间「${arg}」。支持「10分钟」「2小时」「14:30」`,
+  reminderPersistedHeader: "— 持久化提醒 —",
+  broadcastUsage: "用法：/broadcast <内容>，向所有已绑定的会话发送消息",
+  broadcastNotAdmin: "只有管理员（allowUsers 中配置的用户）才能广播",
+  broadcastDisabled: "广播未启用：请先在配置里设置 allowUsers",
+  broadcastSent: (n) => `📢 已广播给 ${n} 个会话`,
+  broadcastUnsupported: "广播服务不可用",
+  sendUsage: "用法：/send <路径>，发送工作区内的文件（图片/文件/音视频）",
+  sendNotFound: (path) => `文件不存在：${path}`,
+  sendIsDir: (path) => `${path} 是目录，请指定文件`,
+  sendTooLarge: (path) => `文件过大（> 20MB）：${path}`,
+  sendUnsupported: "当前通道不支持发送文件，已改为发送文件路径",
+  sendSent: (path) => `📎 已发送：${path}`,
+  sendFailed: (detail) => `❌ 发送文件失败：${detail}`,
   noWorkspaces: "还没有工作区。可用 `/workspace <绝对路径>` 新建。",
   workspaceSessions: (n) => `  · ${n} 会话`,
   workspacesCount: (n, list) => `工作区（${n}）：\n${list}`,
@@ -550,7 +583,6 @@ const zh: Messages = {
   messageQueued: (position) => `📥 消息已加入队列（第 ${position} 位），等待锁释放后自动执行`,
   queueProcessed: (count) => `✅ 已处理队列中的 ${count} 条消息`,
   exportMarkdown: (path) => `📄 对话历史已导出为 Markdown：\n${path}`,
-  exportPdfNotSupported: "⚠️ PDF 导出暂不支持，请使用 Markdown 格式",
   exportNoSession: "当前没有活动会话，无法导出",
   exportFailed: (error) => `❌ 导出失败：${error}`,
   mirrorStatus: (sessionId, lockedBy, timeoutMin, queuedCount) => {
@@ -817,6 +849,23 @@ const en: Messages = {
   reminderOnce: "one-time",
   reminderLine: (state, id, prompt, kind, when) => `${state} [${id}] ${prompt} (${kind}, ${when})`,
   remindersCount: (n, list) => `Scheduled reminders (${n}):\n${list}`,
+  reminderFired: (text) => `⏰ Reminder: ${text}`,
+  reminderSet: (atDisplay, text) => `⏰ Reminder set (${atDisplay}): ${text}`,
+  reminderNoText: "Usage: /remind <time> <text>, e.g. /remind 10m drink water",
+  reminderParseFailed: (arg) => `Cannot parse time "${arg}". Try "10m", "2h" or "14:30"`,
+  reminderPersistedHeader: "— persistent reminders —",
+  broadcastUsage: "Usage: /broadcast <text> — send a message to every bound chat",
+  broadcastNotAdmin: "Only admins (users listed in allowUsers) can broadcast",
+  broadcastDisabled: "Broadcast is disabled: configure allowUsers first",
+  broadcastSent: (n) => `📢 Broadcast to ${n} chat(s)`,
+  broadcastUnsupported: "Broadcast service unavailable",
+  sendUsage: "Usage: /send <path> — send a file from the workspace (image/file/audio/video)",
+  sendNotFound: (path) => `File not found: ${path}`,
+  sendIsDir: (path) => `${path} is a directory; pick a file`,
+  sendTooLarge: (path) => `File too large (> 20MB): ${path}`,
+  sendUnsupported: "This channel cannot send files; sending the file path instead",
+  sendSent: (path) => `📎 Sent: ${path}`,
+  sendFailed: (detail) => `❌ Failed to send file: ${detail}`,
   noWorkspaces: "No workspaces yet. Create one with `/workspace <absolute path>`.",
   workspaceSessions: (n) => `  · ${n} session(s)`,
   workspacesCount: (n, list) => `Workspaces (${n}):\n${list}`,
@@ -835,7 +884,6 @@ const en: Messages = {
   messageQueued: (position) => `📥 Message queued (position ${position}), will execute after lock release`,
   queueProcessed: (count) => `✅ Processed ${count} queued message(s)`,
   exportMarkdown: (path) => `📄 Conversation history exported to Markdown:\n${path}`,
-  exportPdfNotSupported: "⚠️ PDF export is not supported yet, please use Markdown format",
   exportNoSession: "No active session to export",
   exportFailed: (error) => `❌ Export failed: ${error}`,
   mirrorStatus: (sessionId, lockedBy, timeoutMin, queuedCount) => {

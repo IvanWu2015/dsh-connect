@@ -17,6 +17,15 @@ import { createAsyncQueue } from "./stream.js";
 import { helpText, parseCommand, type Command } from "./commands.js";
 import type { BindingStore, ChatBinding, ChatSessionRecord } from "./binding.js";
 import { messages, type Language, type Messages } from "./i18n.js";
+import {
+  DEFAULT_LOCK_TIMEOUT_MS,
+  acquire as lockAcquire,
+  canWrite as lockCanWrite,
+  isLockTimedOut as lockIsTimedOut,
+  release as lockRelease,
+  type QueuedMessage,
+} from "./mirror-lock.js";
+import { formatRemindAt, parseRemindTime, type ReminderStore } from "./scheduler.js";
 
 export interface ConnectConfig {
   /** Agent preset id composed into each session; `undefined` = roster default. */
@@ -495,6 +504,14 @@ export class AgentRunner {
     private readonly adapter: ChannelAdapter,
     private readonly bindings: BindingStore,
     private readonly adapters?: Map<string, ChannelAdapter>,
+    /**
+     * Route a replayed queued message back into the runner of its own channel
+     * (wired by ConnectService). Without it, replayed messages would run in
+     * whichever runner happened to release the lock.
+     */
+    private readonly requeue?: (msg: InboundMessage) => void,
+    /** Persistent chat-level reminders (`/remind`), wired by ConnectService. */
+    private readonly reminders?: ReminderStore,
   ) {
     this.workDir = config.workDir ?? this.resolveDefaultWorkDir();
     // A per-chat language override (set via the settings menu) wins over config.
@@ -808,14 +825,14 @@ export class AgentRunner {
       await this.sendTurnStats(msg, outcome);
 
       // Release lock after task completion
-      if (usesLock) this.releaseLock();
+      if (usesLock) await this.releaseLock();
 
       if (outcome.reason !== "completed") {
         await this.sendSummary(msg, outcome);
       }
     } catch (error) {
       // Release lock even on error
-      if (usesLock) this.releaseLock();
+      if (usesLock) await this.releaseLock();
 
       const detail = error instanceof Error ? error.message : String(error);
       await this.adapter
@@ -1568,6 +1585,18 @@ export class AgentRunner {
         await this.handleAppend(command.text, target, msg);
         break;
       }
+      case "remind": {
+        await this.handleRemind(command.text, target, msg);
+        break;
+      }
+      case "send": {
+        await this.handleSend(command.path, target);
+        break;
+      }
+      case "broadcast": {
+        await this.handleBroadcast(command.text, target, msg);
+        break;
+      }
       case "help": {
         await this.adapter.sendText(target, helpText(this.t));
         break;
@@ -1610,6 +1639,106 @@ export class AgentRunner {
     agent.steer(createUserMessage({ content, source: { kind: "user" } }));
     this.touchBinding(msg);
     await this.adapter.sendText(target, this.t.psReceived(text));
+  }
+
+  /**
+   * `/remind <time> <text>` — persist a chat-level reminder that fires
+   * without waking the agent (see src/scheduler.ts).
+   */
+  private async handleRemind(argText: string, target: OutboundTarget, msg: InboundMessage): Promise<void> {
+    if (this.reminders === undefined) {
+      await this.adapter.sendText(target, this.t.reminderNoText);
+      return;
+    }
+    const arg = argText.trim();
+    if (arg === "") {
+      await this.adapter.sendText(target, this.t.reminderNoText);
+      return;
+    }
+    const space = arg.indexOf(" ");
+    const time = space === -1 ? arg : arg.slice(0, space);
+    const body = space === -1 ? "" : arg.slice(space + 1).trim();
+    const dueAt = parseRemindTime(time);
+    if (dueAt === undefined) {
+      await this.adapter.sendText(target, this.t.reminderParseFailed(time));
+      return;
+    }
+    if (body === "") {
+      await this.adapter.sendText(target, this.t.reminderNoText);
+      return;
+    }
+    this.reminders.add({
+      channel: this.channel,
+      chatKey: this.chatKey,
+      chatType: this.chatType,
+      text: body,
+      dueAt,
+      ownerKey: msg.senderKey,
+    });
+    await this.adapter.sendText(target, this.t.reminderSet(formatRemindAt(dueAt, this.language), body));
+  }
+
+  /**
+   * `/send <path>` — deliver a file from the workspace through the channel's
+   * `sendFile` capability; falls back to sending the path as text.
+   */
+  private async handleSend(pathArg: string, target: OutboundTarget): Promise<void> {
+    if (pathArg === "") {
+      await this.adapter.sendText(target, this.t.sendUsage);
+      return;
+    }
+    const path = isAbsolute(pathArg) ? pathArg : join(this.workDir, pathArg);
+    let size: number;
+    try {
+      if (!existsSync(path)) {
+        await this.adapter.sendText(target, this.t.sendNotFound(path));
+        return;
+      }
+      const stat = statSync(path);
+      if (stat.isDirectory()) {
+        await this.adapter.sendText(target, this.t.sendIsDir(path));
+        return;
+      }
+      size = stat.size;
+    } catch {
+      await this.adapter.sendText(target, this.t.sendNotFound(path));
+      return;
+    }
+    if (size > 20 * 1024 * 1024) {
+      await this.adapter.sendText(target, this.t.sendTooLarge(path));
+      return;
+    }
+    if (this.adapter.sendFile === undefined) {
+      await this.adapter.sendText(target, `${this.t.sendUnsupported}\n${path}`);
+      return;
+    }
+    try {
+      await this.adapter.sendFile(target, path);
+      await this.adapter.sendText(target, this.t.sendSent(path));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.adapter.sendText(target, this.t.sendFailed(truncate(detail)));
+    }
+  }
+
+  /**
+   * `/broadcast <text>` — admins push a message to every bound chat.
+   * Admin gating lives in the connect service (allowUsers).
+   */
+  private async handleBroadcast(text: string, target: OutboundTarget, msg: InboundMessage): Promise<void> {
+    const service = this.ctx.get("connect") as
+      | { broadcast?(senderKey: string, markdown: string): Promise<{ ok: boolean; reason?: "disabled" | "not-admin"; count?: number }> }
+      | undefined;
+    if (service?.broadcast === undefined) {
+      await this.adapter.sendText(target, this.t.broadcastUnsupported);
+      return;
+    }
+    const result = await service.broadcast(msg.senderKey, text);
+    if (!result.ok) {
+      await this.adapter.sendText(target, result.reason === "disabled" ? this.t.broadcastDisabled : this.t.broadcastNotAdmin);
+      return;
+    }
+    await this.adapter.sendText(target, this.t.broadcastSent(result.count ?? 0));
   }
 
   private recordSession(sessionId: string, title: string, ownerKey: string): void {
@@ -2411,26 +2540,37 @@ export class AgentRunner {
   }
 
   private async showSchedule(target: OutboundTarget): Promise<void> {
-    const agent = this.agent;
-    if (agent === undefined) {
-      await this.adapter.sendText(target, this.t.noActiveSession);
-      return;
-    }
-    const reminders = foldReminders(agent.session.events);
-    if (reminders.length === 0) {
-      await this.adapter.sendText(target, this.t.noReminders);
-      return;
-    }
+    // Agent-level reminders (session `schedule` tool) + persistent chat-level
+    // reminders (`/remind`), merged into one list.
+    const agentReminders = this.agent === undefined ? [] : foldReminders(this.agent.session.events);
+    const persisted = this.reminders?.listFor(this.channel, this.chatKey) ?? [];
     const now = Date.now();
     const locale = this.language === "en" ? "en-US" : "zh-CN";
-    const lines = reminders.map((r) => {
+    const agentLines = agentReminders.map((r) => {
       const due = Date.parse(r.scheduledAt) <= now;
       const state = due ? this.t.reminderDue : this.t.reminderClock;
       const kind = r.kind === "every" ? this.t.reminderEvery(Math.round((r.everySeconds ?? 0) / 60)) : this.t.reminderOnce;
       const when = new Date(Date.parse(r.scheduledAt)).toLocaleString(locale);
       return this.t.reminderLine(state, r.id, r.prompt, kind, when);
     });
-    await this.adapter.sendText(target, this.t.remindersCount(reminders.length, lines.join("\n")));
+    const persistedLines = persisted.map((r) => {
+      const due = r.dueAt <= now;
+      const state = due ? this.t.reminderDue : this.t.reminderClock;
+      const when = new Date(r.dueAt).toLocaleString(locale);
+      return this.t.reminderLine(state, r.id, r.text, this.t.reminderOnce, when);
+    });
+    const total = agentLines.length + persistedLines.length;
+    if (total === 0) {
+      await this.adapter.sendText(target, this.t.noReminders);
+      return;
+    }
+    const parts: string[] = [];
+    if (agentLines.length > 0) parts.push(...agentLines);
+    if (persistedLines.length > 0) {
+      parts.push(this.t.reminderPersistedHeader);
+      parts.push(...persistedLines);
+    }
+    await this.adapter.sendText(target, this.t.remindersCount(total, parts.join("\n")));
   }
 
   private async showAllWorkspaces(target: OutboundTarget): Promise<void> {
@@ -2535,7 +2675,7 @@ export class AgentRunner {
     // Process any queued messages before releasing
     const queuedCount = binding.queuedMessages?.length ?? 0;
     
-    this.releaseLock();
+    await this.releaseLock();
     
     let message = this.t.unlockSuccess;
     if (queuedCount > 0) {
@@ -2575,20 +2715,13 @@ export class AgentRunner {
   }
 
   /**
-   * Export conversation history to Markdown or PDF.
+   * Export conversation history as Markdown (a future PDF pipeline can be
+   * added here; `/export pdf` currently falls back to Markdown).
    */
-  private async handleExport(target: OutboundTarget, format?: "markdown" | "pdf"): Promise<void> {
+  private async handleExport(target: OutboundTarget, format?: "markdown"): Promise<void> {
     const agent = this.agent;
     if (agent === undefined) {
       await this.adapter.sendText(target, this.t.exportNoSession);
-      return;
-    }
-
-    // Default to markdown if not specified
-    const exportFormat = format ?? "markdown";
-    
-    if (exportFormat === "pdf") {
-      await this.adapter.sendText(target, this.t.exportPdfNotSupported);
       return;
     }
 
@@ -2663,15 +2796,13 @@ export class AgentRunner {
    */
   private canWrite(channel: "feishu" | "web"): boolean {
     const binding = this.bindings.get(this.channel, this.chatKey);
-    if (binding?.lockOwner === undefined) return true; // No lock, free access
-    
-    // Check timeout
-    if (this.isLockTimedOut(binding)) {
-      this.releaseTimeoutLock(binding);
+    if (binding === undefined) return true; // No binding, free access
+    if (lockCanWrite(binding, channel)) {
+      // A timed-out lock counts as free; release it so the next acquire sees a clean state.
+      if (lockIsTimedOut(binding)) this.releaseTimeoutLock(binding);
       return true;
     }
-    
-    return binding.lockOwner === channel;
+    return false;
   }
 
   /**
@@ -2679,42 +2810,20 @@ export class AgentRunner {
    * Returns true if lock acquired, false if already locked by another channel.
    */
   private acquireLock(channel: "feishu" | "web"): boolean {
-    const binding = this.bindings.get(this.channel, this.chatKey);
+    let binding = this.bindings.get(this.channel, this.chatKey);
     if (binding === undefined) return true;
-    
-    // Check timeout before acquiring
-    if (this.isLockTimedOut(binding)) {
+
+    // A timed-out lock is treated as free: release it (with the user notice)
+    // before acquiring so the next state is clean.
+    if (lockIsTimedOut(binding)) {
       this.releaseTimeoutLock(binding);
-      // After timeout release, try to acquire again
-      const refreshed = this.bindings.get(this.channel, this.chatKey);
-      if (refreshed !== undefined && (refreshed.lockOwner === undefined || refreshed.lockOwner === channel)) {
-        const defaultTimeoutMs = refreshed.lockTimeoutMs ?? 5 * 60 * 1000;
-        this.bindings.put({ 
-          ...refreshed, 
-          lockOwner: channel, 
-          lockAcquiredAt: Date.now(),
-          lockTimeoutMs: defaultTimeoutMs,
-          lastActiveAt: Date.now() 
-        });
-        return true;
-      }
+      binding = this.bindings.get(this.channel, this.chatKey) ?? binding;
     }
-    
-    if (binding.lockOwner === undefined || binding.lockOwner === channel) {
-      // Lock is free or already owned by this channel
-      const timeoutMs = binding.lockTimeoutMs ?? 5 * 60 * 1000;
-      this.bindings.put({ 
-        ...binding, 
-        lockOwner: channel, 
-        lockAcquiredAt: Date.now(),
-        lockTimeoutMs: timeoutMs,
-        lastActiveAt: Date.now() 
-      });
-      return true;
-    }
-    
-    // Locked by other channel - queue the message if from Web
-    return false;
+
+    const next = lockAcquire(binding, channel);
+    if (next === undefined) return false; // Locked by another channel
+    this.bindings.put({ ...next, lastActiveAt: Date.now() });
+    return true;
   }
 
   /**
@@ -2725,7 +2834,7 @@ export class AgentRunner {
     const binding = this.bindings.get(this.channel, this.chatKey);
     if (binding === undefined) return -1;
     
-    const queued = binding.queuedMessages ?? [];
+    const queued: QueuedMessage[] = binding.queuedMessages ?? [];
     queued.push({ 
       text: msg.text, 
       senderKey: msg.senderKey, 
@@ -2733,6 +2842,8 @@ export class AgentRunner {
       replyRef: msg.replyRef,
       images: msg.images,
       files: msg.files,
+      // Keep the true source channel so replay routes to the right runner.
+      channel: msg.channel,
     });
     
     this.bindings.put({ ...binding, queuedMessages: queued });
@@ -2755,85 +2866,75 @@ export class AgentRunner {
     // Clear queue immediately to prevent duplicate processing
     this.bindings.put({ ...binding, queuedMessages: [] });
     
-    // Notify about queued messages being processed
-    if (count > 0) {
-      const adapter = this.adapters?.get(this.channel);
-      if (adapter) {
-        await adapter.sendText(
-          { chatKey: this.chatKey, chatType: this.chatType },
-          this.t.queueProcessed(count)
-        ).catch(() => undefined);
-      }
-      
-      // Re-enqueue messages into the runner's processing queue
-      // Construct minimal InboundMessage objects from queued data
-      for (const queued of messages) {
-        const inboundMsg: InboundMessage = {
-          channel: "web", // Queued messages are from Web channel
-          chatKey: this.chatKey,
-          chatType: this.chatType,
-          senderKey: queued.senderKey,
-          text: queued.text,
-          replyRef: queued.replyRef,
-          images: queued.images,
-          files: queued.files,
-        };
-        // Add to the runner's internal queue for processing
+    // Notify about queued messages being processed.
+    await this.adapter
+      .sendText(
+        { chatKey: this.chatKey, chatType: this.chatType },
+        this.t.queueProcessed(count),
+      )
+      .catch(() => undefined);
+
+    // Replay each queued message through the service routing so it lands in
+    // the runner of its own channel (a web message goes to the web runner,
+    // never the releasing feishu runner). Without a router we fall back to
+    // the local queue so behavior stays functional in isolation.
+    for (const queued of messages) {
+      const inboundMsg: InboundMessage = {
+        channel: queued.channel ?? "web",
+        chatKey: this.chatKey,
+        chatType: this.chatType,
+        senderKey: queued.senderKey,
+        text: queued.text,
+        replyRef: queued.replyRef,
+        images: queued.images,
+        files: queued.files,
+      };
+      if (this.requeue !== undefined) {
+        this.requeue(inboundMsg);
+      } else {
         this.queue.push(inboundMsg);
       }
-      
-      // Trigger processing if not already running
-      void this.drain();
     }
+    if (this.requeue === undefined) void this.drain();
   }
 
-  /** Release session lock. */
-  private releaseLock(): void {
+  /**
+   * Release session lock. Awaits the queued-message drain, then clears the
+   * lock from a FRESH read: the drain's queue-clearing put must not be
+   * overwritten by a stale binding object (which would resurrect the queue
+   * and cause duplicate processing on the next release).
+   */
+  private async releaseLock(): Promise<void> {
     const binding = this.bindings.get(this.channel, this.chatKey);
-    if (binding !== undefined && binding.lockOwner !== undefined) {
-      // Process queued messages before releasing
-      void this.processQueuedMessages();
-      
-      this.bindings.put({ ...binding, lockOwner: undefined, lockAcquiredAt: undefined });
-    }
+    if (binding === undefined || binding.lockOwner === undefined) return;
+
+    await this.processQueuedMessages();
+
+    const fresh = this.bindings.get(this.channel, this.chatKey) ?? binding;
+    this.bindings.put(lockRelease(fresh));
   }
 
-  /** Check if lock has timed out. */
-  private isLockTimedOut(binding: ChatBinding): boolean {
-    if (binding.lockOwner === undefined || binding.lockAcquiredAt === undefined) {
-      return false;
-    }
-    
-    const timeoutMs = binding.lockTimeoutMs ?? 5 * 60 * 1000; // Default 5 minutes
-    const elapsed = Date.now() - binding.lockAcquiredAt;
-    return elapsed > timeoutMs;
-  }
-
-  /** Check and release timed-out locks. */
+  /** Check and release timed-out locks (delegates to the pure lock module). */
   private checkAndReleaseTimeoutLock(): void {
     const binding = this.bindings.get(this.channel, this.chatKey);
-    if (binding && this.isLockTimedOut(binding)) {
+    if (binding !== undefined && lockIsTimedOut(binding)) {
       this.releaseTimeoutLock(binding);
     }
   }
 
   /** Release a timed-out lock and notify. */
   private releaseTimeoutLock(binding: ChatBinding): void {
-    const timeoutMin = Math.round((binding.lockTimeoutMs ?? 5 * 60 * 1000) / 60000);
+    const timeoutMin = Math.round((binding.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS) / 60000);
     const lockedBy = binding.lockOwner;
-    
-    this.bindings.put({ 
-      ...binding, 
-      lockOwner: undefined, 
-      lockAcquiredAt: undefined 
-    });
-    
+
+    this.bindings.put(lockRelease(binding));
+
     // Notify users about timeout release
     const adapter = this.adapters?.get(this.channel);
-    if (adapter && lockedBy) {
+    if (adapter !== undefined && lockedBy !== undefined) {
       void adapter.sendText(
         { chatKey: this.chatKey, chatType: this.chatType },
-        this.t.lockTimeoutReleased(timeoutMin)
+        this.t.lockTimeoutReleased(timeoutMin),
       ).catch(() => undefined);
     }
   }

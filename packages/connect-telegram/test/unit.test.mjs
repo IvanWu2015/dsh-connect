@@ -9,7 +9,7 @@ import {
   decodeMessageRef,
   isBotMentioned,
 } from "../lib/index.js";
-import { TelegramClient } from "../lib/client.js";
+import { TelegramClient, telegramFileMethod } from "../lib/client.js";
 
 test("escapeHtml escapes & < >", () => {
   assert.equal(escapeHtml("a & b < c > d"), "a &amp; b &lt; c &gt; d");
@@ -134,4 +134,14 @@ test("pollUpdates does not advance the offset; confirmOffset does (per-update ac
   } finally {
     globalThis.fetch = client["__restoreFetch"];
   }
+});
+// ── Stage B: sendFile classification (B3) ────────────────────────────────
+
+test("telegramFileMethod picks sendPhoto vs sendDocument by extension", () => {
+  assert.equal(telegramFileMethod("a.png"), "sendPhoto");
+  assert.equal(telegramFileMethod("A.JPEG"), "sendPhoto");
+  assert.equal(telegramFileMethod("clip.gif"), "sendPhoto");
+  assert.equal(telegramFileMethod("report.pdf"), "sendDocument");
+  assert.equal(telegramFileMethod("data.zip"), "sendDocument");
+  assert.equal(telegramFileMethod("noext"), "sendDocument");
 });

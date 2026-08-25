@@ -30,7 +30,7 @@
 | `/mirror [--timeout N]` | 为当前聊天创建（或查看状态）Web 镜像会话；可选锁超时时间（分钟） |
 | `/unlock` | 手动释放会话锁 |
 | `/renew` | 把当前锁的超时时间延长一个完整周期（仅锁的拥有者可续期） |
-| `/export [markdown\|pdf]` | 导出对话历史（目前仅支持 Markdown；`pdf` 返回友好提示） |
+| `/export [markdown]` | 导出对话历史为 Markdown |
 
 ---
 

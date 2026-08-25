@@ -20,8 +20,12 @@ Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**D
 - **Interactive menus**: `/menu` offers hierarchical point-and-click navigation (workdir / chats / settings / plugins / compact, …) — the same card updates in place, supports back/exit, and stays usable across consecutive actions.
 - **Smart image & file handling**: images sent to the bot are downloaded automatically; if the main model supports vision it sees them directly, otherwise a vision-model sub-task describes them and the description is injected — so a text-only main model never stalls on images. Attached files/audio/video are also downloaded into the workdir.
 - **Web mirror**: each chat can mirror its DSH session into the DSH Web GUI (`/mirror`, or automatic via `autoMirror`). The mirror lock is enforced only on the Feishu side (`lockOwner`): the Web GUI reads/writes the DSH session directly and never consults the lock, so mutual exclusion is one-sided (not fixable at the repository level — documented as-is). `/new`, `/clear` or switching sessions resets the mirror target; `autoMirror` rebuilds it for new sessions.
-- **Local commands** (no model tokens): `/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/export` `/goals` `/schedule` `/model` `/notify` `/progress` `/mirror` `/unlock` `/renew` `/new` `/clear` `/stop` `/settings` `/help`.
-- **Extensible, multi-platform**: `dsh-connect` (channel-agnostic core) + per-channel adapter packages — `dsh-connect-feishu` (bidirectional Feishu/Lark), `dsh-connect-telegram` (bidirectional Telegram), `dsh-connect-dingtalk` (one-way DingTalk group push). Adding a channel is one more adapter package.
+- **Scheduled reminders**: `/remind 10分钟 喝水` (or `2h` / `14:30`) persists a chat-level reminder that fires without waking the agent — no model tokens spent — and survives process restarts. `/schedule` lists these together with the agent's own in-session reminders.
+- **Send files back to the chat**: `/send <path>` delivers a workspace file — images inline, other files as attachments (feishu / telegram).
+- **Admin broadcast**: `/broadcast <text>` pushes a message to every bound chat across all channels (admins listed in `allowUsers`).
+- **Thread isolation (feishu, optional)**: `threadIsolation: true` keeps each group thread in its own DSH session.
+- **Local commands** (no model tokens): `/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/export` `/goals` `/schedule` `/remind` `/send` `/broadcast` `/model` `/notify` `/progress` `/mirror` `/unlock` `/renew` `/new` `/clear` `/stop` `/settings` `/help`.
+- **Extensible, multi-platform**: `dsh-connect` (channel-agnostic core) + per-channel adapter packages — `dsh-connect-feishu` (bidirectional Feishu/Lark), `dsh-connect-telegram` (bidirectional Telegram), `dsh-connect-dingtalk` (bidirectional stream mode + one-way webhook push). Adding a channel is one more adapter package.
 
 ## Repository layout
 
@@ -30,7 +34,7 @@ packages/
   connect/           dsh-connect core: services, bindings, runner, streaming bridge, commands
   connect-feishu/    dsh-connect-feishu Feishu adapter: createLarkChannel long connection, normalization, streaming replies
   connect-telegram/  dsh-connect-telegram Telegram adapter: Bot API long-polling, streaming edits, inline-keyboard choices
-  connect-dingtalk/  dsh-connect-dingtalk DingTalk group-webhook push: text/markdown/@-mention notices (one-way)
+  connect-dingtalk/  dsh-connect-dingtalk DingTalk: stream-mode bidirectional adapter (STOMP over WebSocket) + webhook push service (one-way)
   connect-web/       dsh-connect-web Web mirror adapter: tracks mirror sessions for DSH Web GUI (no synthesized messages; outbound is a contract no-op)
 docs/
   QUICKSTART.md      step-by-step run guide (DSH side + Feishu side)
@@ -48,7 +52,7 @@ examples/
 |---|---|---|---|---|
 | Feishu / Lark | `dsh-connect-feishu` | bidirectional | WebSocket long connection | full features (streaming, menus, images) |
 | Telegram | `dsh-connect-telegram` | bidirectional | Bot API long polling | full features (streaming edits, inline keyboards) |
-| DingTalk | `dsh-connect-dingtalk` | one-way push | group-robot webhook | one-way push service (sendMarkdown / sendText / @mentions) — no inbound |
+| DingTalk | `dsh-connect-dingtalk` | bidirectional (stream) / one-way push | stream gateway (STOMP over WebSocket) / group-robot webhook | stream mode: @-mention triggers the agent, replies & numbered-text menus; webhook mode: push service (sendMarkdown / sendText / @mentions) |
 
 All bidirectional adapters share the same `dsh-connect` core: commands, `/menu`, notification levels, the proactive progress watchdog, interactive choices & approvals, and per-chat settings work identically on every channel.
 
@@ -118,7 +122,7 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | `/plugins` | List installed plugins |
 | `/compact` | Compact the current session context |
 | `/history [count]` | Show recent session messages |
-| `/export [markdown\|pdf]` | Export conversation history as Markdown (`pdf` not supported yet — a hint is shown) |
+| `/export [markdown]` | Export conversation history as Markdown |
 | `/goals` | Show current goals |
 | `/new` (`/reset`) | Start a new conversation (asks for confirmation) |
 | `/clear` | Clear the current conversation (asks for confirmation) |

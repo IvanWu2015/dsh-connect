@@ -1,7 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { signDingtalk, verifyDingtalkSignature, DingtalkWebhook } from "../lib/index.js";
+import {
+  signDingtalk,
+  verifyDingtalkSignature,
+  DingtalkWebhook,
+  encodeFrame,
+  decodeFrames,
+  escapeHeader,
+  unescapeHeader,
+  normalizeBotMessage,
+  isAtMentioned,
+  buildConnectBody,
+  buildTextReplyBody,
+  buildMarkdownReplyBody,
+} from "../lib/index.js";
 
 test("signDingtalk produces a stable HMAC-SHA256 base64 signature", () => {
   const a = signDingtalk("SEC123", 1700000000000);
@@ -162,4 +175,112 @@ test("DingtalkWebhook surfaces non-retryable DingTalk business errors", async ()
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+// ── Stage B: STOMP codec (B1) ───────────────────────────────────────────
+
+test("STOMP encodeFrame round-trips through decodeFrames", () => {
+  const frame = encodeFrame("SEND", { destination: "/v1.0/im/bot/messages/reply", "content-type": "application/json" }, "{\"a\":1}");
+  const { frames, rest } = decodeFrames(frame);
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0].command, "SEND");
+  assert.equal(frames[0].headers.destination, "/v1.0/im/bot/messages/reply");
+  assert.equal(frames[0].headers["content-type"], "application/json");
+  assert.equal(frames[0].body, "{\"a\":1}");
+  assert.equal(rest, "");
+});
+
+test("STOMP decodeFrames handles header escaping (colon, newline, backslash)", () => {
+  const frame = encodeFrame("MESSAGE", { "message-id": "a:b", note: "line\\nbreak" }, "body");
+  const { frames } = decodeFrames(frame);
+  assert.equal(frames[0].headers["message-id"], "a:b");
+  assert.equal(frames[0].headers.note, "line\\nbreak");
+  assert.equal(escapeHeader("a:b\\c\n"), "a\\cb\\\\c\\n");
+  assert.equal(unescapeHeader("a\\cb\\\\c\\n"), "a:b\\c\n");
+});
+
+test("STOMP decodeFrames splits multiple frames and skips heartbeats", () => {
+  const a = encodeFrame("CONNECTED", { version: "1.2" });
+  const b = encodeFrame("MESSAGE", { destination: "/x" }, "hello");
+  const { frames, rest } = decodeFrames(a + "\n" + b);
+  assert.equal(frames.length, 2);
+  assert.equal(frames[0].command, "CONNECTED");
+  assert.equal(frames[1].command, "MESSAGE");
+  assert.equal(frames[1].body, "hello");
+  assert.equal(rest, "");
+});
+
+test("STOMP decodeFrames keeps partial frames in rest and continues later", () => {
+  const frame = encodeFrame("MESSAGE", { destination: "/x" }, "partial body");
+  const half = Math.floor(frame.length / 2);
+  const first = decodeFrames(frame.slice(0, half));
+  assert.equal(first.frames.length, 0);
+  assert.ok(first.rest.length > 0, "partial frame is buffered");
+  const second = decodeFrames(first.rest + frame.slice(half));
+  assert.equal(second.frames.length, 1);
+  assert.equal(second.frames[0].body, "partial body");
+});
+
+// ── Stage B: message normalization + reply bodies (B1) ──────────────────
+
+test("normalizeBotMessage maps gateway payloads to InboundMessage", () => {
+  const p2p = normalizeBotMessage({
+    senderStaffId: "staff_1",
+    conversationId: "cid_1",
+    conversationType: "1",
+    msgId: "msg_1",
+    msgType: "text",
+    text: { content: "hello" },
+  });
+  assert.deepEqual(p2p, {
+    channel: "dingtalk",
+    chatKey: "cid_1",
+    chatType: "p2p",
+    senderKey: "staff_1",
+    text: "hello",
+    replyRef: "msg_1",
+  });
+  const group = normalizeBotMessage({
+    senderStaffId: "staff_2",
+    conversationId: "cid_2",
+    conversationType: "2",
+    msgId: "msg_2",
+    msgType: "text",
+    text: { content: "@bot 任务" },
+    isInAtList: true,
+  });
+  assert.equal(group.chatType, "group");
+  assert.equal(group.text, "@bot 任务");
+});
+
+test("normalizeBotMessage drops unroutable payloads", () => {
+  assert.equal(normalizeBotMessage({}), undefined);
+  assert.equal(normalizeBotMessage({ conversationId: "cid", senderStaffId: "" }), undefined);
+  // Non-text messages carry no usable text body but still route (empty text).
+  const pic = normalizeBotMessage({ senderStaffId: "s", conversationId: "c", conversationType: "1", msgType: "picture" });
+  assert.equal(pic.text, "");
+  assert.equal(pic.chatKey, "c");
+});
+
+test("isAtMentioned gates group messages", () => {
+  assert.equal(isAtMentioned({ isInAtList: true }), true);
+  assert.equal(isAtMentioned({}), false);
+  assert.equal(isAtMentioned({ isInAtList: false }), false);
+});
+
+test("reply body builders emit the DingTalk msgKey envelope", () => {
+  assert.deepEqual(JSON.parse(buildTextReplyBody("m1", "hi")), {
+    msgKey: "sampleText",
+    msgParam: { content: "hi" },
+    msgId: "m1",
+  });
+  assert.deepEqual(JSON.parse(buildMarkdownReplyBody("m2", "T", "**x**")), {
+    msgKey: "sampleMarkdown",
+    msgParam: { title: "T", text: "**x**" },
+    msgId: "m2",
+  });
+  assert.deepEqual(JSON.parse(buildConnectBody("cid", "sec")), {
+    clientId: "cid",
+    clientSecret: "sec",
+    protocolVersion: "1.0",
+  });
 });

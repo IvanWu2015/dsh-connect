@@ -12,7 +12,7 @@ import { feishuMessages } from "./i18n.js";
 
 export { FeishuAdapter } from "./adapter.js";
 export type { FeishuConfig } from "./adapter.js";
-export { padLabels, buildButtonGrid, buildChoiceElements, sanitizeFileName, extractErrorDetail } from "./adapter.js";
+export { padLabels, buildButtonGrid, buildChoiceElements, sanitizeFileName, extractErrorDetail, encodeChatKey, decodeChatKey, classifyFeishuFile } from "./adapter.js";
 export { loadCredentials, onboardFeishu, saveCredentials } from "./onboard.js";
 export type { FeishuCredentials } from "./onboard.js";
 
@@ -33,6 +33,7 @@ export const Config = z.object({
   webhookPath: z.string(),
   requireMention: z.boolean(),
   dmMode: z.union([z.const("open"), z.const("allowlist"), z.const("pair"), z.const("disabled")]),
+  threadIsolation: z.boolean(),
   language: z.union([z.const("zh"), z.const("en")]),
 });
 

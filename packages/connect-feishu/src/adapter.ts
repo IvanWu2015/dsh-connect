@@ -8,7 +8,7 @@ import { createLarkChannel, adaptDefault, LoggerLevel, type CardActionEvent } fr
 import { createServer, type Server } from "node:http";
 import { readdir, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, extname, join } from "node:path";
 import type {
   ChannelAdapter,
   ChoiceOption,
@@ -175,6 +175,32 @@ function collectStream(stream: NodeJS.ReadableStream, maxBytes = 20 * 1024 * 102
   });
 }
 
+/**
+ * Encode a chatKey with an optional thread id. With `threadIsolation` on, a
+ * group message inside a thread gets `chatId:thread=<rootId>` as its chatKey,
+ * so each thread binds its own DSH session while outbound sends still target
+ * the base chat id (replies land in the thread via replyRef).
+ */
+export function encodeChatKey(chatId: string, threadId?: string): string {
+  return threadId === undefined || threadId === "" ? chatId : `${chatId}:thread=${threadId}`;
+}
+
+/** Decode a possibly thread-scoped chatKey back to its base chat id. */
+export function decodeChatKey(chatKey: string): { chatId: string; threadId?: string } {
+  const sep = chatKey.indexOf(":thread=");
+  if (sep === -1) return { chatId: chatKey };
+  return { chatId: chatKey.slice(0, sep), threadId: chatKey.slice(sep + 8) };
+}
+
+/** Image extensions Feishu delivers as inline images; everything else is a file. */
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+
+/** Classify a local file name for the Feishu upload API (image vs stream file). */
+export function classifyFeishuFile(filename: string): "image" | "file" {
+  const ext = extname(filename).toLowerCase();
+  return IMAGE_EXTENSIONS.has(ext) ? "image" : "file";
+}
+
 /** Strip path separators / control chars from a downloaded file's name. */
 export function sanitizeFileName(name: string): string {
   const clean = name
@@ -220,6 +246,8 @@ export interface FeishuConfig {
   requireMention?: boolean;
   /** Single-chat policy (SDK values): open / allowlist / pair / disabled. */
   dmMode?: "open" | "allowlist" | "pair" | "disabled";
+  /** Bind one DSH session per group thread instead of one per chat (default false). */
+  threadIsolation?: boolean;
   /** User-facing message language: `zh` (default) or `en`. */
   language?: Language;
 }
@@ -253,6 +281,7 @@ export class FeishuAdapter implements ChannelAdapter {
   private readonly transport: "websocket" | "webhook";
   private readonly webhookPort: number;
   private readonly webhookPath: string;
+  private readonly threadIsolation: boolean;
   private server?: Server;
   private handler?: (msg: InboundMessage) => void | Promise<void>;
 
@@ -271,6 +300,7 @@ export class FeishuAdapter implements ChannelAdapter {
     this.transport = config.transport ?? "websocket";
     this.webhookPort = config.webhookPort ?? 9000;
     this.webhookPath = config.webhookPath ?? "/";
+    this.threadIsolation = config.threadIsolation ?? false;
     this.channel = createLarkChannel({
       appId,
       appSecret,
@@ -422,9 +452,13 @@ export class FeishuAdapter implements ChannelAdapter {
         return;
       }
       const dl = await this.downloadResources(msg);
+      // With thread isolation, a message inside a group thread gets its own
+      // chatKey (hence its own DSH session). The base chat id still drives the
+      // allowlist gate above.
+      const threadId = this.threadIsolation ? (msg as { root_id?: string }).root_id : undefined;
       await this.handler?.({
         channel: "feishu",
-        chatKey: msg.chatId,
+        chatKey: encodeChatKey(msg.chatId, threadId),
         chatType: msg.chatType,
         senderKey: msg.senderId,
         text: msg.content,
@@ -523,9 +557,14 @@ export class FeishuAdapter implements ChannelAdapter {
     await this.channel.disconnect();
   }
 
+  /** Base chat id for outbound sends (strips any `:thread=` suffix). */
+  private chatIdOf(chatKey: string): string {
+    return decodeChatKey(chatKey).chatId;
+  }
+
   async sendText(target: OutboundTarget, text: string): Promise<void> {
     await this.channel.send(
-      target.chatKey,
+      this.chatIdOf(target.chatKey),
       { text },
       this.sendOpts(target),
     );
@@ -533,7 +572,7 @@ export class FeishuAdapter implements ChannelAdapter {
 
   async sendCard(target: OutboundTarget, card: SummaryCard): Promise<void> {
     await this.channel.send(
-      target.chatKey,
+      this.chatIdOf(target.chatKey),
       { markdown: card.markdown },
       this.sendOpts(target),
     );
@@ -541,7 +580,7 @@ export class FeishuAdapter implements ChannelAdapter {
 
   async streamText(target: OutboundTarget, chunks: AsyncIterable<string>): Promise<void> {
     await this.channel.stream(
-      target.chatKey,
+      this.chatIdOf(target.chatKey),
       {
         markdown: async (sink: { append(chunk: string): Promise<void> }) => {
           for await (const chunk of chunks) {
@@ -551,6 +590,19 @@ export class FeishuAdapter implements ChannelAdapter {
       },
       { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) },
     );
+  }
+
+  /**
+   * Deliver a local file to the chat. The SDK uploads the source itself:
+   * images are sent inline, everything else as an attachment.
+   */
+  async sendFile(target: OutboundTarget, filePath: string, options?: { filename?: string }): Promise<void> {
+    const filename = options?.filename ?? basename(filePath);
+    if (classifyFeishuFile(filename) === "image") {
+      await this.channel.send(this.chatIdOf(target.chatKey), { image: { source: filePath } }, this.sendOpts(target));
+    } else {
+      await this.channel.send(this.chatIdOf(target.chatKey), { file: { source: filePath, fileName: filename } }, this.sendOpts(target));
+    }
   }
 
   /**
@@ -588,7 +640,7 @@ export class FeishuAdapter implements ChannelAdapter {
       messageId = updateMessageId;
     } else {
       ({ messageId } = await this.channel.send(
-        target.chatKey,
+        this.chatIdOf(target.chatKey),
         { card },
         { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) },
       ));

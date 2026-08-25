@@ -16,7 +16,7 @@ import type {
   SummaryCard,
 } from "dsh-connect";
 import type { Language } from "dsh-connect";
-import { TelegramClient, type TelegramMessage, type TelegramUpdate } from "./client.js";
+import { TelegramClient, telegramFileMethod, type TelegramMessage, type TelegramUpdate } from "./client.js";
 import { telegramMessages, type TelegramMessages } from "./i18n.js";
 
 export interface TelegramConfig {
@@ -346,6 +346,16 @@ export class TelegramAdapter implements ChannelAdapter {
       ...(target.replyRef === undefined ? {} : { reply_to_message_id: Number(target.replyRef) }),
       disable_web_page_preview: true,
     });
+  }
+
+  async sendFile(target: OutboundTarget, filePath: string, options?: { filename?: string }): Promise<void> {
+    const filename = options?.filename ?? filePath.split(/[\\/]/).pop() ?? "file";
+    const replyTo = target.replyRef === undefined ? undefined : Number(target.replyRef);
+    if (telegramFileMethod(filename) === "sendPhoto") {
+      await this.client.sendPhoto(target.chatKey, filePath, undefined, { reply_to_message_id: replyTo });
+    } else {
+      await this.client.sendDocument(target.chatKey, filePath, { reply_to_message_id: replyTo });
+    }
   }
 
   async streamText(target: OutboundTarget, chunks: AsyncIterable<string>): Promise<void> {

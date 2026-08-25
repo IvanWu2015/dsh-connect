@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] - 2026-08-25
+
+### Added
+
+- **`/remind <time> <text>` — persistent chat-level reminders** (`dsh-connect` core). Schedules a one-shot reminder (`10分钟` / `2h` / `14:30`) stored in `stateDir/reminders.json`; a lightweight 15s loop delivers it when due **without waking the agent or spending model tokens**, and reminders survive process restarts. `/schedule` now lists both agent-level (`schedule` tool) and persistent reminders. (`src/scheduler.ts`, unit-tested.)
+- **`/broadcast <text>` — admin broadcast** (`dsh-connect` core). Sends a message to every bound chat across all channels. Gated: requires a non-empty `allowUsers` and a sender listed in it; per-chat delivery failures are skipped and counted. (`service.broadcast`, unit/integration tested.)
+- **`/send <path>` — send files from the workspace** (`dsh-connect` core + feishu/telegram). New optional `ChannelAdapter.sendFile` capability: feishu uploads via the SDK's `{ image: { source } }` / `{ file: { source, fileName } }` send shapes (images inline, everything else as an attachment); telegram uses `sendPhoto` / `sendDocument` multipart. `/send` resolves paths against the workdir, enforces a 20MB cap, and falls back to sending the path as text on channels without file support.
+- **DingTalk stream mode — bidirectional** (`dsh-connect-dingtalk`). With `stream.clientId` / `stream.clientSecret` set, a ChannelAdapter is registered into `dsh-connect`: STOMP-over-WebSocket gateway client (`src/stomp.ts` codec, `src/stream.ts` client, zero new dependencies, lazy `globalThis.WebSocket` so the module loads on Node 20 and fails only at connect time), group @-mention gating, reply-to-origin via `msgId`, and **numbered-text menus** (answer with a number) as the honest stream-mode equivalent of button cards. Proactive pushes still go through the webhook service. Protocol details (codec, normalization, reply bodies) are unit-tested; the live boundary needs real app credentials.
+- **Feishu thread isolation — optional** (`dsh-connect-feishu`). `threadIsolation: true` binds one DSH session per group thread (`chatKey = chatId:thread=<rootId>`) while outbound replies still target the base chat (in-thread via replyRef). Off by default; group behavior unchanged.
+
+### Changed
+
+- DingTalk is now a **two-way channel** in the channel matrix (stream mode), alongside the existing one-way webhook push service.
+## [0.6.8] - 2026-08-24
+
+### Fixed
+
+- **mirror-lock queue: duplicate / mis-routed replay after lock release** (`dsh-connect` core). `releaseLock` fired `processQueuedMessages` without awaiting and then wrote a *stale* binding object, resurrecting the cleared queue — the same queued messages could be processed again on the next release. The drain is now awaited and the lock is cleared from a fresh read. Replayed messages also keep their true source `channel` and are routed back through the service into the runner of their own channel (a Web-originated message lands in the web runner, never the releasing feishu runner). The lock state machine (timeout / acquire / release / canWrite) moved into a pure, unit-tested module (`src/mirror-lock.ts`) used by the runner.
+- **inbound events re-delivered after a reconnect were queued twice** (feishu). The core now deduplicates inbound messages by `(channel, chatKey, messageId)` with a sliding window (`src/dedup.ts`), so SDK re-delivery of the same event is dropped instead of running the same user message twice. Messages without an id are never deduplicated.
+
+### Changed
+
+- **outbound delivery now retries transient channel failures** (`dsh-connect` core). Every registered adapter's `sendText` / `sendCard` / `promptChoice` / `closeMenu` is wrapped with bounded retry (3 attempts, jittered exponential backoff) so a network blip or a 429/5xx no longer silently drops a user-visible message. `streamText` is deliberately excluded — a partially-streamed reply cannot be resumed. (`src/retry.ts`; unit-tested.)
+- **`/export pdf` removed from the user-facing surface**: it was advertised in the command table but unimplemented (it only replied “not supported”). `/export pdf` now falls back to the Markdown export, and the help text, README (zh/en) and `MIRROR_SESSION` docs no longer list a PDF option. A real PDF pipeline can be added later without touching the command surface.
+- **new CI workflow** (`.github/workflows/ci.yml`): every push to `main` and every pull request runs build + typecheck + all six test suites on Node 20 and 22, mirroring the publish gate.
 ## [0.6.7] - 2026-08-24
 
 ### Added

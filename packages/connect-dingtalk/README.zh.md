@@ -54,7 +54,26 @@ const webhook = new DingtalkWebhook({ webhookUrl, secret });
 await webhook.sendMarkdown("标题", "正文", { all: true });
 ```
 
-> 注意：如果你需要*双向*钉钉会话（用户发消息 → 智能体回复），那需要支持 Stream 模式的内部企业应用机器人——这里的发送层可以复用，但消息接收需要新的适配器。
+## Stream 模式（双向，零依赖）
+
+自 0.7.0 起，配置 `stream.clientId` / `stream.clientSecret`（需使用支持 Stream 模式的**企业内部应用**，也支持 `DINGTALK_STREAM_CLIENT_ID` / `DINGTALK_STREAM_CLIENT_SECRET` 环境变量）会向 `dsh-connect` 注册一个 **ChannelAdapter**：群内 @提及机器人和私聊消息会触发智能体，回复会回流到原消息。
+
+- 传输：通过 STOMP over WebSocket 连接 Stream 网关（默认 `wss://api.dingtalk.com/connect`，可用 `stream.url` 覆盖），**零新增依赖**手写实现（惰性引用 `globalThis.WebSocket`；Node ≥ 22 或需 polyfill，仅在连接时失败）。
+- 菜单渲染为**编号文本列表**——回复数字即可选择。本版本不包含真实的 action-card 按钮卡片。
+- `streamText` 会累积完整回复后一次性发送（网关没有渐进式卡片编辑）。
+- 主动推送（提醒、广播）仍走 webhook 服务——stream 适配器只回复入站消息。
+- STOMP 编解码、消息归一化与回复体均已单测覆盖；真实连接需要有效的应用凭据与外网，请用真实应用验证。
+
+```yaml
+- id: connect-dingtalk
+  name: dsh-connect-dingtalk
+  config:
+    stream:
+      clientId: "dingxxxx"
+      clientSecret: "xxxx"
+      requireMention: true    # 群里回复需要 @提及机器人（默认 true）
+    # webhookUrl / secret 仍可配置，用于主动推送
+```
 
 ## 配置参考
 
@@ -64,3 +83,7 @@ await webhook.sendMarkdown("标题", "正文", { all: true });
 | `secret` | env `DINGTALK_WEBHOOK_SECRET` | 启用时的签名密钥（`SEC…`） |
 | `language` | `zh` | 日志/错误语言 |
 | `defaultAt` | — | 每次推送都应用的 `{ mobiles, userIds, all }` @提及 |
+| `stream.clientId` | env `DINGTALK_STREAM_CLIENT_ID` | 企业内部应用 Client ID（stream 模式） |
+| `stream.clientSecret` | env `DINGTALK_STREAM_CLIENT_SECRET` | 企业内部应用 Client Secret（stream 模式） |
+| `stream.url` | `wss://api.dingtalk.com/connect` | Stream 网关地址覆盖 |
+| `stream.requireMention` | `true` | 群消息必须 @提及机器人 |

@@ -1,7 +1,7 @@
 {
   "name": "dsh-connect-dingtalk",
-  "version": "0.6.7",
-  "description": "DingTalk webhook push channel for dsh-connect",
+  "version": "0.7.0",
+  "description": "DingTalk channel for dsh-connect: webhook push + stream-mode bidirectional",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -50,7 +50,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "dsh-connect": "^0.6.0"
+    "dsh-connect": "^0.7.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

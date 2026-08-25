@@ -69,7 +69,12 @@ const adapter = {
   onInbound: () => {},
 };
 service.registerAdapter(adapter);
-assert.equal(service.getAdapter("stub"), adapter);
+// The service wraps outbound delivery with bounded retry, so the registered
+// adapter is a wrapper with the same id (not the raw object).
+const registered = service.getAdapter("stub");
+assert.ok(registered, "adapter must be registered");
+assert.equal(registered.id, "stub");
+assert.notEqual(registered, adapter, "outbound delivery is wrapped");
 assert.throws(() => service.registerAdapter(adapter), /already registered/);
 
 // ── proactive notify reaches the adapter ──
@@ -81,6 +86,19 @@ await service.notify("stub", "c1", "p2p", "任务完成");
 assert.ok(sent, "notify must call the adapter");
 assert.equal(sent.text, "任务完成");
 assert.equal(sent.target.chatKey, "c1");
+
+// ── inbound dedup: a re-delivered message id is processed only once ──
+let sends = 0;
+adapter.sendText = async () => { sends += 1; };
+const inbound = { channel: "stub", chatKey: "c1", chatType: "p2p", senderKey: "u1", text: "hello", replyRef: "om-dup-1" };
+await service.handleInbound(inbound);
+// The runner's drain is detached; give it a moment to settle.
+await new Promise((resolve) => setTimeout(resolve, 150));
+const afterFirst = sends;
+assert.ok(afterFirst > 0, "the first inbound must reach the runner");
+await service.handleInbound({ ...inbound }); // same message id re-delivered
+await new Promise((resolve) => setTimeout(resolve, 150));
+assert.equal(sends, afterFirst, "duplicate inbound with the same message id is dropped");
 
 // ── feishu adapter constructs (without connecting) ──
 process.env.FEISHU_APP_ID = "cli_test";

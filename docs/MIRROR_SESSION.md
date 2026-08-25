@@ -30,7 +30,7 @@ Mirror each Feishu chat's DSH session into the DSH Web GUI so the conversation h
 | `/mirror [--timeout N]` | Create (or show the status of) the Web mirror session for this chat; optional lock timeout in minutes |
 | `/unlock` | Manually release the session lock |
 | `/renew` | Extend the current lock's timeout by a full period (only the lock owner can renew) |
-| `/export [markdown\|pdf]` | Export the conversation history (only Markdown is supported; `pdf` returns a friendly notice) |
+| `/export [markdown]` | Export the conversation history as Markdown |
 
 ---
 

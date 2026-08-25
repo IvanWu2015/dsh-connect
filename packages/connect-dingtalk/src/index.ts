@@ -1,12 +1,15 @@
 /**
- * DingTalk webhook push channel for DeepSeek Harness.
+ * DingTalk channel for DeepSeek Harness — two modes:
  *
- * The DingTalk group custom robot (群自定义机器人) is a *one-way* webhook:
- * it can send text / markdown / @mention messages into a group, but cannot
- * receive messages. This package therefore exposes a push service
- * (`ctx.dingtalk`) that any other plugin or script can use to deliver task
- * progress, results, and alerts to a DingTalk group — a natural companion to
- * the bidirectional Feishu adapter.
+ * 1. Webhook push (one-way): the DingTalk group custom robot (群自定义机器人)
+ *    webhook can send text / markdown / @mention messages into a group. This
+ *    exposes a push service (`ctx.dingtalk`) for task progress, results and
+ *    alerts.
+ * 2. Stream mode (bidirectional, zero dependencies): with `stream.clientId`
+ *    / `stream.clientSecret` set, a STOMP-over-WebSocket adapter is
+ *    registered into `dsh-connect`, so group @-mentions / DMs trigger the
+ *    agent and replies stream back. Menus are numbered text lists (the user
+ *    answers with a number); proactive pushes still use the webhook service.
  *
  * @module dsh-connect-dingtalk
  */
@@ -14,11 +17,27 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { DingtalkWebhook, type DingtalkAt } from "./webhook.js";
 import { dingtalkMessages, type DingtalkMessages } from "./i18n.js";
+import { DingtalkStreamAdapter, type DingtalkStreamAdapterConfig } from "./adapter.js";
 
 export { DingtalkWebhook, signDingtalk, verifyDingtalkSignature } from "./webhook.js";
 export type { DingtalkAt, DingtalkBody, DingtalkResponse, DingtalkWebhookConfig } from "./webhook.js";
 export { dingtalkMessages } from "./i18n.js";
 export type { DingtalkMessages } from "./i18n.js";
+export { DingtalkStreamAdapter } from "./adapter.js";
+export type { DingtalkStreamAdapterConfig } from "./adapter.js";
+export { DingtalkStreamClient, DEFAULT_STREAM_URL } from "./stream.js";
+export { encodeFrame, decodeFrames, escapeHeader, unescapeHeader } from "./stomp.js";
+export type { StompFrame } from "./stomp.js";
+export {
+  buildConnectBody,
+  buildMarkdownReplyBody,
+  buildTextReplyBody,
+  isAtMentioned,
+  normalizeBotMessage,
+  INBOUND_DESTINATION,
+  REPLY_DESTINATION,
+} from "./message.js";
+export type { DingtalkBotMessage } from "./message.js";
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = "connect-dingtalk";
@@ -37,6 +56,13 @@ export const Config = z.object({
     userIds: z.array(z.string()),
     all: z.boolean(),
   }),
+  /** Stream mode (bidirectional): the DingTalk app's Client ID / Client Secret. */
+  stream: z.object({
+    clientId: z.string().role("secret"),
+    clientSecret: z.string().role("secret"),
+    url: z.string(),
+    requireMention: z.boolean(),
+  }),
 });
 
 export interface DingtalkConfig {
@@ -44,6 +70,8 @@ export interface DingtalkConfig {
   secret?: string;
   language?: "zh" | "en";
   defaultAt?: Partial<DingtalkAt>;
+  /** Stream mode (bidirectional) credentials; secrets also via DINGTALK_STREAM_CLIENT_ID / _SECRET. */
+  stream?: Partial<DingtalkStreamAdapterConfig>;
 }
 
 /**
@@ -95,11 +123,41 @@ export class DingtalkService extends Service {
   }
 }
 
+interface ConnectLike {
+  registerAdapter(adapter: unknown): void;
+}
+
 export function apply(ctx: Context, config: DingtalkConfig | null = {}): void {
   // The DSH loader passes `null` for entries without an explicit config.
   config = config ?? {};
+
+  // Stream mode (bidirectional): register a ChannelAdapter into dsh-connect.
+  const stream = config.stream ?? {};
+  const clientId = stream.clientId ?? process.env.DINGTALK_STREAM_CLIENT_ID;
+  const clientSecret = stream.clientSecret ?? process.env.DINGTALK_STREAM_CLIENT_SECRET;
+  if (clientId !== undefined && clientSecret !== undefined) {
+    const connect = ctx.get("connect") as ConnectLike | undefined;
+    if (connect === undefined) {
+      ctx.logger?.warn?.("connect-dingtalk: stream mode requires the dsh-connect service; skipping adapter");
+    } else {
+      try {
+        const adapter = new DingtalkStreamAdapter(
+          { ...stream, clientId, clientSecret, language: config.language },
+          ctx.logger,
+        );
+        connect.registerAdapter(adapter);
+        void adapter.start().catch((error) => {
+          ctx.logger?.warn?.(`connect-dingtalk: stream adapter start failed: ${String(error)}`);
+        });
+      } catch (error) {
+        ctx.logger?.warn?.(`connect-dingtalk: stream adapter init failed: ${String(error)}`);
+      }
+    }
+  }
+
+  // Webhook push service (one-way). `Service` construction registers
+  // `ctx.dingtalk` automatically; it throws when no webhookUrl is configured.
   try {
-    // `Service` construction registers `ctx.dingtalk` automatically.
     void new DingtalkService(ctx, config, ctx.logger);
   } catch (error) {
     ctx.logger?.warn?.(`connect-dingtalk: init failed: ${String(error)}`);

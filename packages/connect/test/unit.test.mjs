@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer, classifyError } from "../lib/index.js";
+import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer, classifyError, InboundDedup, retry, withOutboundRetry, isLockTimedOut, acquireLock, releaseLockState, lockCanWrite, DEFAULT_LOCK_TIMEOUT_MS, ReminderStore, parseRemindTime, formatRemindAt } from "../lib/index.js";
 
 test("parseCommand passes through plain messages", () => {
   assert.deepEqual(parseCommand("帮我跑测试"), { kind: "message", text: "帮我跑测试" });
@@ -399,3 +399,280 @@ test("messages expose welcome / confirm / error-advice / progress strings in bot
   assert.ok(en.approvalDone("allowed-once", "pwsh").includes("Approved"));
   assert.ok(en.approvalStale.includes("no longer active"));
 });
+// ── mirror-lock state machine (A1) ────────────────────────────────────────
+
+test("isLockTimedOut: no lock / fresh lock / expired lock", () => {
+  assert.equal(isLockTimedOut({}), false);
+  assert.equal(isLockTimedOut({ lockOwner: "feishu" }), false, "no acquiredAt is not timed out");
+  const now = 1_000_000;
+  assert.equal(isLockTimedOut({ lockOwner: "feishu", lockAcquiredAt: now - 1_000 }, now), false);
+  assert.equal(isLockTimedOut({ lockOwner: "feishu", lockAcquiredAt: now - DEFAULT_LOCK_TIMEOUT_MS - 1 }, now), true);
+  assert.equal(isLockTimedOut({ lockOwner: "feishu", lockAcquiredAt: now - 60_000, lockTimeoutMs: 30_000 }, now), true, "custom timeout respected");
+});
+
+test("canWrite: free, timed out, owner, foreign owner", () => {
+  const now = 1_000_000;
+  assert.equal(lockCanWrite({}, "web"), true, "no lock = free");
+  assert.equal(lockCanWrite({ lockOwner: "feishu", lockAcquiredAt: now - 1 }, "web", now), false);
+  assert.equal(lockCanWrite({ lockOwner: "feishu", lockAcquiredAt: now - 1 }, "feishu", now), true, "owner can write");
+  assert.equal(lockCanWrite({ lockOwner: "feishu", lockAcquiredAt: now - DEFAULT_LOCK_TIMEOUT_MS - 1 }, "web", now), true, "timed-out lock = free");
+});
+
+test("acquireLock: free, renew, foreign-live, foreign-timed-out", () => {
+  const now = 1_000_000;
+  const base = { channel: "web", chatKey: "oc_1", chatType: "p2p", sessionId: "s1", ownerKey: "u1", createdAt: 1, lastActiveAt: 2, sessions: [] };
+  const free = acquireLock(base, "web", now);
+  assert.ok(free !== undefined);
+  assert.equal(free.lockOwner, "web");
+  assert.equal(free.lockAcquiredAt, now);
+
+  const owned = acquireLock({ ...base, lockOwner: "web", lockAcquiredAt: now - 1 }, "web", now);
+  assert.ok(owned !== undefined, "same owner renews");
+  assert.equal(owned.lockAcquiredAt, now);
+
+  assert.equal(acquireLock({ ...base, lockOwner: "feishu", lockAcquiredAt: now - 1 }, "web", now), undefined, "foreign live lock refuses");
+
+  const expired = acquireLock({ ...base, lockOwner: "feishu", lockAcquiredAt: now - DEFAULT_LOCK_TIMEOUT_MS - 1 }, "web", now);
+  assert.ok(expired !== undefined, "foreign timed-out lock is acquirable");
+  assert.equal(expired.lockOwner, "web");
+});
+
+test("releaseLockState: clears owner, preserves queue and other fields", () => {
+  const state = {
+    channel: "feishu", chatKey: "oc_1", chatType: "p2p", sessionId: "s1", ownerKey: "u1",
+    createdAt: 1, lastActiveAt: 2, lockOwner: "feishu", lockAcquiredAt: 100,
+    queuedMessages: [{ text: "hi", senderKey: "u1", timestamp: 99, channel: "web" }],
+    sessions: [],
+  };
+  const next = releaseLockState(state);
+  assert.equal(next.lockOwner, undefined);
+  assert.equal(next.lockAcquiredAt, undefined);
+  assert.equal(next.sessionId, "s1", "non-lock fields preserved");
+  assert.deepEqual(next.queuedMessages, state.queuedMessages, "queue preserved for the caller to drain");
+});
+
+test("queued messages keep their source channel through the binding store", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-connect-test-"));
+  try {
+    const store = new BindingStore(dir);
+    store.put({
+      channel: "feishu", chatKey: "oc_1", chatType: "p2p", sessionId: "s1", ownerKey: "u1",
+      createdAt: 1, lastActiveAt: 2, sessions: [],
+      lockOwner: "feishu", lockAcquiredAt: 100,
+      queuedMessages: [{ text: "hi", senderKey: "u1", timestamp: 99, channel: "web" }],
+    });
+    const reloaded = new BindingStore(dir);
+    assert.equal(reloaded.get("feishu", "oc_1")?.queuedMessages?.[0]?.channel, "web");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── inbound dedup (A3) ────────────────────────────────────────────────────
+
+test("InboundDedup drops re-delivered ids within the window", () => {
+  const dedup = new InboundDedup(5 * 60_000);
+  const now = 1_000_000;
+  assert.equal(dedup.isDuplicate("feishu", "oc_1", "om_1", now), false, "first arrival is not a duplicate");
+  assert.equal(dedup.isDuplicate("feishu", "oc_1", "om_1", now + 1), true, "same id re-delivered is a duplicate");
+  assert.equal(dedup.isDuplicate("feishu", "oc_1", "om_2", now + 2), false, "different id is fresh");
+  assert.equal(dedup.isDuplicate("feishu", "oc_2", "om_1", now + 3), false, "same id in another chat is fresh");
+  assert.equal(dedup.isDuplicate("feishu", "oc_1", undefined, now + 4), false, "messages without an id are never deduped");
+  assert.equal(dedup.isDuplicate("feishu", "oc_1", "", now + 5), false, "empty id is never deduped");
+});
+
+test("InboundDedup forgets ids after the window", () => {
+  const dedup = new InboundDedup(10_000);
+  const now = 1_000_000;
+  assert.equal(dedup.isDuplicate("feishu", "oc_1", "om_1", now), false);
+  assert.equal(dedup.isDuplicate("feishu", "oc_1", "om_1", now + 10_001), false, "expired id is fresh again");
+});
+
+// ── outbound retry (A2) ───────────────────────────────────────────────────
+
+test("retry: succeeds immediately without extra attempts", async () => {
+  let calls = 0;
+  const value = await retry(async () => { calls += 1; return "ok"; }, { baseDelayMs: 1 });
+  assert.equal(value, "ok");
+  assert.equal(calls, 1);
+});
+
+test("retry: recovers from transient failures and gives up after attempts", async () => {
+  let calls = 0;
+  const flaky = await retry(async () => {
+    calls += 1;
+    if (calls < 3) throw new Error("ECONNRESET");
+    return "recovered";
+  }, { attempts: 3, baseDelayMs: 1, maxDelayMs: 5 });
+  assert.equal(flaky, "recovered");
+  assert.equal(calls, 3);
+
+  let calls2 = 0;
+  await assert.rejects(
+    retry(async () => { calls2 += 1; throw new Error("boom"); }, { attempts: 3, baseDelayMs: 1, maxDelayMs: 5 }),
+    /boom/,
+  );
+  assert.equal(calls2, 3, "permanent failure still uses all attempts");
+});
+
+test("retry: isTransient predicate skips non-transient errors", async () => {
+  let calls = 0;
+  await assert.rejects(
+    retry(async () => { calls += 1; throw new Error("permission denied"); }, {
+      attempts: 3, baseDelayMs: 1,
+      isTransient: (e) => !String(e).includes("permission denied"),
+    }),
+    /permission denied/,
+  );
+  assert.equal(calls, 1, "non-transient error is not retried");
+});
+
+test("withOutboundRetry: retries deliveries, passes streamText/start/stop through", async () => {
+  let sendCalls = 0;
+  const raw = {
+    id: "stub",
+    start: async () => "started",
+    stop: async () => "stopped",
+    sendText: async () => { sendCalls += 1; if (sendCalls < 2) throw new Error("ECONNRESET"); },
+    sendCard: async () => {},
+    streamText: async () => "streamed",
+    promptChoice: async () => ({ choice: "x", messageId: "m" }),
+    closeMenu: async () => {},
+    onInbound: () => {},
+  };
+  const wrapped = withOutboundRetry(raw, { attempts: 3, baseDelayMs: 1, maxDelayMs: 5 });
+  assert.equal(wrapped.id, "stub");
+  await wrapped.sendText({ chatKey: "c", chatType: "p2p" }, "hi");
+  assert.equal(sendCalls, 2, "transient sendText failure retried");
+
+  // streamText must NOT retry (a partially-streamed reply cannot be resumed).
+  let streamCalls = 0;
+  raw.streamText = async () => { streamCalls += 1; throw new Error("mid-stream"); };
+  await assert.rejects(wrapped.streamText({ chatKey: "c", chatType: "p2p" }, []), /mid-stream/);
+  assert.equal(streamCalls, 1, "streamText failure is not retried");
+
+  assert.equal(await wrapped.start(), "started");
+  assert.equal(await wrapped.stop(), "stopped");
+});
+
+// ── /export surface (A6) ──────────────────────────────────────────────────
+
+test("parseCommand: /export accepts markdown; pdf falls back to markdown", () => {
+  assert.deepEqual(parseCommand("/export"), { kind: "export" });
+  assert.deepEqual(parseCommand("/export markdown"), { kind: "export", format: "markdown" });
+  assert.deepEqual(parseCommand("/export md"), { kind: "export", format: "markdown" });
+  assert.deepEqual(parseCommand("/export pdf"), { kind: "export", format: "markdown" });
+});
+
+test("helpText no longer advertises pdf export", () => {
+  const zh = helpText(messages("zh"));
+  const en = helpText(messages("en"));
+  assert.ok(zh.includes("/export"), "zh help mentions /export");
+  assert.ok(en.includes("/export"), "en help mentions /export");
+  assert.ok(!zh.includes("pdf"), "zh help no longer advertises pdf");
+  assert.ok(!en.includes("pdf"), "en help no longer advertises pdf");
+});
+// ── Stage B: /remind scheduler (B2) ─────────────────────────────────────
+
+test("parseCommand: /remind, /send, /broadcast parse into typed commands", () => {
+  assert.deepEqual(parseCommand("/remind 10分钟 喝水"), { kind: "remind", text: "10分钟 喝水" });
+  assert.deepEqual(parseCommand("/remindme 14:30 开会"), { kind: "remind", text: "14:30 开会" });
+  assert.deepEqual(parseCommand("/alert 2h 站起来"), { kind: "remind", text: "2h 站起来" });
+  assert.deepEqual(parseCommand("/send notes.md"), { kind: "send", path: "notes.md" });
+  assert.deepEqual(parseCommand("/file C:\\tmp\\a.png"), { kind: "send", path: "C:\\tmp\\a.png" });
+  assert.deepEqual(parseCommand("/broadcast 全体注意"), { kind: "broadcast", text: "全体注意" });
+  assert.deepEqual(parseCommand("/announce deploy ok"), { kind: "broadcast", text: "deploy ok" });
+});
+
+test("parseRemindTime handles relative minutes / hours / clock time", () => {
+  const now = Date.parse("2026-01-01T12:00:00Z");
+  assert.equal(parseRemindTime("10分钟", now), now + 10 * 60_000);
+  assert.equal(parseRemindTime("10m", now), now + 10 * 60_000);
+  assert.equal(parseRemindTime("10", now), now + 10 * 60_000);
+  assert.equal(parseRemindTime("2小时", now), now + 2 * 3_600_000);
+  assert.equal(parseRemindTime("2h", now), now + 2 * 3_600_000);
+  // Clock time resolves against the LOCAL day: build a locally-constructed
+  // "now" so the assertions hold in every host timezone.
+  const base = new Date();
+  base.setHours(12, 0, 0, 0);
+  const atNow = base.getTime();
+  const future = new Date(atNow);
+  future.setHours(14, 30, 0, 0); // later today
+  const past = new Date(atNow);
+  past.setHours(9, 0, 0, 0); // earlier today → rolls to tomorrow
+  past.setDate(past.getDate() + 1);
+  assert.equal(parseRemindTime("14:30", atNow), future.getTime());
+  assert.equal(parseRemindTime("09:00", atNow), past.getTime());
+  // invalid
+  assert.equal(parseRemindTime("", now), undefined);
+  assert.equal(parseRemindTime("abc", now), undefined);
+  assert.equal(parseRemindTime("0m", now), undefined);
+  assert.equal(parseRemindTime("25:99", now), undefined);
+});
+
+test("formatRemindAt renders clock times and dates per language", () => {
+  const due = new Date();
+  due.setHours(14, 30, 0, 0);
+  const now = new Date(due);
+  now.setHours(12, 0, 0, 0);
+  assert.ok(formatRemindAt(due.getTime(), "zh", now.getTime()).includes("14:30"), "zh same-day shows the time");
+  assert.ok(formatRemindAt(due.getTime(), "en", now.getTime()).includes("14:30"), "en same-day shows the time");
+  // A due time on another day includes the localized date + the time.
+  const later = new Date(due);
+  later.setDate(later.getDate() + 4);
+  const rendered = formatRemindAt(later.getTime(), "en", now.getTime());
+  assert.ok(rendered.includes("14:30"), "other-day render includes the time");
+  const day = later.toLocaleDateString("en-US", { month: "numeric", day: "numeric" });
+  assert.ok(rendered.includes(day), "other-day render includes the date");
+});
+
+test("ReminderStore add/list/due/markFired round-trips and persists across instances", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-connect-remind-"));
+  try {
+    const store = new ReminderStore(dir);
+    const r = store.add({ channel: "feishu", chatKey: "oc_1", chatType: "group", text: "喝水", dueAt: Date.now() + 60_000, ownerKey: "ou_1" });
+    assert.equal(store.list().length, 1);
+    assert.equal(store.listFor("feishu", "oc_1")[0].id, r.id);
+    assert.equal(store.listFor("feishu", "oc_2").length, 0);
+    assert.equal(store.due(Date.now() + 120_000).length, 1, "due window covers it");
+    assert.equal(store.due(Date.now() + 30_000).length, 0, "not due yet");
+
+    // Persistence: a fresh store over the same dir reloads the reminder.
+    const reloaded = new ReminderStore(dir);
+    assert.equal(reloaded.listFor("feishu", "oc_1")[0].id, r.id);
+
+    // markFired removes it from the due set without deleting it.
+    reloaded.markFired(r.id);
+    assert.equal(reloaded.due(Date.now() + 120_000).length, 0);
+    assert.equal(reloaded.list().length, 1, "fired reminder is retained in the store");
+    assert.equal(reloaded.remove(r.id), true);
+    assert.equal(reloaded.list().length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ReminderStore tolerates a corrupt store file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-connect-remind-"));
+  try {
+    const store = new ReminderStore(dir);
+    store.add({ channel: "feishu", chatKey: "oc_1", chatType: "p2p", text: "x", dueAt: 1, ownerKey: "ou_1" });
+    const fs = await import("node:fs");
+    fs.writeFileSync(join(dir, "reminders.json"), "{not json");
+    const reloaded = new ReminderStore(dir);
+    assert.equal(reloaded.list().length, 0, "corrupt file starts empty");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("helpText advertises /remind, /send and /broadcast", () => {
+  const zh = helpText(messages("zh"));
+  const en = helpText(messages("en"));
+  assert.ok(zh.includes("/remind"), "zh help mentions /remind");
+  assert.ok(zh.includes("/send"), "zh help mentions /send");
+  assert.ok(zh.includes("/broadcast"), "zh help mentions /broadcast");
+  assert.ok(en.includes("/remind") && en.includes("/send") && en.includes("/broadcast"));
+});
+
+

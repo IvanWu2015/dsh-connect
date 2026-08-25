@@ -20,8 +20,12 @@
 - **交互式菜单**：`/menu` 提供层级化点按导航（workdir / chats / settings / plugins / compact 等）——同一张卡片就地更新，支持返回/退出，连续操作中持续可用。
 - **智能图片与文件处理**：发送给机器人的图片自动下载；主模型若支持视觉则直接查看，否则由视觉模型子任务生成描述并注入——纯文本主模型不会在图片上卡住。附件/音频/视频也会下载到 workdir。
 - **Web 镜像**：每个会话可将其 DSH 会话镜像到 DSH Web GUI（`/mirror`，或通过 `autoMirror` 自动开启）。镜像锁只在飞书侧强制（`lockOwner`）：Web GUI 直接读写 DSH 会话、从不查询锁，因此互斥是单侧的（仓库层面无法修复，已如实记录）。`/new`、`/clear` 或切换会话会重置镜像指向；`autoMirror` 会为新会话重建镜像。
-- **本地命令**（不消耗模型 token）：`/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/export` `/goals` `/schedule` `/model` `/notify` `/progress` `/mirror` `/unlock` `/renew` `/new` `/clear` `/stop` `/settings` `/help`。
-- **可扩展、多平台**：`dsh-connect`（通道无关核心）+ 各通道适配器包——`dsh-connect-feishu`（飞书/Lark 双向）、`dsh-connect-telegram`（Telegram 双向）、`dsh-connect-dingtalk`（钉钉单向群推送）。新增一个通道只需再写一个适配器包。
+- **定时提醒**：`/remind 10分钟 喝水`（或 `2h` / `14:30`）持久化一条会话级提醒，到点自动触发——不唤醒智能体、不消耗模型 token，进程重启后依然生效。`/schedule` 会与智能体自身的会话内提醒一并列出。
+- **向会话回传文件**：`/send <路径>` 把工作区文件发给会话——图片内联展示，其他文件作为附件（飞书 / Telegram）。
+- **管理员广播**：`/broadcast <内容>` 向所有通道的全部已绑定会话推送消息（仅 `allowUsers` 中配置的管理员可用）。
+- **线程隔离（飞书，可选）**：开启 `threadIsolation: true` 后，群里的每个话题线程各自绑定一个独立的 DSH 会话。
+- **本地命令**（不消耗模型 token）：`/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/export` `/goals` `/schedule` `/remind` `/send` `/broadcast` `/model` `/notify` `/progress` `/mirror` `/unlock` `/renew` `/new` `/clear` `/stop` `/settings` `/help`。
+- **可扩展、多平台**：`dsh-connect`（通道无关核心）+ 各通道适配器包——`dsh-connect-feishu`（飞书/Lark 双向）、`dsh-connect-telegram`（Telegram 双向）、`dsh-connect-dingtalk`（双向 stream 模式 + 单向 webhook 推送）。新增一个通道只需再写一个适配器包。
 
 ## 仓库结构
 
@@ -30,7 +34,7 @@ packages/
   connect/           dsh-connect core: services, bindings, runner, streaming bridge, commands
   connect-feishu/    dsh-connect-feishu Feishu adapter: createLarkChannel long connection, normalization, streaming replies
   connect-telegram/  dsh-connect-telegram Telegram adapter: Bot API long-polling, streaming edits, inline-keyboard choices
-  connect-dingtalk/  dsh-connect-dingtalk DingTalk group-webhook push: text/markdown/@-mention notices (one-way)
+  connect-dingtalk/  dsh-connect-dingtalk 钉钉：stream 模式双向适配器（STOMP over WebSocket）+ webhook 单向推送服务
   connect-web/       dsh-connect-web Web mirror adapter: tracks mirror sessions for DSH Web GUI (no synthesized messages; outbound is a contract no-op)
 docs/
   QUICKSTART.md      step-by-step run guide (DSH side + Feishu side)
@@ -48,7 +52,7 @@ examples/
 |---|---|---|---|---|
 | 飞书 / Lark | `dsh-connect-feishu` | 双向 | WebSocket 长连接 | 功能完整（流式、菜单、图片） |
 | Telegram | `dsh-connect-telegram` | 双向 | Bot API 长轮询 | 功能完整（流式编辑、内联键盘） |
-| 钉钉 | `dsh-connect-dingtalk` | 单向推送 | 群机器人 webhook | 单向推送服务（sendMarkdown / sendText / @提及）——不能接收消息 |
+| 钉钉 | `dsh-connect-dingtalk` | 双向（stream）/ 单向推送 | stream 网关（STOMP over WebSocket）/ 群机器人 webhook | stream 模式：@提及触发智能体、回复与编号文本菜单；webhook 模式：推送服务（sendMarkdown / sendText / @提及） |
 
 所有双向适配器共享同一个 `dsh-connect` 核心：命令、`/menu`、通知级别、主动进度看门狗、交互式选择与审批以及按会话设置，在每个通道上行为完全一致。
 
@@ -118,7 +122,7 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram
 | `/plugins` | 列出已安装插件 |
 | `/compact` | 压缩当前会话上下文 |
 | `/history [count]` | 显示最近的会话消息 |
-| `/export [markdown\|pdf]` | 导出对话历史为 Markdown（`pdf` 暂不支持，会提示） |
+| `/export [markdown]` | 导出对话历史为 Markdown |
 | `/goals` | 显示当前目标 |
 | `/new`（`/reset`） | 开始新对话（请求确认） |
 | `/clear` | 清空当前对话（请求确认） |

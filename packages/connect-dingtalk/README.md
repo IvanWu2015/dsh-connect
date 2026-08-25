@@ -54,7 +54,26 @@ const webhook = new DingtalkWebhook({ webhookUrl, secret });
 await webhook.sendMarkdown("标题", "正文", { all: true });
 ```
 
-> Note: if you need *bidirectional* DingTalk conversation (user sends a message → agent replies), that requires an internal-enterprise app robot with Stream mode — the sending layer here is reusable, but intake would be a new adapter.
+## Stream mode (bidirectional, zero dependencies)
+
+Since 0.7.0, setting `stream.clientId` / `stream.clientSecret` (an **internal-enterprise app** with the Stream-mode gateway, `DINGTALK_STREAM_CLIENT_ID` / `DINGTALK_STREAM_CLIENT_SECRET` env fallbacks) registers a **ChannelAdapter** into `dsh-connect`: group @-mentions and DMs trigger the agent, and replies stream back to the origin message.
+
+- Transport: STOMP over WebSocket to the stream gateway (`wss://api.dingtalk.com/connect`, override via `stream.url`), hand-rolled with **zero new dependencies** (lazy `globalThis.WebSocket`; Node ≥ 22 or a polyfill at connect time).
+- Menus render as **numbered text lists** — answer with a number to pick. Real action-card buttons are out of scope for this release.
+- `streamText` accumulates and sends the complete reply once (no progressive card editing on the gateway).
+- Proactive pushes (reminders, broadcasts) still go through the webhook service — the stream adapter replies to inbound messages only.
+- The STOMP codec, message normalization and reply bodies are unit-tested; live connectivity requires real app credentials and an outbound connection, so validate on a real app.
+
+```yaml
+- id: connect-dingtalk
+  name: dsh-connect-dingtalk
+  config:
+    stream:
+      clientId: "dingxxxx"
+      clientSecret: "xxxx"
+      requireMention: true    # group replies need an @-mention (default true)
+    # webhookUrl / secret can still be set for proactive pushes
+```
 
 ## Configuration reference
 
@@ -64,3 +83,7 @@ await webhook.sendMarkdown("标题", "正文", { all: true });
 | `secret` | env `DINGTALK_WEBHOOK_SECRET` | Signing secret (`SEC…`) when enabled |
 | `language` | `zh` | Log/error language |
 | `defaultAt` | — | `{ mobiles, userIds, all }` @-mentions applied to every push |
+| `stream.clientId` | env `DINGTALK_STREAM_CLIENT_ID` | Internal-enterprise app Client ID (stream mode) |
+| `stream.clientSecret` | env `DINGTALK_STREAM_CLIENT_SECRET` | Internal-enterprise app Client Secret (stream mode) |
+| `stream.url` | `wss://api.dingtalk.com/connect` | Stream gateway URL override |
+| `stream.requireMention` | `true` | Group messages must @-mention the bot |

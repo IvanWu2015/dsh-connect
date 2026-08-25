@@ -77,6 +77,19 @@ await dingtalk.sendText("DSH 任务已开始");
 | HTTP 401 | The webhook token is invalid; regenerate the robot |
 | Push timeout | Check the network/proxy between your machine and `oapi.dingtalk.com` |
 
-## What about Two-Way Conversations?
+## Two-Way Conversations (Stream mode)
 
-A group custom robot cannot receive messages. If you need the two-way experience of "user sends a message in DingTalk → agent replies", you need to create an **enterprise internal app robot** on the DingTalk Open Platform, using a Stream-mode long connection (similar to Feishu) — this would be another adapter; the sending layer of this package can be reused directly.
+A group custom robot cannot receive messages. Since **0.7.0**, `dsh-connect-dingtalk` ships a **Stream-mode bidirectional adapter**: create an **enterprise internal app** on the DingTalk Open Platform, enable the Stream-mode gateway, and configure the credentials:
+
+```yaml
+- id: connect-dingtalk
+  name: dsh-connect-dingtalk
+  config:
+    stream:
+      clientId: "dingxxxx"
+      clientSecret: "xxxx"
+      requireMention: true   # group replies need an @-mention (default true)
+    # webhookUrl / secret can still be set for proactive pushes
+```
+
+`DINGTALK_STREAM_CLIENT_ID` / `DINGTALK_STREAM_CLIENT_SECRET` environment variables work too. The adapter registers into `dsh-connect`: group @-mentions and DMs trigger the agent, replies stream back to the origin message, and menus render as numbered text lists (reply with a number). The STOMP codec, message normalization and reply bodies are unit-tested; validate live connectivity on a real app (needs outbound access to `wss://api.dingtalk.com/connect`).

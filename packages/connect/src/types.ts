@@ -135,6 +135,12 @@ export interface ChannelAdapter {
   /** Deliver a status/summary card. */
   sendCard(target: OutboundTarget, card: SummaryCard): Promise<void>;
   /**
+   * Deliver a local file (image / document / audio / video) to the chat.
+   * Optional: channels without file support omit it, and the runner falls
+   * back to sending the file's path as text.
+   */
+  sendFile?(target: OutboundTarget, filePath: string, options?: { filename?: string }): Promise<void>;
+  /**
    * Stream `chunks` into one progressively-updated reply. Resolves when the
    * producer is exhausted (`chunks` ends) and the adapter has finalized it.
    */

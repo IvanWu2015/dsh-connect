@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { padLabels, buildButtonGrid, buildChoiceElements, sanitizeFileName, extractErrorDetail } from "../lib/index.js";
+import { padLabels, buildButtonGrid, buildChoiceElements, sanitizeFileName, extractErrorDetail, encodeChatKey, decodeChatKey, classifyFeishuFile } from "../lib/index.js";
 
 test("padLabels pads CJK labels to equal display width", () => {
   const options = [
@@ -80,4 +80,24 @@ test("extractErrorDetail prefers the Feishu business error body", () => {
 test("extractErrorDetail falls back to Error message", () => {
   assert.equal(extractErrorDetail(new Error("boom")), "boom");
   assert.equal(extractErrorDetail("plain string"), "plain string");
+});
+// ── Stage B: thread isolation (B4) + sendFile classification (B3) ───────
+
+test("encodeChatKey/decodeChatKey round-trip with and without a thread", () => {
+  assert.equal(encodeChatKey("oc_1"), "oc_1");
+  assert.equal(encodeChatKey("oc_1", undefined), "oc_1");
+  const threaded = encodeChatKey("oc_1", "om_root");
+  assert.equal(threaded, "oc_1:thread=om_root");
+  assert.deepEqual(decodeChatKey(threaded), { chatId: "oc_1", threadId: "om_root" });
+  assert.deepEqual(decodeChatKey("oc_1"), { chatId: "oc_1" });
+  assert.deepEqual(decodeChatKey("oc_1:thread=om_root:extra"), { chatId: "oc_1", threadId: "om_root:extra" });
+});
+
+test("classifyFeishuFile picks images vs stream files by extension", () => {
+  assert.equal(classifyFeishuFile("a.png"), "image");
+  assert.equal(classifyFeishuFile("A.JPG"), "image");
+  assert.equal(classifyFeishuFile("photo.webp"), "image");
+  assert.equal(classifyFeishuFile("notes.md"), "file");
+  assert.equal(classifyFeishuFile("archive.zip"), "file");
+  assert.equal(classifyFeishuFile("noext"), "file");
 });

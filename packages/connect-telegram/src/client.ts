@@ -7,7 +7,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 
 const API_BASE = "https://api.telegram.org";
 
@@ -187,6 +187,30 @@ export class TelegramClient {
     }
   }
 
+  async sendDocument(chatId: number | string, documentPath: string, opts: SendMessageOptions = {}): Promise<TelegramMessage> {
+    const { readFileSync } = await import("node:fs");
+    const buffer = readFileSync(documentPath);
+    const blob = new Blob([buffer]);
+    const form = new FormData();
+    form.append("chat_id", String(chatId));
+    form.append("document", blob, documentPath.split(/[\\/]/).pop() ?? "document");
+    if (opts.reply_to_message_id !== undefined) form.append("reply_to_message_id", String(opts.reply_to_message_id));
+
+    const url = `${this.base()}/bot${this.config.botToken}/sendDocument`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 15_000);
+    try {
+      const response = await fetch(url, { method: "POST", body: form, signal: controller.signal });
+      const parsed = (await response.json()) as { ok: boolean; result?: TelegramMessage; description?: string };
+      if (!parsed.ok || parsed.result === undefined) {
+        throw new Error(`Telegram API sendDocument: ${parsed.description ?? "unknown error"}`);
+      }
+      return parsed.result;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<boolean> {
     return this.call<boolean>("answerCallbackQuery", {
       callback_query_id: callbackQueryId,
@@ -222,6 +246,15 @@ export class TelegramClient {
     const dir = join(tmpdir(), "dsh-connect-telegram");
     return this.downloadFile(fileId, dir, fileName);
   }
+}
+
+/** Image extensions Telegram renders inline via sendPhoto. */
+const PHOTO_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+
+/** Pick the Bot API method for a local file (sendPhoto vs sendDocument). */
+export function telegramFileMethod(filename: string): "sendPhoto" | "sendDocument" {
+  const ext = extname(filename).toLowerCase();
+  return PHOTO_EXTENSIONS.has(ext) ? "sendPhoto" : "sendDocument";
 }
 
 /** Strip path separators / control chars from a downloaded file's name. */

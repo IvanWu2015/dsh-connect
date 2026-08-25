@@ -28,8 +28,11 @@ export type Command =
   | { readonly kind: "mirror"; readonly timeoutMin?: number }
   | { readonly kind: "unlock" }
   | { readonly kind: "renew" }
-  | { readonly kind: "export"; readonly format?: "markdown" | "pdf" }
+  | { readonly kind: "export"; readonly format?: "markdown" }
   | { readonly kind: "ps"; readonly text: string }
+  | { readonly kind: "remind"; readonly text: string }
+  | { readonly kind: "send"; readonly path: string }
+  | { readonly kind: "broadcast"; readonly text: string }
   | { readonly kind: "help" }
   | { readonly kind: "message"; readonly text: string };
 
@@ -116,17 +119,27 @@ export function parseCommand(raw: string): Command {
     case "/renew-lock":
       return { kind: "renew" };
     case "/export": {
-      // Parse optional format parameter: /export markdown or /export pdf
-      if (arg === "markdown" || arg === "md") {
+      // Parse optional format parameter: /export markdown. "pdf" was never
+      // implemented — it falls back to the markdown export instead of
+      // replying "not supported".
+      if (arg === "markdown" || arg === "md" || arg === "pdf") {
         return { kind: "export", format: "markdown" };
-      } else if (arg === "pdf") {
-        return { kind: "export", format: "pdf" };
       }
       return { kind: "export" };
     }
     case "/ps":
     case "/append":
       return { kind: "ps", text: arg ?? "" };
+    case "/remind":
+    case "/remindme":
+    case "/alert":
+      return { kind: "remind", text: arg ?? "" };
+    case "/send":
+    case "/file":
+      return { kind: "send", path: arg ?? "" };
+    case "/broadcast":
+    case "/announce":
+      return { kind: "broadcast", text: arg ?? "" };
     case "/help":
     case "/start":
       return { kind: "help" };
@@ -157,8 +170,11 @@ export function helpText(t: Messages): string {
     "- `/mirror [--timeout N]` create Web mirror session (optional timeout in minutes)",
     "- `/unlock` manually release session lock",
     "- `/renew` renew current session lock timeout",
-    "- `/export [markdown|pdf]` export conversation history",
+    "- `/export [markdown]` export conversation history as Markdown",
     "- `/ps <note>` append a note to the running task",
+    "- `/remind <time> <text>` schedule a reminder (e.g. `/remind 10m take a break`)",
+    "- `/send <path>` send a file from the workspace (image / file / audio / video)",
+    "- `/broadcast <text>` send a message to every bound chat (admins only)",
     "- `/new` " + t.helpNew,
     "- `/clear` " + t.helpClear,
     "- `/stop` " + t.helpStop,
