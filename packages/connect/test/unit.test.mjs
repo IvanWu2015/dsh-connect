@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer, classifyError, InboundDedup, retry, withOutboundRetry, isLockTimedOut, acquireLock, releaseLockState, lockCanWrite, DEFAULT_LOCK_TIMEOUT_MS, ReminderStore, parseRemindTime, formatRemindAt } from "../lib/index.js";
+import { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces } from "../lib/index.js";
 
 test("parseCommand passes through plain messages", () => {
   assert.deepEqual(parseCommand("帮我跑测试"), { kind: "message", text: "帮我跑测试" });
@@ -675,4 +676,45 @@ test("helpText advertises /remind, /send and /broadcast", () => {
   assert.ok(en.includes("/remind") && en.includes("/send") && en.includes("/broadcast"));
 });
 
+test("menuTitle maps every menu id to a localized title", () => {
+  const zh = messages("zh");
+  for (const id of ["root", "workspace", "chat", "settings", "model", "reasoning", "notify", "language", "progress"]) {
+    assert.ok(menuTitle(id, zh).length > 0, `title for ${id}`);
+  }
+});
+
+test("rootMenuSections groups workspace/chat in 1 col and task/system in 2 col", () => {
+  const zh = messages("zh");
+  const secs = rootMenuSections(zh);
+  assert.equal(secs.length, 4);
+  assert.equal(secs[0].columnsPerRow, 1);
+  assert.equal(secs[2].columnsPerRow, 2);
+  assert.ok(secs[1].ids.includes("chat"));
+});
+
+test("reasonLabel maps known reasons and falls back to unknown", () => {
+  const zh = messages("zh");
+  assert.equal(reasonLabel("completed", zh), zh.reasonCompleted);
+  assert.equal(reasonLabel("bogus", zh), zh.reasonUnknown);
+});
+
+test("goalPhaseLabel maps phases and passes through unknown", () => {
+  const zh = messages("zh");
+  assert.equal(goalPhaseLabel("active", zh), zh.goalPhaseActive);
+  assert.equal(goalPhaseLabel("custom", zh), "custom");
+});
+
+test("listWorkspaces dedupes ignoring trailing slashes and case", () => {
+  const ws = listWorkspaces({
+    workDir: "C:/a",
+    currentDirLabel: "work",
+    workspaces: ["c:/A", "C:\\a", "D:/b"],
+    registry: { list: () => [{ path: "E:/c", title: "extra" }, { path: "C:/A", title: "dup" }] },
+  });
+  const paths = ws.map((w) => w.path);
+  assert.ok(paths.includes("C:/a"));
+  assert.ok(paths.includes("D:/b"));
+  assert.ok(paths.includes("E:/c"));
+  assert.equal(ws.filter((w) => w.path.toLowerCase().replace(/[\\/]+$/,"") === "c:/a").length, 1);
+});
 

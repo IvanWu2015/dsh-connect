@@ -19,6 +19,8 @@ export type { AskQuestionLike } from "./interaction.js";
 export { BindingStore } from "./binding.js";
 export type { ChatBinding, ChatSessionRecord } from "./binding.js";
 export { createAsyncQueue } from "./stream.js";
+export { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces } from "./menus.js";
+export type { MenuId, MenuItem } from "./menus.js";
 export { InboundDedup } from "./dedup.js";
 export { retry, withOutboundRetry } from "./retry.js";
 export type { RetryOptions } from "./retry.js";

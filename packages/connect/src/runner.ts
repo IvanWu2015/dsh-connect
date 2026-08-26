@@ -30,6 +30,7 @@ import {
   type StreamState,
 } from "./stream.js";
 import { helpText, parseCommand, type Command } from "./commands.js";
+import { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces, type MenuId, type MenuItem } from "./menus.js";
 import type { BindingStore, ChatBinding, ChatSessionRecord } from "./binding.js";
 import { messages, type Language, type Messages } from "./i18n.js";
 import {
@@ -186,21 +187,6 @@ function sameDir(a: string, b: string): boolean {
   return a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();
 }
 
-type MenuId = "root" | "workspace" | "chat" | "settings" | "model" | "reasoning" | "notify" | "language" | "progress";
-
-interface MenuItem {
-  id: string;
-  label: string;
-  /** Leaf action: after it runs, the menu returns to the root menu on the same card. */
-  leaf?: boolean;
-  /**
-   * `messageId` is the menu card id: pass it to `openMenu` to navigate in place,
-   * or close the card. A returned string is sent to the chat as the action's
-   * result feedback before the menu returns, so every button press answers
-   * visibly instead of leaving the user to guess whether it worked.
-   */
-  onSelect: (target: OutboundTarget, msg: InboundMessage, messageId: string) => Promise<string | void>;
-}
 
 /** How often the proactive progress watchdog re-checks whether a status card is due (ms). */
 const PROGRESS_WATCHDOG_CHECK_MS = 15_000;
@@ -245,54 +231,15 @@ export class AgentRunner {
   }
 
   private menuTitle(menuId: MenuId): string {
-    switch (menuId) {
-      case "root":
-        return this.t.menuRoot;
-      case "workspace":
-        return this.t.menuWorkspace;
-      case "chat":
-        return this.t.menuChat;
-      case "settings":
-        return this.t.menuSettings;
-      case "model":
-        return this.t.menuModel;
-      case "reasoning":
-        return this.t.menuReasoning;
-      case "notify":
-        return this.t.menuNotify;
-      case "language":
-        return this.t.menuSettingsLanguage;
-      case "progress":
-        return this.t.progressMenuTitle;
-    }
+    return menuTitle(menuId, this.t);
   }
 
   private rootMenuSections(): readonly { title: string; ids: readonly string[]; columnsPerRow?: number }[] {
-    return [
-      { title: this.t.rootSectionWorkspace, ids: ["workspace"], columnsPerRow: 1 },
-      { title: this.t.rootSectionChat, ids: ["chat", "history"], columnsPerRow: 1 },
-      { title: this.t.rootSectionTask, ids: ["task", "goals", "schedule"], columnsPerRow: 2 },
-      { title: this.t.rootSectionSystem, ids: ["status", "plugins", "compact", "settings"], columnsPerRow: 2 },
-    ];
+    return rootMenuSections(this.t);
   }
 
   private reasonLabel(reason: TurnReason): string {
-    switch (reason) {
-      case "completed":
-        return this.t.reasonCompleted;
-      case "aborted":
-        return this.t.reasonAborted;
-      case "blocked":
-        return this.t.reasonBlocked;
-      case "error":
-        return this.t.reasonError;
-      case "max-tokens":
-        return this.t.reasonMaxTokens;
-      case "interrupted":
-        return this.t.reasonInterrupted;
-      default:
-        return this.t.reasonUnknown;
-    }
+    return reasonLabel(reason, this.t);
   }
 
   /** Prefer the user's first DSH workspace over the process cwd as default. */
@@ -1580,22 +1527,14 @@ export class AgentRunner {
   }
 
   private listWorkspaces(): { path: string; title: string }[] {
-    const registry = this.ctx.get("workspaceRegistry") as
-      | { list?: () => readonly { path: string; title: string }[] }
-      | undefined;
-    const out: { path: string; title: string }[] = [];
-    const seen = new Set<string>();
-    const add = (path: string, title: string) => {
-      if (path === "") return;
-      const key = path.replace(/[\\/]+$/, "").toLowerCase();
-      if (seen.has(key)) return;
-      seen.add(key);
-      out.push({ path, title: title || path });
-    };
-    add(this.workDir, this.t.currentDir);
-    for (const w of registry?.list?.() ?? []) add(w.path, w.title);
-    for (const p of this.config.workspaces) add(p, p);
-    return out;
+    return listWorkspaces({
+      registry: this.ctx.get("workspaceRegistry") as
+        | { list?: () => readonly { path: string; title: string }[] }
+        | undefined,
+      workDir: this.workDir,
+      currentDirLabel: this.t.currentDir,
+      workspaces: this.config.workspaces,
+    });
   }
 
   private async openMenu(target: OutboundTarget, msg: InboundMessage, menuId: MenuId, stack: MenuId[] = [], cardId?: string): Promise<void> {
@@ -2250,18 +2189,7 @@ export class AgentRunner {
   }
 
   private goalPhaseLabel(phase: string): string {
-    switch (phase) {
-      case "active":
-        return this.t.goalPhaseActive;
-      case "paused":
-        return this.t.goalPhasePaused;
-      case "blocked":
-        return this.t.goalPhaseBlocked;
-      case "complete":
-        return this.t.goalPhaseComplete;
-      default:
-        return phase;
-    }
+    return goalPhaseLabel(phase, this.t);
   }
 
   private async showSchedule(target: OutboundTarget): Promise<void> {
