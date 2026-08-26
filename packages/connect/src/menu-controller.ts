@@ -293,23 +293,40 @@ export class MenuController {
     private async listModelChoices(): Promise<{ provider: string; model: string; name: string }[]> {
     const llm = this.host.ctx.get("llm") as
       | {
-          listProviders?: () => { id: string; name: string }[];
-          listModels?: (provider: string) => Promise<{ id: string; name: string }[]>;
+          listProviders?: () => { id: string; name?: string }[];
+          listConfigurableProviders?: () => { provider: string; displayName?: string }[];
+          listModels?: (provider: string) => Promise<{ id: string; name?: string }[]>;
         }
       | undefined;
-    const providers = llm?.listProviders?.() ?? [];
+    const logger = (this.host.ctx.get("logger") as { info?: (m: string) => void } | undefined)?.info;
+
+    const live = llm?.listProviders?.() ?? [];
+    const configurable = llm?.listConfigurableProviders?.() ?? [];
+
+    // Merge live registered routes with the configurable-provider directory so a
+    // configured provider whose adapter registers lazily (on first request) still
+    // appears in the menu instead of silently dropping it.
+    const seen = new Set<string>();
+    const labelOf = new Map<string, string>();
+    const providers: string[] = [];
+    for (const p of live) {
+      if (!seen.has(p.id)) { seen.add(p.id); providers.push(p.id); labelOf.set(p.id, p.name || p.id); }
+    }
+    for (const d of configurable) {
+      if (!seen.has(d.provider)) { seen.add(d.provider); providers.push(d.provider); labelOf.set(d.provider, d.displayName || d.provider); }
+    }
+
     const out: { provider: string; model: string; name: string }[] = [];
-    for (const p of providers) {
-      let models: { id: string; name: string }[] = [];
-      try {
-        models = (await llm?.listModels?.(p.id)) ?? [];
-      } catch {
-        // Skip providers whose catalog cannot be listed.
-      }
+    const zeroModel: string[] = [];
+    for (const pid of providers) {
+      let models: { id: string; name?: string }[] = [];
+      try { models = (await llm?.listModels?.(pid)) ?? []; } catch { /* adapter not registered */ }
+      if (models.length === 0) { zeroModel.push(pid); continue; }
       for (const m of models) {
-        out.push({ provider: p.id, model: m.id, name: this.host.t.modelName(m.name || m.id, p.name || p.id) });
+        out.push({ provider: pid, model: m.id, name: this.host.t.modelName(m.name || m.id, labelOf.get(pid) || pid) });
       }
     }
+    logger?.(["connect: model catalog", "live=" + live.length, "configurable=" + configurable.length, "providers=" + providers.length, "models=" + out.length, "zeroModel=[" + zeroModel.join(",") + "]"].join(" "));
     return out;
   }
 
