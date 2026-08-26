@@ -327,9 +327,9 @@ test("messages expose notification levels and task stats in both languages", () 
   assert.equal(zh.taskStatsCompactSuggest, "⚠️ 上下文占用较高，建议发送 /compact 压缩上下文");
 });
 
-test("resolveConnectConfig defaults notifyLevel to important", () => {
+test("resolveConnectConfig defaults notifyLevel to result", () => {
   const defaults = resolveConnectConfig({});
-  assert.equal(defaults.notifyLevel, "important");
+  assert.equal(defaults.notifyLevel, "result");
   assert.equal(defaults.streamHeartbeatMs, 60000);
   assert.equal(defaults.progressTimeoutMs, 300000);
   const explicit = resolveConnectConfig({ notifyLevel: "full" });
@@ -388,6 +388,10 @@ test("messages expose welcome / confirm / error-advice / progress strings in bot
   assert.equal(en.confirmNo, "↩️ Cancel");
   assert.equal(zh.toolStepLabel(2, "pwsh"), "🔧 第 2 次工具调用 `pwsh`");
   assert.equal(en.toolStepLabel(2, "pwsh"), "🔧 Tool call #2: `pwsh`");
+  // Streaming status uses the tool name only (no running counter), so repeat
+  // tool calls never log "tool #51" spam that grows the card.
+  assert.equal(zh.toolCalling("pwsh", undefined), "🔧 调用工具 `pwsh`");
+  assert.equal(en.toolCalling("pwsh", undefined), "🔧 Calling tool `pwsh`");
   assert.equal(zh.queuedHint(3), "（还有 3 条消息排队中）");
   assert.equal(en.queuedHint(3), "(3 more message(s) queued)");
   assert.ok(zh.processingFailedAdvice("boom", zh.errorAdviceNetwork).includes("网络"));

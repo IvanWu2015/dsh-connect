@@ -62,7 +62,8 @@ export interface ConnectConfig {
   autoMirror?: boolean;
   /** Liveness heartbeat interval ms for the streaming card; 0 disables it (default: 60000). */
   streamHeartbeatMs?: number;
-  /** Default notification level for streaming replies (default: `important`). */
+  /** Default notification level for streaming replies. Default 'result' (final answer only) keeps cards short. */
+  /** Streaming reply detail. Default 'result' (final answer only) to keep chat cards short. */
   notifyLevel?: NotifyLevel;
   /** Proactive progress-notice interval ms: when a turn goes silent for this long, a standalone status card is sent (default: 300000 = 5 min; 0 disables). */
   progressTimeoutMs?: number;
@@ -95,7 +96,7 @@ export function resolveConnectConfig(config: ConnectConfig): ResolvedConnectConf
     stateDir: config.stateDir,
     autoMirror: config.autoMirror ?? true, // Enabled by default
     streamHeartbeatMs: config.streamHeartbeatMs ?? 60_000,
-    notifyLevel: config.notifyLevel ?? "important",
+    notifyLevel: config.notifyLevel ?? "result",
     progressTimeoutMs: config.progressTimeoutMs ?? 5 * 60_000, // Proactive progress notice after 5 min of silence
   };
 }
@@ -119,6 +120,8 @@ interface ActiveTurn {
   milestone?: string;
   /** Number of tool calls observed in this turn (for the step counter). */
   toolCount: number;
+  /** Last tool name that pushed a status line (dedupes repeat tool calls). */
+  lastToolName?: string;
   /** Latest observed context usage (input tokens) and window, for the proactive compaction nudge. */
   contextSize?: number;
   contextWindow?: number;
@@ -320,15 +323,16 @@ export class AgentRunner implements MenuHost {
       } else {
         turn.milestone = this.t.toolCalling(name, undefined);
       }
-      // `result` mode shows nothing until the final answer; `important` shows
-      // the tool name with a step counter, `full` also carries the summary.
-      if (this.notifyLevel === "result") return;
-      const base = name === "ask_user_question"
+      // `result` mode shows nothing until the final answer.
+      if (this.notifyLevel === 'result') return;
+      // Keep the streaming card short: push a status line only once per distinct
+      // tool (not once per call, which would log "tool #51" spam), and label it
+      // with the tool name rather than a running counter.
+      if (turn.lastToolName === name) return;
+      turn.lastToolName = name;
+      const label = name === 'ask_user_question'
         ? this.t.questionToolCall(questionTextOf(event.data.arguments))
-        : this.t.toolStepLabel(turn.toolCount, name);
-      const label = name === "ask_user_question" || this.notifyLevel !== "full" || summary === undefined
-        ? base
-        : `${base} — ${summary}`;
+        : this.t.toolCalling(name, this.notifyLevel === 'full' ? summary : undefined);
       applyToolCall(turn, label);
     }
   }
@@ -743,7 +747,7 @@ export class AgentRunner implements MenuHost {
     this.turn = {
       firstSeq, chunks, lastText: "",
       reasoning: false, hintPushed: false, lastIndex: undefined, pushedAny: false,
-      startedAt: now, lastPushAt: now, toolCount: 0, contextNudged: false, compactAfterTurn: false,
+      startedAt: now, lastPushAt: now, toolCount: 0, lastToolName: undefined, contextNudged: false, compactAfterTurn: false,
     };
 
     // Liveness heartbeat: while the agent is working, keep the streaming card

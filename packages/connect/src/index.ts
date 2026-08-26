@@ -76,7 +76,7 @@ export const Config = z.object({
   autoMirror: z.boolean(),
   /** Liveness heartbeat interval ms for the streaming card; 0 disables it (default: 60000). */
   streamHeartbeatMs: z.number(),
-  /** Default notification level for streaming replies (default: `important`). */
+  /** Default notification level for streaming replies. Default 'result' (final answer only) keeps cards short. */
   notifyLevel: z.union([z.const("full"), z.const("important"), z.const("result")]),
   /** Proactive progress-notice interval ms when a turn stays silent (default: 300000 = 5 min; 0 disables). */
   progressTimeoutMs: z.number(),

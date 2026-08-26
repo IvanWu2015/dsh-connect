@@ -59,7 +59,7 @@ export interface StreamState {
  * How much of the agent's live progress the streaming card shows.
  * - `full` — everything: reasoning text, tool calls, heartbeats, answer.
  * - `important` — key milestones only: thinking hint, tool calls, heartbeats, answer (no reasoning text).
- * - `result` — only the final answer.
+ * - `result` — only the final answer (this is the default, keeping cards short).
  */
 export type NotifyLevel = "full" | "important" | "result";
 
