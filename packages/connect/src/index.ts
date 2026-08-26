@@ -11,6 +11,8 @@ import type { ConnectConfig } from "./runner.js";
 
 export { ConnectService } from "./service.js";
 export { AgentRunner, resolveConnectConfig } from "./runner.js";
+export { MenuController } from "./menu-controller.js";
+export type { MenuHost } from "./menu-controller.js";
 export type { ConnectConfig, ResolvedConnectConfig } from "./runner.js";
 export { applyStreamChunk, applyToolCall, classifyError, questionTextOf, summarizeTurn, toolCallSummary } from "./stream.js";
 export type { ErrorCategory, NotifyLevel, StreamChunkLike, StreamState } from "./stream.js";

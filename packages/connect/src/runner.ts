@@ -31,6 +31,7 @@ import {
 } from "./stream.js";
 import { helpText, parseCommand, type Command } from "./commands.js";
 import { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces, type MenuId, type MenuItem } from "./menus.js";
+import { MenuController, type MenuHost } from "./menu-controller.js";
 import type { BindingStore, ChatBinding, ChatSessionRecord } from "./binding.js";
 import { messages, type Language, type Messages } from "./i18n.js";
 import {
@@ -191,26 +192,27 @@ function sameDir(a: string, b: string): boolean {
 /** How often the proactive progress watchdog re-checks whether a status card is due (ms). */
 const PROGRESS_WATCHDOG_CHECK_MS = 15_000;
 
-export class AgentRunner {
+export class AgentRunner implements MenuHost {
   private readonly queue: InboundMessage[] = [];
   private running = false;
   private agent?: Agent;
   private handle?: AgentHandle;
   private turn?: ActiveTurn;
-  private workDir: string;
-  private language: Language;
-  private notifyLevel: NotifyLevel;
-  private progressTimeoutMs: number;
-  private t: Messages;
+  workDir: string;
+  language: Language;
+  notifyLevel: NotifyLevel;
+  progressTimeoutMs: number;
+  t: Messages;
+  private readonly menu: MenuController;
 
   constructor(
-    private readonly ctx: Context,
+    readonly ctx: Context,
     private readonly config: ResolvedConnectConfig,
-    private readonly channel: string,
-    private readonly chatKey: string,
+    readonly channel: string,
+    readonly chatKey: string,
     private readonly chatType: "p2p" | "group",
-    private readonly adapter: ChannelAdapter,
-    private readonly bindings: BindingStore,
+    readonly adapter: ChannelAdapter,
+    readonly bindings: BindingStore,
     private readonly adapters?: Map<string, ChannelAdapter>,
     /**
      * Route a replayed queued message back into the runner of its own channel
@@ -228,13 +230,14 @@ export class AgentRunner {
     this.notifyLevel = stored?.notifyLevel ?? config.notifyLevel;
     this.progressTimeoutMs = stored?.progressTimeoutMs ?? config.progressTimeoutMs;
     this.t = messages(this.language);
+    this.menu = new MenuController(this);
   }
 
-  private menuTitle(menuId: MenuId): string {
+  menuTitle(menuId: MenuId): string {
     return menuTitle(menuId, this.t);
   }
 
-  private rootMenuSections(): readonly { title: string; ids: readonly string[]; columnsPerRow?: number }[] {
+  rootMenuSections(): readonly { title: string; ids: readonly string[]; columnsPerRow?: number }[] {
     return rootMenuSections(this.t);
   }
 
@@ -414,7 +417,7 @@ export class AgentRunner {
   }
 
   /** Present a destructive-action confirmation; true only when the user confirms. */
-  private async confirmAction(target: OutboundTarget, promptText: string, messageId?: string): Promise<boolean> {
+  async confirmAction(target: OutboundTarget, promptText: string, messageId?: string): Promise<boolean> {
     const { choice } = await this.adapter.promptChoice(
       target,
       {
@@ -599,7 +602,7 @@ export class AgentRunner {
    * sessions). Titles come from the binding record when known, otherwise from
    * the host's session title service. Sorted newest first.
    */
-  private async collectWorkdirSessions(): Promise<{ sessionId: string; title: string }[]> {
+  async collectWorkdirSessions(): Promise<{ sessionId: string; title: string }[]> {
     const binding = this.bindings.get(this.channel, this.chatKey);
     const byId = new Map<string, string>();
     for (const s of binding?.sessions ?? []) {
@@ -670,7 +673,7 @@ export class AgentRunner {
     return this.ctx.get("sessions") as SessionStore;
   }
 
-  private defaultSelection(): ModelSelection {
+  defaultSelection(): ModelSelection {
     const service = this.ctx.get("agentDefaultModel") as { currentSelection?: () => ModelSelection } | undefined;
     return service?.currentSelection?.() ?? { provider: "", model: "" };
   }
@@ -1159,7 +1162,7 @@ export class AgentRunner {
       }
       case "dir": {
         if (command.path === undefined) {
-          await this.openMenu(target, msg, "workspace", ["root"]);
+          await this.menu.openMenu(target, msg, "workspace", ["root"]);
           break;
         }
         const path = command.path;
@@ -1182,15 +1185,15 @@ export class AgentRunner {
         break;
       }
       case "chat": {
-        await this.openMenu(target, msg, "chat", ["root"]);
+        await this.menu.openMenu(target, msg, "chat", ["root"]);
         break;
       }
       case "menu": {
-        await this.openMenu(target, msg, "root");
+        await this.menu.openMenu(target, msg, "root");
         break;
       }
       case "settings": {
-        await this.openMenu(target, msg, "settings", ["root"]);
+        await this.menu.openMenu(target, msg, "settings", ["root"]);
         break;
       }
       case "plugins": {
@@ -1222,7 +1225,7 @@ export class AgentRunner {
         break;
       }
       case "model": {
-        await this.openMenu(target, msg, "model", ["root"]);
+        await this.menu.openMenu(target, msg, "model", ["root"]);
         break;
       }
       case "notify": {
@@ -1467,7 +1470,7 @@ export class AgentRunner {
     this.log(`connect: auto-created Web mirror for session ${sessionId}`);
   }
 
-  private async newChat(msg: InboundMessage): Promise<void> {
+  async newChat(msg: InboundMessage): Promise<void> {
     await this.disposeAgent();
     const binding = this.bindings.get(this.channel, this.chatKey);
     if (binding !== undefined) {
@@ -1506,7 +1509,7 @@ export class AgentRunner {
     }
   }
 
-  private async switchTo(sessionId: string, ownerKey: string): Promise<void> {
+  async switchTo(sessionId: string, ownerKey: string): Promise<void> {
     const binding = this.bindings.get(this.channel, this.chatKey);
     if (binding === undefined) return;
     const sessions = binding.sessions.map((s) => (s.sessionId === sessionId ? { ...s, lastActiveAt: Date.now() } : s));
@@ -1526,7 +1529,7 @@ export class AgentRunner {
     await this.disposeAgent();
   }
 
-  private listWorkspaces(): { path: string; title: string }[] {
+  listWorkspaces(): { path: string; title: string }[] {
     return listWorkspaces({
       registry: this.ctx.get("workspaceRegistry") as
         | { list?: () => readonly { path: string; title: string }[] }
@@ -1537,190 +1540,9 @@ export class AgentRunner {
     });
   }
 
-  private async openMenu(target: OutboundTarget, msg: InboundMessage, menuId: MenuId, stack: MenuId[] = [], cardId?: string): Promise<void> {
-    const items = await this.menuItems(menuId);
-    const options: ChoiceOption[] = items.map((i) => ({ id: i.id, label: i.label }));
-    options.push({ id: "menu:exit", label: this.t.menuExit });
-    if (stack.length > 0) options.push({ id: "menu:back", label: this.t.menuBack });
-    
-    // Determine columns per row based on menu type
-    // Workspace and chat lists use 1 column (full width), others use 2 columns
-    const columnsPerRow = (menuId === "workspace" || menuId === "chat") ? 1 : 2;
-    
-    const { choice, messageId } = await this.adapter.promptChoice(
-      target,
-      {
-        title: this.menuTitle(menuId),
-        options,
-        columnsPerRow,
-        ...(menuId === "root" ? { sections: this.rootMenuSections(), footer: this.t.rootMenuFooter } : {}),
-      },
-      cardId,
-    );
-    if (choice === undefined) return;
-    if (choice === "menu:exit") {
-      await this.adapter.closeMenu(messageId, this.t.menuClosed);
-      return;
-    }
-    if (choice === "menu:back") {
-      const parent = stack[stack.length - 1];
-      await this.openMenu(target, msg, parent, stack.slice(0, -1), messageId);
-      return;
-    }
-    const item = items.find((i) => i.id === choice);
-    if (item === undefined) {
-      // The tap belonged to a previous card generation (e.g. a rapid second
-      // tap on the old menu while the new one was still being redrawn). Don't
-      // silently swallow it: redraw the current menu so the chain stays usable.
-      await this.openMenu(target, msg, menuId, stack, messageId);
-      return;
-    }
-    const feedback = await item.onSelect(target, msg, messageId);
-    if (item.leaf === true) {
-      // Every leaf press must answer visibly: send the action's result feedback
-      // (if any) before returning to the root menu on the same card.
-      if (feedback !== undefined && feedback !== "") {
-        await this.adapter.sendText(target, feedback).catch(() => undefined);
-      }
-      await this.openMenu(target, msg, "root", [], messageId);
-    }
-  }
 
-  private async menuItems(menuId: MenuId): Promise<MenuItem[]> {
-    switch (menuId) {
-      case "root":
-        return [
-          { id: "workspace", label: this.t.menuWorkspaceAction, onSelect: (t, m, cardId) => this.openMenu(t, m, "workspace", ["root"], cardId) },
-          { id: "chat", label: this.t.menuChatAction, onSelect: (t, m, cardId) => this.openMenu(t, m, "chat", ["root"], cardId) },
-          { id: "status", label: this.t.menuStatusAction, leaf: true, onSelect: async (t) => { await this.showStatus(t); } },
-          { id: "task", label: this.t.menuTaskAction, leaf: true, onSelect: async (t) => { await this.showTasks(t); } },
-          { id: "history", label: this.t.menuHistoryAction, leaf: true, onSelect: async (t) => { await this.showHistory(t, 10); } },
-          { id: "goals", label: this.t.menuGoalsAction, leaf: true, onSelect: async (t) => { await this.showGoals(t); } },
-          { id: "schedule", label: this.t.menuScheduleAction, leaf: true, onSelect: async (t) => { await this.showSchedule(t); } },
-          { id: "compact", label: this.t.menuCompactAction, leaf: true, onSelect: async (t) => { await this.compact(t); } },
-          { id: "plugins", label: this.t.menuPluginsAction, leaf: true, onSelect: async (t) => { await this.showPlugins(t); } },
-          { id: "settings", label: this.t.menuSettingsAction, onSelect: (t, m, cardId) => this.openMenu(t, m, "settings", ["root"], cardId) },
-        ];
-      case "workspace": {
-        const workspaces = this.listWorkspaces();
-        return workspaces.map((w) => ({
-          id: `dir:${w.path}`,
-          label: `${w.path === this.workDir ? "● " : ""}${w.title}${w.title !== w.path ? `  (${w.path})` : ""}`,
-          leaf: true,
-          onSelect: async (t, m) => {
-            this.workDir = w.path;
-            await this.newChat(m);
-            return this.t.dirSwitched(w.path);
-          },
-        }));
-      }
-      case "chat": {
-        const binding = this.bindings.get(this.channel, this.chatKey);
-        const active = binding?.sessionId;
-        const hasWebMirror = binding?.webMirrorSessionId !== undefined;
 
-        const items: MenuItem[] = (await this.collectWorkdirSessions()).map(({ sessionId, title }) => {
-          const isMirrored = hasWebMirror && binding?.webMirrorSessionId === sessionId;
-          const mirrorIndicator = isMirrored ? ` ${this.t.webMirrorIndicator}` : "";
-          const activeIndicator = sessionId === active ? "●" : "○";
-          return {
-            id: `session:${sessionId}`,
-            label: `${activeIndicator} ${title || sessionId}${mirrorIndicator}`,
-            leaf: true,
-            onSelect: async (t, m) => {
-              await this.switchTo(sessionId, m.senderKey);
-              return this.t.sessionSwitched(title || sessionId);
-            },
-          };
-        });
-
-        if (items.length === 0) {
-          items.push({
-            id: "none:history",
-            label: this.t.noSessionsInWorkdir(this.workDir),
-            leaf: true,
-            onSelect: async () => this.t.noSessionsInWorkdir(this.workDir),
-          });
-        }
-
-        items.push({
-          id: "action:new",
-          label: this.t.menuNewChat,
-          leaf: true,
-          onSelect: async (t, m, messageId) => {
-            // Reuse the menu card for the confirm prompt so no stale card is left behind.
-            if (await this.confirmAction(t, this.t.confirmNewText, messageId)) {
-              await this.newChat(m);
-              return this.t.newChatDone;
-            }
-            return this.t.actionCancelled;
-          },
-        });
-        return items;
-      }
-      case "settings":
-        return [
-          { id: "model", label: this.t.menuSettingsModel, onSelect: (t, m, cardId) => this.openMenu(t, m, "model", ["settings", "root"], cardId) },
-          { id: "reasoning", label: this.t.menuSettingsReasoning, onSelect: (t, m, cardId) => this.openMenu(t, m, "reasoning", ["settings", "root"], cardId) },
-          { id: "notify", label: this.t.menuSettingsNotify, onSelect: (t, m, cardId) => this.openMenu(t, m, "notify", ["settings", "root"], cardId) },
-          { id: "progress", label: this.t.menuSettingsProgress, onSelect: (t, m, cardId) => this.openMenu(t, m, "progress", ["settings", "root"], cardId) },
-          { id: "language", label: this.t.menuSettingsLanguage, onSelect: (t, m, cardId) => this.openMenu(t, m, "language", ["settings", "root"], cardId) },
-          { id: "overview", label: this.t.menuSettingsOverview, leaf: true, onSelect: async (t) => { await this.showSettings(t); } },
-        ];
-      case "language":
-        return [
-          {
-            id: "lang:zh",
-            label: `${this.language === "zh" ? "● " : ""}${this.t.languageZh}`,
-            leaf: true,
-            onSelect: async (t, m) => { await this.setLanguage("zh", t, m); },
-          },
-          {
-            id: "lang:en",
-            label: `${this.language === "en" ? "● " : ""}${this.t.languageEn}`,
-            leaf: true,
-            onSelect: async (t, m) => { await this.setLanguage("en", t, m); },
-          },
-        ];
-      case "model":
-        return await this.modelMenuItems();
-      case "reasoning":
-        return this.reasoningMenuItems();
-      case "notify":
-        return ([
-          { id: "full", label: this.t.notifyFull },
-          { id: "important", label: this.t.notifyImportant },
-          { id: "result", label: this.t.notifyResult },
-        ] as const).map((o) => ({
-          id: `notify:${o.id}`,
-          label: `${this.notifyLevel === o.id ? "● " : ""}${o.label}`,
-          leaf: true,
-          onSelect: async (t: OutboundTarget, m: InboundMessage) => {
-            await this.setNotifyLevel(o.id, t, m);
-          },
-        }));
-      case "progress": {
-        const presets: { id: string; label: string; ms: number }[] = [
-          { id: "progress:0", label: this.t.progressOff, ms: 0 },
-          { id: "progress:120000", label: this.t.progressMinutes(2), ms: 2 * 60_000 },
-          { id: "progress:300000", label: this.t.progressMinutes(5), ms: 5 * 60_000 },
-          { id: "progress:600000", label: this.t.progressMinutes(10), ms: 10 * 60_000 },
-          { id: "progress:900000", label: this.t.progressMinutes(15), ms: 15 * 60_000 },
-          { id: "progress:1800000", label: this.t.progressMinutes(30), ms: 30 * 60_000 },
-        ];
-        return presets.map((o) => ({
-          id: o.id,
-          label: `${this.progressTimeoutMs === o.ms ? "● " : ""}${o.label}`,
-          leaf: true,
-          onSelect: async (t: OutboundTarget, m: InboundMessage) => {
-            await this.setProgressTimeout(o.ms, t, m);
-          },
-        }));
-      }
-    }
-  }
-
-  private async showStatus(target: OutboundTarget): Promise<void> {
+  async showStatus(target: OutboundTarget): Promise<void> {
     const agent = this.agent;
     if (agent === undefined) {
       await this.adapter.sendText(target, this.t.statusNoSession(this.workDir));
@@ -1789,7 +1611,7 @@ export class AgentRunner {
     return undefined;
   }
 
-  private async showTasks(target: OutboundTarget): Promise<void> {
+  async showTasks(target: OutboundTarget): Promise<void> {
     const todos = this.readTodos();
     if (todos.length === 0) {
       await this.adapter.sendText(target, this.t.noTodos);
@@ -1802,7 +1624,7 @@ export class AgentRunner {
     await this.adapter.sendText(target, this.t.currentTodos(todos.length, lines.join("\n")));
   }
 
-  private async showSettings(target: OutboundTarget): Promise<void> {
+  async showSettings(target: OutboundTarget): Promise<void> {
     const binding = this.bindings.get(this.channel, this.chatKey);
     const agent = this.agent;
     const model = agent ? `${agent.options.provider ?? "-"}/${agent.options.model ?? "-"}` : "-";
@@ -1824,48 +1646,9 @@ export class AgentRunner {
     await this.adapter.sendText(target, lines.join("\n"));
   }
 
-  private async modelMenuItems(): Promise<MenuItem[]> {
-    const choices = await this.listModelChoices();
-    const current = this.defaultSelection();
-    const items: MenuItem[] = choices.map((c) => ({
-      id: `model:${c.provider}:${c.model}`,
-      label: `${c.provider === current.provider && c.model === current.model ? "● " : ""}${c.name}`,
-      leaf: true,
-      onSelect: async (t, m) => {
-        await this.setModel(c.provider, c.model, m);
-        return this.t.modelSet(c.name);
-      },
-    }));
-    if (items.length === 0) {
-      items.push({ id: "model:none", label: this.t.noModelsFound, leaf: true, onSelect: async () => this.t.noModelsFound });
-    }
-    return items;
-  }
 
-  private async listModelChoices(): Promise<{ provider: string; model: string; name: string }[]> {
-    const llm = this.ctx.get("llm") as
-      | {
-          listProviders?: () => { id: string; name: string }[];
-          listModels?: (provider: string) => Promise<{ id: string; name: string }[]>;
-        }
-      | undefined;
-    const providers = llm?.listProviders?.() ?? [];
-    const out: { provider: string; model: string; name: string }[] = [];
-    for (const p of providers) {
-      let models: { id: string; name: string }[] = [];
-      try {
-        models = (await llm?.listModels?.(p.id)) ?? [];
-      } catch {
-        // Skip providers whose catalog cannot be listed.
-      }
-      for (const m of models) {
-        out.push({ provider: p.id, model: m.id, name: this.t.modelName(m.name || m.id, p.name || p.id) });
-      }
-    }
-    return out;
-  }
 
-  private async setModel(provider: string, model: string, msg: InboundMessage): Promise<void> {
+  async setModel(provider: string, model: string, msg: InboundMessage): Promise<void> {
     const svc = this.ctx.get("agentDefaultModel") as
       | { saveSelection?: (s: ModelSelection) => Promise<void> }
       | undefined;
@@ -1878,39 +1661,8 @@ export class AgentRunner {
     await this.newChat(msg);
   }
 
-  private reasoningMenuItems(): MenuItem[] {
-    const current = this.defaultSelection();
-    const efforts = [
-      { id: "low", name: this.t.effortLow },
-      { id: "medium", name: this.t.effortMedium },
-      { id: "high", name: this.t.effortHigh },
-    ];
-    const items: MenuItem[] = [
-      {
-        id: "effort:default",
-        label: `${current.reasoningEffort === undefined ? "● " : ""}${this.t.effortDefault}`,
-        leaf: true,
-        onSelect: async (t, m) => {
-          await this.setReasoning(undefined, m);
-          return this.t.reasoningSet(this.t.effortDefault);
-        },
-      },
-    ];
-    for (const e of efforts) {
-      items.push({
-        id: `effort:${e.id}`,
-        label: `${e.id === current.reasoningEffort ? "● " : ""}${e.name}`,
-        leaf: true,
-        onSelect: async (t, m) => {
-          await this.setReasoning(e.id, m);
-          return this.t.reasoningSet(e.name);
-        },
-      });
-    }
-    return items;
-  }
 
-  private async setReasoning(effort: string | undefined, msg: InboundMessage): Promise<void> {
+  async setReasoning(effort: string | undefined, msg: InboundMessage): Promise<void> {
     const svc = this.ctx.get("agentDefaultModel") as
       | { saveSelection?: (s: ModelSelection) => Promise<void> }
       | undefined;
@@ -1924,7 +1676,7 @@ export class AgentRunner {
   }
 
   /** Switch the user-facing language for this chat, persisted in its binding. */
-  private async setLanguage(lang: Language, target: OutboundTarget, msg: InboundMessage): Promise<void> {
+  async setLanguage(lang: Language, target: OutboundTarget, msg: InboundMessage): Promise<void> {
     const changed = lang !== this.language;
     if (changed) {
       this.language = lang;
@@ -1957,7 +1709,7 @@ export class AgentRunner {
    * Switch the notification level for this chat (persisted in its binding and
    * effective immediately for the next streaming reply).
    */
-  private async setNotifyLevel(level: NotifyLevel, target: OutboundTarget, msg: InboundMessage): Promise<void> {
+  async setNotifyLevel(level: NotifyLevel, target: OutboundTarget, msg: InboundMessage): Promise<void> {
     this.notifyLevel = level;
     const binding = this.bindings.get(this.channel, this.chatKey);
     if (binding !== undefined) {
@@ -1998,7 +1750,7 @@ export class AgentRunner {
    * Switch the proactive progress-notice interval for this chat (persisted in
    * its binding and effective for the next turn; 0 disables the watchdog).
    */
-  private async setProgressTimeout(ms: number, target: OutboundTarget, msg: InboundMessage): Promise<void> {
+  async setProgressTimeout(ms: number, target: OutboundTarget, msg: InboundMessage): Promise<void> {
     this.progressTimeoutMs = ms;
     const binding = this.bindings.get(this.channel, this.chatKey);
     if (binding !== undefined) {
@@ -2037,7 +1789,7 @@ export class AgentRunner {
     await this.setProgressTimeout(ms, target, msg);
   }
 
-  private async showPlugins(target: OutboundTarget): Promise<void> {
+  async showPlugins(target: OutboundTarget): Promise<void> {
     const loader = this.ctx.get("loader") as
       | { entries?: () => Iterable<{ id: string; options: { name?: string }; disabled: boolean }> }
       | undefined;
@@ -2084,7 +1836,7 @@ export class AgentRunner {
     }
   }
 
-  private async compact(target: OutboundTarget): Promise<void> {
+  async compact(target: OutboundTarget): Promise<void> {
     const agent = this.agent;
     if (agent === undefined) {
       await this.adapter.sendText(target, this.t.noActiveSessionCompact);
@@ -2122,7 +1874,7 @@ export class AgentRunner {
     }
   }
 
-  private async showHistory(target: OutboundTarget, limit: number): Promise<void> {
+  async showHistory(target: OutboundTarget, limit: number): Promise<void> {
     const agent = this.agent;
     if (agent === undefined) {
       // No live agent: there may still be historical sessions for the current
@@ -2155,7 +1907,7 @@ export class AgentRunner {
     await this.adapter.sendText(target, this.t.recentMessages(rows.length, rows.reverse().join("\n\n")));
   }
 
-  private async showGoals(target: OutboundTarget): Promise<void> {
+  async showGoals(target: OutboundTarget): Promise<void> {
     const agent = this.agent;
     if (agent === undefined) {
       await this.adapter.sendText(target, this.t.noActiveSession);
@@ -2192,7 +1944,7 @@ export class AgentRunner {
     return goalPhaseLabel(phase, this.t);
   }
 
-  private async showSchedule(target: OutboundTarget): Promise<void> {
+  async showSchedule(target: OutboundTarget): Promise<void> {
     // Agent-level reminders (session `schedule` tool) + persistent chat-level
     // reminders (`/remind`), merged into one list.
     const agentReminders = this.agent === undefined ? [] : foldReminders(this.agent.session.events);
