@@ -81,6 +81,8 @@ export interface ChoicePrompt {
    * Defaults to `buttons` for backward compatibility.
    */
   readonly render?: ChoiceRender;
+  /** Optional option id to pre-select when a channel renders a dropdown. */
+  readonly initialOption?: string;
 }
 
 /** Result of an interactive choice: the picked option and the card's message id. */

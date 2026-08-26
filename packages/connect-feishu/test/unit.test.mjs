@@ -120,6 +120,15 @@ test("buildChoiceElements uses dropdown for large sets in auto mode", () => {
   assert.equal(dropdown[0].actions[0].tag, "select_static");
 });
 
+test("buildChoiceElements passes initialOption through as the dropdown initial_option", () => {
+  const opts = [{ id: "model:a:b", label: "B" }, { id: "model:a:c", label: "C" }];
+  const el = buildChoiceElements({ title: "model", options: opts, render: "dropdown", initialOption: "model:a:b" }, 2);
+  const select = el[0].actions[0];
+  assert.equal(select.tag, "select_static");
+  assert.equal(select.initial_option, "model:a:b");
+  assert.equal(select.options.length, 2);
+});
+
 test("buildChoiceElements keeps buttons for small sets in auto mode", () => {
   const opts = [{ id: "a", label: "A" }, { id: "b", label: "B" }];
   const btns = buildChoiceElements({ title: "t", options: opts, render: "auto" }, 2);

@@ -63,7 +63,14 @@ export class MenuController {
     // Determine columns per row based on menu type
     // Workspace and chat lists use 1 column (full width), others use 2 columns
     const columnsPerRow = (menuId === "workspace" || menuId === "chat") ? 1 : 2;
-    
+
+    // Pre-select the current model when the model menu renders as a dropdown,
+    // so the card opens on the active model instead of an empty placeholder.
+    const current = this.host.defaultSelection();
+    const dropInitial = menuId === "model" && current.provider !== "" && current.model !== ""
+      ? "model:" + current.provider + ":" + current.model
+      : undefined;
+
     const { choice, messageId } = await this.host.adapter.promptChoice(
       target,
       {
@@ -74,6 +81,7 @@ export class MenuController {
         // button grid so a full submenu never reads as a single closed/empty select.
         render: menuRender(menuId),
         ...(menuId === "root" ? { sections: this.host.rootMenuSections(), footer: this.host.t.rootMenuFooter } : {}),
+        ...(dropInitial !== undefined && options.some((o) => o.id === dropInitial) ? { initialOption: dropInitial } : {}),
       },
       cardId,
     );

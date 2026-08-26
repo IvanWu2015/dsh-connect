@@ -149,7 +149,7 @@ export function buildChoiceElements(prompt: ChoicePrompt, defaultColumns: number
   const dropdown =
     render === "dropdown" ||
     (render === "auto" && (sections === undefined || sections.length === 0) && options.length > AUTO_DROPDOWN_THRESHOLD);
-  if (dropdown) return buildSelectMenu(options);
+  if (dropdown) return buildSelectMenu(options, undefined, prompt.initialOption);
   if (sections === undefined || sections.length === 0) return buildButtonGrid(options, defaultColumns);
   const byId = new Map(options.map((o) => [o.id, o]));
   const listed = new Set(sections.flatMap((s) => s.ids));
