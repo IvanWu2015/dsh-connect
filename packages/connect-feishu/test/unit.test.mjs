@@ -109,8 +109,8 @@ test("buildSelectMenu renders a select_static action with option ids", () => {
   assert.equal(select.tag, "select_static");
   assert.equal(select.placeholder.content, "choose");
   assert.equal(select.initial_option, "a");
-  assert.equal(select.option.length, 2);
-  assert.deepEqual(select.option[1], { text: { tag: "plain_text", content: "Beta" }, value: "b" });
+  assert.equal(select.options.length, 2);
+  assert.deepEqual(select.options[1], { text: { tag: "plain_text", content: "Beta" }, value: "b" });
 });
 
 test("buildChoiceElements uses dropdown for large sets in auto mode", () => {

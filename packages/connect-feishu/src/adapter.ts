@@ -105,7 +105,7 @@ export function buildSelectMenu(options: readonly ChoiceOption[], placeholder = 
           tag: "select_static",
           placeholder: { tag: "plain_text", content: placeholder },
           ...(initial === undefined ? {} : { initial_option: initial }),
-          option: options.map((o) => ({ text: { tag: "plain_text", content: o.label }, value: o.id })),
+          options: options.map((o) => ({ text: { tag: "plain_text", content: o.label }, value: o.id })),
         },
       ],
     },
