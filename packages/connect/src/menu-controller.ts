@@ -70,6 +70,10 @@ export class MenuController {
         title: this.host.menuTitle(menuId),
         options,
         columnsPerRow,
+        // Item-heavy menus (model / session / workspace) auto-render as a
+        // single select_static dropdown; small menus stay as buttons. Root's
+        // grouped sections are exempt (they always stay as a button grid).
+        render: "auto",
         ...(menuId === "root" ? { sections: this.host.rootMenuSections(), footer: this.host.t.rootMenuFooter } : {}),
       },
       cardId,

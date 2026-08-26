@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer, classifyError, InboundDedup, retry, withOutboundRetry, isLockTimedOut, acquireLock, releaseLockState, lockCanWrite, DEFAULT_LOCK_TIMEOUT_MS, ReminderStore, parseRemindTime, formatRemindAt } from "../lib/index.js";
 import { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces } from "../lib/index.js";
+import { MenuController } from "../lib/index.js";
 
 test("parseCommand passes through plain messages", () => {
   assert.deepEqual(parseCommand("帮我跑测试"), { kind: "message", text: "帮我跑测试" });
@@ -720,5 +721,30 @@ test("listWorkspaces dedupes ignoring trailing slashes and case", () => {
   assert.ok(paths.includes("D:/b"));
   assert.ok(paths.includes("E:/c"));
   assert.equal(ws.filter((w) => w.path.toLowerCase().replace(/[\\/]+$/,"") === "c:/a").length, 1);
+});
+
+test("settings submenu routes each item to its own menu (no workspace collapse)", async () => {
+  // Regression: a stale menu could route every settings item to the workspace
+  // menu. The controller must expose the correct per-item menu ids.
+  const t = messages("zh");
+  const mc = new MenuController({ t });
+  const items = await mc.menuItems("settings");
+  const ids = items.map((i) => i.id);
+  assert.deepEqual(ids, ["model", "reasoning", "notify", "progress", "language", "overview"]);
+  // The language item navigates to the "language" submenu; progress to "progress".
+  const lang = items.find((i) => i.id === "language");
+  assert.ok(lang !== undefined, "settings has language item");
+  assert.equal(lang.label, t.menuSettingsLanguage);
+  const progress = items.find((i) => i.id === "progress");
+  assert.ok(progress !== undefined, "settings has progress item");
+});
+
+test("language and progress submenus expose only their own options", async () => {
+  const t = messages("zh");
+  const mc = new MenuController({ t });
+  assert.deepEqual((await mc.menuItems("language")).map((i) => i.id), ["lang:zh", "lang:en"]);
+  const progress = await mc.menuItems("progress");
+  assert.ok(progress.length >= 2, "progress presets present");
+  assert.ok(progress.every((i) => i.id.startsWith("progress:")), "progress ids are scope-prefixed");
 });
 
