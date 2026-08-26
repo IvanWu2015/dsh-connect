@@ -14,7 +14,7 @@ import type { Messages, Language } from "./i18n.js";
 import type { ChoiceOption, ChannelAdapter, InboundMessage, OutboundTarget } from "./types.js";
 import type { BindingStore } from "./binding.js";
 import type { NotifyLevel } from "./stream.js";
-import type { MenuId, MenuItem } from "./menus.js";
+import { menuRender, type MenuId, type MenuItem } from "./menus.js";
 
 /** Read-only surface `MenuController` needs from the per-chat driver. */
 export interface MenuHost {
@@ -70,10 +70,9 @@ export class MenuController {
         title: this.host.menuTitle(menuId),
         options,
         columnsPerRow,
-        // Item-heavy menus (model / session / workspace) auto-render as a
-        // single select_static dropdown; small menus stay as buttons. Root's
-        // grouped sections are exempt (they always stay as a button grid).
-        render: "auto",
+        // Data-heavy menus collapse to a dropdown; every other menu stays a
+        // button grid so a full submenu never reads as a single closed/empty select.
+        render: menuRender(menuId),
         ...(menuId === "root" ? { sections: this.host.rootMenuSections(), footer: this.host.t.rootMenuFooter } : {}),
       },
       cardId,

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer, classifyError, InboundDedup, retry, withOutboundRetry, isLockTimedOut, acquireLock, releaseLockState, lockCanWrite, DEFAULT_LOCK_TIMEOUT_MS, ReminderStore, parseRemindTime, formatRemindAt } from "../lib/index.js";
-import { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces } from "../lib/index.js";
+import { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces, menuRender } from "../lib/index.js";
 import { MenuController } from "../lib/index.js";
 
 test("parseCommand passes through plain messages", () => {
@@ -746,5 +746,19 @@ test("language and progress submenus expose only their own options", async () =>
   const progress = await mc.menuItems("progress");
   assert.ok(progress.length >= 2, "progress presets present");
   assert.ok(progress.every((i) => i.id.startsWith("progress:")), "progress ids are scope-prefixed");
+});
+
+test("menuRender: only data-heavy menus use a dropdown, the rest stay buttons", () => {
+  assert.equal(menuRender("model"), "dropdown");
+  assert.equal(menuRender("chat"), "dropdown");
+  assert.equal(menuRender("workspace"), "dropdown");
+  // Settings/language/notify/progress must remain button grids — a full
+  // submenu collapsing into a single closed select reads as an empty card.
+  assert.equal(menuRender("settings"), "buttons");
+  assert.equal(menuRender("language"), "buttons");
+  assert.equal(menuRender("notify"), "buttons");
+  assert.equal(menuRender("progress"), "buttons");
+  assert.equal(menuRender("reasoning"), "buttons");
+  assert.equal(menuRender("root"), "buttons");
 });
 

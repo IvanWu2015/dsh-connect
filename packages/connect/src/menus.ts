@@ -131,3 +131,16 @@ export function listWorkspaces(opts: {
   for (const p of opts.workspaces) add(p, p);
   return out;
 }
+
+/**
+ * Which render mode a menu should use. Data-heavy menus (model / session /
+ * workspace) collapse to a single select_static so the card stays compact;
+ * every other menu stays a button grid — a full menu must never read as a
+ * single closed/empty select. This is a pure function so it can be unit-tested
+ * (a naive "auto when many options" collapses settings/language etc. too).
+ */
+export function menuRender(menuId: MenuId): "dropdown" | "buttons" {
+  return menuId === "model" || menuId === "chat" || menuId === "workspace"
+    ? "dropdown"
+    : "buttons";
+}
