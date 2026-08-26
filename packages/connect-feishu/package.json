@@ -1,6 +1,6 @@
 {
   "name": "dsh-connect-feishu",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Feishu/Lark channel adapter for dsh-connect: long-connection event intake, message normalization, streaming replies, and work summary cards",
   "type": "module",
   "main": "lib/index.js",

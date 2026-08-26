@@ -1,6 +1,6 @@
 {
   "name": "dsh-connect-dingtalk",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "DingTalk channel for dsh-connect: webhook push + stream-mode bidirectional",
   "type": "module",
   "main": "lib/index.js",
