@@ -92,6 +92,43 @@ export function buildButtonGrid(options: readonly ChoiceOption[], columnsPerRow:
 }
 
 /**
+ * Render options as a single-select dropdown (`select_static`) inside an
+ * `action` container. Selecting an entry fires the card action with
+ * `action.tag === "select_static"` and the picked option id in `action.option`.
+ */
+export function buildSelectMenu(options: readonly ChoiceOption[], placeholder = "请选择", initial?: string): unknown[] {
+  return [
+    {
+      tag: "action",
+      actions: [
+        {
+          tag: "select_static",
+          placeholder: { tag: "plain_text", content: placeholder },
+          ...(initial === undefined ? {} : { initial_option: initial }),
+          option: options.map((o) => ({ text: { tag: "plain_text", content: o.label }, value: o.id })),
+        },
+      ],
+    },
+  ];
+}
+
+/** Largest option count that still renders as a button grid in auto mode. */
+const AUTO_DROPDOWN_THRESHOLD = 6;
+
+/**
+ * Extract the chosen option id from a card action. Buttons carry the id in
+ * `action.value.choice`; a `select_static` dropdown delivers the picked
+ * option's id in `action.option` (a string).
+ */
+function choiceIdOf(evt: CardActionEvent): string | undefined {
+  if (evt.action.tag === "select_static" || evt.action.tag === "select_person") {
+    return evt.action.option;
+  }
+  const value = evt.action.value as { choice?: string } | undefined;
+  return value?.choice;
+}
+
+/**
  * Assemble the card elements for a choice prompt. When `sections` is given,
  * the options are split into titled groups — each with a bold section caption
  * and a divider before it — instead of one flat grid. Options not listed in
@@ -103,6 +140,16 @@ export function buildButtonGrid(options: readonly ChoiceOption[], columnsPerRow:
  */
 export function buildChoiceElements(prompt: ChoicePrompt, defaultColumns: number = 2): unknown[] {
   const { options, sections } = prompt;
+  // Dropdown mode: an option-heavy set renders as a single select (Feishu
+  // `select_static`) so the card stays compact. `auto` picks dropdown when the
+  // flat list is large; explicit `buttons` always uses the grid. Sections do
+  // not apply to a dropdown (it is one flat select), so a grouped prompt
+  // stays on buttons unless explicitly forced to dropdown.
+  const render = prompt.render ?? "buttons";
+  const dropdown =
+    render === "dropdown" ||
+    (render === "auto" && (sections === undefined || sections.length === 0) && options.length > AUTO_DROPDOWN_THRESHOLD);
+  if (dropdown) return buildSelectMenu(options);
   if (sections === undefined || sections.length === 0) return buildButtonGrid(options, defaultColumns);
   const byId = new Map(options.map((o) => [o.id, o]));
   const listed = new Set(sections.flatMap((s) => s.ids));
@@ -479,8 +526,8 @@ export class FeishuAdapter implements ChannelAdapter {
         // "did my tap do anything?" confusion. Wait: the core now also updates
         // the card in place on acceptance, so most stale taps hit cards the
         // user can see are done; this is the fallback for anything else.
-        const value = evt.action.value as { choice?: string } | undefined;
-        if (value?.choice !== undefined && !this.staleNoticed.has(evt.messageId)) {
+        const choice = choiceIdOf(evt);
+        if (choice !== undefined && !this.staleNoticed.has(evt.messageId)) {
           this.staleNoticed.add(evt.messageId);
           // Keep the notice once per card to avoid spam on repeated taps.
           const timer = setTimeout(() => {
@@ -494,8 +541,7 @@ export class FeishuAdapter implements ChannelAdapter {
       }
       this.pendingChoices.delete(evt.messageId);
       clearTimeout(pending.timer);
-      const value = evt.action.value as { choice?: string } | undefined;
-      pending.resolve(value?.choice);
+      pending.resolve(choiceIdOf(evt));
     });
 
     this.channel.on("reject", (evt: unknown) => {

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { padLabels, buildButtonGrid, buildChoiceElements, sanitizeFileName, extractErrorDetail, encodeChatKey, decodeChatKey, classifyFeishuFile } from "../lib/index.js";
+import { padLabels, buildButtonGrid, buildSelectMenu, buildChoiceElements, sanitizeFileName, extractErrorDetail, encodeChatKey, decodeChatKey, classifyFeishuFile } from "../lib/index.js";
 
 test("padLabels pads CJK labels to equal display width", () => {
   const options = [
@@ -100,4 +100,41 @@ test("classifyFeishuFile picks images vs stream files by extension", () => {
   assert.equal(classifyFeishuFile("notes.md"), "file");
   assert.equal(classifyFeishuFile("archive.zip"), "file");
   assert.equal(classifyFeishuFile("noext"), "file");
+});
+
+test("buildSelectMenu renders a select_static action with option ids", () => {
+  const el = buildSelectMenu([{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }], "choose", "a");
+  assert.equal(el[0].tag, "action");
+  const select = el[0].actions[0];
+  assert.equal(select.tag, "select_static");
+  assert.equal(select.placeholder.content, "choose");
+  assert.equal(select.initial_option, "a");
+  assert.equal(select.option.length, 2);
+  assert.deepEqual(select.option[1], { text: { tag: "plain_text", content: "Beta" }, value: "b" });
+});
+
+test("buildChoiceElements uses dropdown for large sets in auto mode", () => {
+  const opts = Array.from({ length: 8 }, (_, i) => ({ id: String(i), label: "Item " + i }));
+  const dropdown = buildChoiceElements({ title: "t", options: opts, render: "auto" }, 2);
+  assert.equal(dropdown[0].tag, "action");
+  assert.equal(dropdown[0].actions[0].tag, "select_static");
+});
+
+test("buildChoiceElements keeps buttons for small sets in auto mode", () => {
+  const opts = [{ id: "a", label: "A" }, { id: "b", label: "B" }];
+  const btns = buildChoiceElements({ title: "t", options: opts, render: "auto" }, 2);
+  assert.notEqual(btns[0].tag, "action");
+});
+
+test("buildChoiceElements honors explicit dropdown and buttons", () => {
+  const opts = [{ id: "a", label: "A" }, { id: "b", label: "B" }];
+  assert.equal(buildChoiceElements({ title: "t", options: opts, render: "dropdown" }, 2)[0].tag, "action");
+  assert.notEqual(buildChoiceElements({ title: "t", options: opts, render: "buttons" }, 2)[0].tag, "action");
+});
+
+test("buildChoiceElements groups keep buttons even when large in auto mode", () => {
+  const opts = Array.from({ length: 10 }, (_, i) => ({ id: String(i), label: "G" + i }));
+  const sections = [{ title: "S", ids: opts.map((o) => o.id) }];
+  const grouped = buildChoiceElements({ title: "t", options: opts, sections, render: "auto" }, 2);
+  assert.notEqual(grouped[0].tag, "action");
 });

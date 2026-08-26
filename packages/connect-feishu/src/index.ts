@@ -12,7 +12,7 @@ import { feishuMessages } from "./i18n.js";
 
 export { FeishuAdapter } from "./adapter.js";
 export type { FeishuConfig } from "./adapter.js";
-export { padLabels, buildButtonGrid, buildChoiceElements, sanitizeFileName, extractErrorDetail, encodeChatKey, decodeChatKey, classifyFeishuFile } from "./adapter.js";
+export { padLabels, buildButtonGrid, buildSelectMenu, buildChoiceElements, sanitizeFileName, extractErrorDetail, encodeChatKey, decodeChatKey, classifyFeishuFile } from "./adapter.js";
 export { loadCredentials, onboardFeishu, saveCredentials } from "./onboard.js";
 export type { FeishuCredentials } from "./onboard.js";
 

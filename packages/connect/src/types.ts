@@ -60,6 +60,9 @@ export interface ChoiceSection {
   readonly columnsPerRow?: number;
 }
 
+/** How a channel should render a choice prompt. */
+export type ChoiceRender = "buttons" | "dropdown" | "auto";
+
 /** An interactive single-choice prompt rendered by the channel as buttons. */
 export interface ChoicePrompt {
   readonly title: string;
@@ -71,6 +74,13 @@ export interface ChoicePrompt {
   readonly footer?: string;
   /** Number of columns per row for button grid (default: 2). Use 1 for full-width items. */
   readonly columnsPerRow?: number;
+  /**
+   * Rendering mode: `buttons` (explicit grid), `dropdown` (single-select
+   * list — Feishu `select_static`; other channels fall back to their default),
+   * or `auto` (channel picks: small sets -> buttons, large sets -> dropdown).
+   * Defaults to `buttons` for backward compatibility.
+   */
+  readonly render?: ChoiceRender;
 }
 
 /** Result of an interactive choice: the picked option and the card's message id. */

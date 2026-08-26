@@ -10,8 +10,10 @@ import { ConnectService } from "./service.js";
 import type { ConnectConfig } from "./runner.js";
 
 export { ConnectService } from "./service.js";
-export { AgentRunner, applyStreamChunk, applyToolCall, classifyError, questionTextOf, resolveConnectConfig, summarizeTurn, toolCallSummary } from "./runner.js";
-export type { ConnectConfig, ErrorCategory, NotifyLevel, ResolvedConnectConfig, StreamChunkLike, StreamState } from "./runner.js";
+export { AgentRunner, resolveConnectConfig } from "./runner.js";
+export type { ConnectConfig, ResolvedConnectConfig } from "./runner.js";
+export { applyStreamChunk, applyToolCall, classifyError, questionTextOf, summarizeTurn, toolCallSummary } from "./stream.js";
+export type { ErrorCategory, NotifyLevel, StreamChunkLike, StreamState } from "./stream.js";
 export { InteractionBridge, decodeTextAnswer } from "./interaction.js";
 export type { AskQuestionLike } from "./interaction.js";
 export { BindingStore } from "./binding.js";
