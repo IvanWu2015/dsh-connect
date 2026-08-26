@@ -326,7 +326,7 @@ export class MenuController {
         out.push({ provider: pid, model: m.id, name: this.host.t.modelName(m.name || m.id, labelOf.get(pid) || pid) });
       }
     }
-    logger?.(["connect: model catalog", "live=" + live.length, "configurable=" + configurable.length, "providers=" + providers.length, "models=" + out.length, "zeroModel=[" + zeroModel.join(",") + "]"].join(" "));
+    logger?.("connect: model catalog -- live=" + live.length + " configurable=" + configurable.length + " providers=" + providers.length + " models=" + out.length);
     return out;
   }
 
