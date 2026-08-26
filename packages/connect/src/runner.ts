@@ -1092,24 +1092,27 @@ export class AgentRunner {
       : undefined;
 
     // Proactive progress watchdog: when no standalone card/text has been sent
-    // for `progressTimeoutMs` (default 5 min, user-configurable), send a status
-    // card reporting the latest milestone so a long turn never looks frozen.
-    // Streaming-card heartbeats deliberately do NOT reset this — the user asked
-    // for an explicit, separate nudge.
+    // for `progressTimeoutMs` (default 5 min, user-configurable), re-sync the
+    // latest milestone INTO the streaming card (via its chunk stream) so a long
+    // turn never looks frozen — WITHOUT posting a separate message. The card is
+    // edited in place, keeping the chat history clean. Streaming-card heartbeats
+    // deliberately do NOT reset this: the progress watchdog only fires when no
+    // explicit milestone sync has been pushed for the configured interval.
     const progressTimeoutMs = this.progressTimeoutMs;
-    let lastStandaloneNoticeAt = now;
+    let lastProgressNoticeAt = now;
     const progressWatchdog = progressTimeoutMs > 0
       ? setInterval(() => {
           const turn = this.turn;
           if (turn === undefined) return;
-          const elapsed = Date.now() - lastStandaloneNoticeAt;
+          const elapsed = Date.now() - lastProgressNoticeAt;
           if (elapsed < progressTimeoutMs) return;
-          lastStandaloneNoticeAt = Date.now();
+          lastProgressNoticeAt = Date.now();
           const minutes = Math.max(1, Math.round((Date.now() - turn.startedAt) / 60_000));
           const status = turn.milestone ?? this.t.progressThinking;
-          void this.adapter
-            .sendText(this.target(msg), this.t.progressReminder(minutes, status))
-            .catch(() => undefined);
+          // Edit the existing streaming card in place instead of sending a new
+          // message: the milestone is appended to the same card via the chunk
+          // stream, so progress updates never clutter the chat with new bubbles.
+          turn.chunks.push(`\n\n${this.t.progressReminder(minutes, status)}\n\n`);
         }, PROGRESS_WATCHDOG_CHECK_MS)
       : undefined;
 
