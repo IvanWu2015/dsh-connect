@@ -144,3 +144,21 @@ export function menuRender(menuId: MenuId): "dropdown" | "buttons" {
     ? "dropdown"
     : "buttons";
 }
+
+/**
+ * Selectable proactive progress-reminder intervals (in milliseconds), shared by
+ * the settings submenu and the `/progress` command so they never drift apart.
+ * `0` turns the reminder off.
+ *
+ * This is deliberately independent of the *notify* level: a "result"-only chat
+ * (which suppresses reasoning / tool-call noise and the liveness heartbeat)
+ * still gets proactive progress reminders while a task stays silent, so a long
+ * run never looks frozen.
+ */
+export const PROGRESS_PRESET_MS: readonly number[] = [
+  0, // off
+  5 * 60_000,
+  10 * 60_000,
+  20 * 60_000,
+  30 * 60_000,
+];

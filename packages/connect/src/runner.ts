@@ -30,7 +30,7 @@ import {
   type StreamState,
 } from "./stream.js";
 import { helpText, parseCommand, type Command } from "./commands.js";
-import { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces, type MenuId, type MenuItem } from "./menus.js";
+import { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces, PROGRESS_PRESET_MS, type MenuId, type MenuItem } from "./menus.js";
 import { MenuController, type MenuHost } from "./menu-controller.js";
 import type { BindingStore, ChatBinding, ChatSessionRecord } from "./binding.js";
 import { messages, type Language, type Messages } from "./i18n.js";
@@ -1111,7 +1111,11 @@ export class AgentRunner implements MenuHost {
    * time, and whether compaction is advisable given context-window usage.
    */
   private async sendTurnStats(msg: InboundMessage, outcome: TurnOutcome): Promise<void> {
-    if (outcome.model === undefined && outcome.inputTokens === undefined && outcome.outputTokens === undefined) return;
+    const hasStats = outcome.model !== undefined || outcome.inputTokens !== undefined || outcome.outputTokens !== undefined;
+    const hasResult = outcome.reason === "completed" && outcome.text !== "";
+    // No stats and no result to report — nothing to show (a bare stats card with
+    // only a duration would be noise).
+    if (!hasStats && !hasResult) return;
     const lines: string[] = [
       this.t.taskStatsHeader(outcome.elapsedMs === undefined ? "—" : this.t.taskDuration(outcome.elapsedMs)),
     ];
@@ -1125,6 +1129,14 @@ export class AgentRunner implements MenuHost {
       const pct = Math.round((outcome.contextSize / outcome.contextWindow) * 100);
       lines.push(this.t.taskStatsContext(`${pct}`, fmtTokens(outcome.contextWindow)));
       lines.push(pct >= AgentRunner.COMPACT_THRESHOLD_PCT ? this.t.taskStatsCompactSuggest : this.t.taskStatsCompactOk);
+    }
+    // A finished task's answer must survive the end of the run: the live
+    // streaming card shows the output as it is produced, but the stats card is
+    // the durable post-task report. When the turn completed and produced text,
+    // append the result here instead of leaving a bare stats card.
+    if (hasResult) {
+      lines.push("");
+      lines.push(this.t.produced(truncate(outcome.text, 300)));
     }
     const card: SummaryCard = { markdown: lines.join("\n") };
     await this.adapter.sendCard(this.taskTarget(msg), card).catch(() => undefined);
@@ -1597,6 +1609,7 @@ export class AgentRunner implements MenuHost {
     } catch {
       // Token meter unavailable: skip.
     }
+    lines.push(this.t.progressSetting(this.progressTimeoutMs === 0 ? this.t.progressOff : this.t.progressMinutes(Math.round(this.progressTimeoutMs / 60_000))));
     await this.adapter.sendText(target, lines.join("\n"));
   }
 
@@ -1778,14 +1791,10 @@ export class AgentRunner implements MenuHost {
 
   /** Show the progress-interval picker (used by the `/progress` command). */
   private async openProgressPicker(target: OutboundTarget, msg: InboundMessage): Promise<void> {
-    const options: ChoiceOption[] = [
-      { id: "progress:0", label: this.t.progressOff },
-      { id: "progress:120000", label: this.t.progressMinutes(2) },
-      { id: "progress:300000", label: this.t.progressMinutes(5) },
-      { id: "progress:600000", label: this.t.progressMinutes(10) },
-      { id: "progress:900000", label: this.t.progressMinutes(15) },
-      { id: "progress:1800000", label: this.t.progressMinutes(30) },
-    ];
+    const options: ChoiceOption[] = PROGRESS_PRESET_MS.map((ms) => ({
+      id: `progress:${ms}`,
+      label: ms === 0 ? this.t.progressOff : this.t.progressMinutes(ms / 60_000),
+    }));
     const { choice } = await this.adapter.promptChoice(target, { title: this.t.progressMenuTitle, options });
     if (choice === undefined || !choice.startsWith("progress:")) return;
     const ms = Number(choice.slice("progress:".length));

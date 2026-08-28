@@ -14,7 +14,7 @@ import type { Messages, Language } from "./i18n.js";
 import type { ChoiceOption, ChannelAdapter, InboundMessage, OutboundTarget } from "./types.js";
 import type { BindingStore } from "./binding.js";
 import type { NotifyLevel } from "./stream.js";
-import { menuRender, type MenuId, type MenuItem } from "./menus.js";
+import { menuRender, PROGRESS_PRESET_MS, type MenuId, type MenuItem } from "./menus.js";
 
 /** Read-only surface `MenuController` needs from the per-chat driver. */
 export interface MenuHost {
@@ -64,12 +64,23 @@ export class MenuController {
     // Workspace and chat lists use 1 column (full width), others use 2 columns
     const columnsPerRow = (menuId === "workspace" || menuId === "chat") ? 1 : 2;
 
-    // Pre-select the current model when the model menu renders as a dropdown,
-    // so the card opens on the active model instead of an empty placeholder.
+    // Pre-select the current value when a menu renders as a dropdown, so the
+    // card opens on the active selection instead of an empty placeholder: the
+    // model menu shows the active model, the workspace menu shows the current
+    // workspace, and the chat menu shows the active session.
     const current = this.host.defaultSelection();
-    const dropInitial = menuId === "model" && current.provider !== "" && current.model !== ""
-      ? "model:" + current.provider + ":" + current.model
+    const activeSessionId = menuId === "chat"
+      ? this.host.bindings.get(this.host.channel, this.host.chatKey)?.sessionId
       : undefined;
+    const dropInitial = menuId === "model"
+      ? (current.provider !== "" && current.model !== ""
+          ? "model:" + current.provider + ":" + current.model
+          : undefined)
+      : menuId === "workspace" && this.host.workDir !== ""
+        ? "dir:" + this.host.workDir
+        : activeSessionId !== undefined && activeSessionId !== ""
+          ? "session:" + activeSessionId
+          : undefined;
 
     const { choice, messageId } = await this.host.adapter.promptChoice(
       target,
@@ -228,14 +239,11 @@ export class MenuController {
           },
         }));
       case "progress": {
-        const presets: { id: string; label: string; ms: number }[] = [
-          { id: "progress:0", label: this.host.t.progressOff, ms: 0 },
-          { id: "progress:120000", label: this.host.t.progressMinutes(2), ms: 2 * 60_000 },
-          { id: "progress:300000", label: this.host.t.progressMinutes(5), ms: 5 * 60_000 },
-          { id: "progress:600000", label: this.host.t.progressMinutes(10), ms: 10 * 60_000 },
-          { id: "progress:900000", label: this.host.t.progressMinutes(15), ms: 15 * 60_000 },
-          { id: "progress:1800000", label: this.host.t.progressMinutes(30), ms: 30 * 60_000 },
-        ];
+        const presets = PROGRESS_PRESET_MS.map((ms) => ({
+          id: `progress:${ms}`,
+          label: ms === 0 ? this.host.t.progressOff : this.host.t.progressMinutes(ms / 60_000),
+          ms,
+        }));
         return presets.map((o) => ({
           id: o.id,
           label: `${this.host.progressTimeoutMs === o.ms ? "● " : ""}${o.label}`,

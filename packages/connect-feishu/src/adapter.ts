@@ -498,6 +498,11 @@ export class FeishuAdapter implements ChannelAdapter {
         this.logger?.warn?.(`connect-feishu: message from chat=${msg.chatId} sender=${msg.senderId} rejected by allowlist (skipped download)`);
         return;
       }
+      // Guard the whole handling path: a throw here (download failure, adapter
+      // error, or a throw from the core handler) must never become an unhandled
+      // rejection — dsh web has no runtime fallback and the whole process would
+      // exit mid-task.
+      try {
       const dl = await this.downloadResources(msg);
       // With thread isolation, a message inside a group thread gets its own
       // chatKey (hence its own DSH session). The base chat id still drives the
@@ -515,6 +520,9 @@ export class FeishuAdapter implements ChannelAdapter {
         ...(dl.imageError === undefined ? {} : { imageError: dl.imageError }),
         ...(dl.fileError === undefined ? {} : { fileError: dl.fileError }),
       });
+      } catch (error) {
+        this.logger?.error?.(`connect-feishu: message handling failed (chat=${msg.chatId} sender=${msg.senderId}): ${String(error)}`);
+      }
     });
 
     this.channel.on("cardAction", (evt: CardActionEvent) => {
@@ -697,32 +705,51 @@ export class FeishuAdapter implements ChannelAdapter {
     // pending record only exists after the redraw, those taps hit the stale
     // branch and the menu appears to swallow them ("can't go back"). Register
     // first, then redraw, so every tap has a live listener.
-    const pending = new Promise<ChoiceResult>((resolve) => {
-      const timer = setTimeout(async () => {
-        this.pendingChoices.delete(messageId);
-        // Replace the stale menu with an expired notice instead of leaving it silent.
-        await this.channel
-          .updateCard(messageId, {
-            header: { title: { tag: "plain_text", content: this.t.menuExpired }, template: "grey" },
-            elements: [{ tag: "note", elements: [{ tag: "plain_text", content: this.t.menuExpiredHint }] }],
-          })
-          .catch(() => undefined);
-        resolve({ choice: undefined, messageId });
-      }, CHOICE_TIMEOUT_MS);
-      this.pendingChoices.set(messageId, {
+    let resolvePending!: (r: ChoiceResult) => void;
+    const pending = new Promise<ChoiceResult>((resolve) => { resolvePending = resolve; });
+    const registerPending = (id: string, timer: NodeJS.Timeout): void => {
+      this.pendingChoices.set(id, {
         resolve: (choice) => {
-          this.pendingChoices.delete(messageId);
+          this.pendingChoices.delete(id);
           clearTimeout(timer);
-          resolve({ choice, messageId });
+          resolvePending({ choice, messageId: id });
         },
         timer,
       });
-    });
+    };
+
+    const timer = setTimeout(async () => {
+      this.pendingChoices.delete(messageId);
+      // Replace the stale menu with an expired notice instead of leaving it silent.
+      await this.channel
+        .updateCard(messageId, {
+          header: { title: { tag: "plain_text", content: this.t.menuExpired }, template: "grey" },
+          elements: [{ tag: "note", elements: [{ tag: "plain_text", content: this.t.menuExpiredHint }] }],
+        })
+        .catch(() => undefined);
+      resolvePending({ choice: undefined, messageId });
+    }, CHOICE_TIMEOUT_MS);
+    registerPending(messageId, timer);
 
     if (updateMessageId !== undefined) {
-      // Reuse the existing card: replace its content in place so a menu chain
-      // navigates on one card instead of stacking new ones.
-      await this.channel.updateCard(updateMessageId, card).catch(() => undefined);
+      // Reuse the existing card when possible so a menu chain stays on one card.
+      // But never leave the previous menu's content on screen: if the in-place
+      // update fails, fall back to a fresh card so the correct options always
+      // render, and rebind the tap listener to the fresh card's message id.
+      try {
+        await this.channel.updateCard(updateMessageId, card);
+      } catch (error) {
+        this.logger?.warn?.(`connect-feishu: menu card update failed (${String(error)}); sending a fresh card`);
+        this.pendingChoices.delete(messageId);
+        try {
+          const sent = await this.channel.send(this.chatIdOf(target.chatKey), { card }, { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) });
+          messageId = sent.messageId;
+        } catch (sendError) {
+          this.logger?.warn?.(`connect-feishu: fresh menu card send failed (${String(sendError)})`);
+          messageId = updateMessageId;
+        }
+        registerPending(messageId, timer);
+      }
     }
     return pending;
   }
