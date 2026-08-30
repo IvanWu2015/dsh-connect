@@ -62,8 +62,7 @@ export interface ConnectConfig {
   autoMirror?: boolean;
   /** Liveness heartbeat interval ms for the streaming card; 0 disables it (default: 60000). */
   streamHeartbeatMs?: number;
-  /** Default notification level for streaming replies. Default 'result' (final answer only) keeps cards short. */
-  /** Streaming reply detail. Default 'result' (final answer only) to keep chat cards short. */
+  /** Streaming reply detail. Default 'result' (final answer only) keeps chat cards short. */
   notifyLevel?: NotifyLevel;
   /** Proactive progress-notice interval ms: when a turn goes silent for this long, a standalone status card is sent (default: 300000 = 5 min; 0 disables). */
   progressTimeoutMs?: number;

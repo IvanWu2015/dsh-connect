@@ -1,0 +1,16 @@
+{
+  "channels": [
+    "feishu",
+    "telegram"
+  ],
+  "channelDefaults": {
+    "language": "zh"
+  },
+  "feishu": {
+    "appId": "cli_xxxx",
+    "appSecret": "REPLACE_ME"
+  },
+  "telegram": {
+    "botToken": "123456:REPLACE_ME"
+  }
+}
