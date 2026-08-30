@@ -89,3 +89,21 @@ test("injectSecrets does not mutate the caller config", async () => {
   assert.equal(input.feishu, undefined);
   assert.equal(out.feishu.appId, "x");
 });
+
+test("injectSecrets nests dingtalk stream secrets under stream without mutating caller", async () => {
+  const input = { channels: ["dingtalk"], dingtalk: { language: "zh", stream: { url: "wss://x" } } };
+  const getSecrets = async () => ({
+    webhookUrl: "https://oapi.dingtalk.com/webhook",
+    secret: "SEC",
+    clientId: "cid",
+    clientSecret: "csec",
+  });
+  const out = await injectSecrets(input, CHANNELS, getSecrets);
+  // flat webhook creds stay at the root; stream creds land under config.stream
+  assert.equal(out.dingtalk.webhookUrl, "https://oapi.dingtalk.com/webhook");
+  assert.equal(out.dingtalk.secret, "SEC");
+  assert.deepEqual(out.dingtalk.stream, { url: "wss://x", clientId: "cid", clientSecret: "csec" });
+  // caller config untouched (stream.url preserved on the original, not mutated)
+  assert.deepEqual(input.dingtalk.stream, { url: "wss://x" });
+  assert.equal(input.dingtalk.clientId, undefined);
+});

@@ -36,6 +36,7 @@ packages/
   connect-telegram/  dsh-connect-telegram Telegram adapter: Bot API long-polling, streaming edits, inline-keyboard choices
   connect-dingtalk/  dsh-connect-dingtalk 钉钉：stream 模式双向适配器（STOMP over WebSocket）+ webhook 单向推送服务
   connect-web/       dsh-connect-web Web mirror adapter: tracks mirror sessions for DSH Web GUI (no synthesized messages; outbound is a contract no-op)
+  connect-all/       dsh-connect-all 单插件合集：一个插件 + 一份配置，按需启用上述任意渠道
 docs/
   QUICKSTART.md      step-by-step run guide (DSH side + Feishu side)
   feishu-setup.md    Feishu Open Platform configuration manual
@@ -53,6 +54,7 @@ examples/
 | 飞书 / Lark | `dsh-connect-feishu` | 双向 | WebSocket 长连接 | 功能完整（流式、菜单、图片） |
 | Telegram | `dsh-connect-telegram` | 双向 | Bot API 长轮询 | 功能完整（流式编辑、内联键盘） |
 | 钉钉 | `dsh-connect-dingtalk` | 双向（stream）/ 单向推送 | stream 网关（STOMP over WebSocket）/ 群机器人 webhook | stream 模式：@提及触发智能体、回复与编号文本菜单；webhook 模式：推送服务（sendMarkdown / sendText / @提及） |
+| **任意子集** | `dsh-connect-all` | 打包上述 | 按 `channels` 配置启用 | **推荐**：一个插件 + 一份配置，各渠道密钥存进 DSH 凭据库 |
 
 所有双向适配器共享同一个 `dsh-connect` 核心：命令、`/menu`、通知级别、主动进度看门狗、交互式选择与审批以及按会话设置，在每个通道上行为完全一致。
 
@@ -60,11 +62,13 @@ examples/
 
 ### 安装
 
-5 个包在每次 GitHub Release 时自动发布到 npm——[`.github/workflows/publish.yml`](.github/workflows/publish.yml) 会先运行 `pnpm build` + typecheck，再串行发布 5 个包。直接安装到你的 DSH profile：
+6 个包在每次 GitHub Release 时自动发布到 npm——[`.github/workflows/publish.yml`](.github/workflows/publish.yml) 会先运行 `pnpm build` + typecheck，再串行发布 6 个包。**安装这个单插件合集**——一个插件、一份配置，按需启用你用的渠道：
 
 ```sh
-dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram dsh-connect-dingtalk
+dsh plugin --profile web add dsh-connect dsh-connect-all
 ```
+
+（装合集会把核心 + 所有渠道适配器一起拉进来。若你偏好每个渠道独立成包，也可逐个安装——独立适配器依旧可用。）
 
 本地开发（包尚未发布时）请按 [快速开始](docs/QUICKSTART.zh.md) 中的绝对路径方式加载本地构建的包。
 
@@ -73,26 +77,27 @@ dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram
 在 profile 的 `cordis.patch.yml`（`$DSH_HOME/profiles/web/cordis.patch.yml`）末尾追加配置。这些插件会通过各自的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它们的配置——**不要**再用 `insert` 重新插入它们（重复的 `id` 会让 dsh 以 `duplicate loader entry id` 拒绝启动）：
 
 ```yaml
-- id: connect
-  name: dsh-connect
-- id: connect-feishu
-  name: dsh-connect-feishu
+- id: connect-all
+  name: dsh-connect-all
   config:
-    appId: cli_xxxx
-    appSecret: cli_secret_xxxx
-    transport: websocket
-    requireMention: true
-    dmMode: open
-- id: connect-telegram
-  name: dsh-connect-telegram
-  config:
-    botToken: "123456:ABC-YourBotToken"   # from @BotFather
-    requireMention: true
-- id: connect-dingtalk
-  name: dsh-connect-dingtalk
-  config:
-    webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+    channels: [feishu, telegram, dingtalk]   # 启用哪些适配器（默认：全部内置）
+    channelDefaults:
+      language: zh                           # 所有渠道继承的公共键
+    feishu:
+      appId: cli_xxxx
+      appSecret: cli_secret_xxxx
+      transport: websocket
+      requireMention: true
+      dmMode: open
+    telegram:
+      botToken: "123456:ABC-YourBotToken"    # 来自 @BotFather
+      requireMention: true
+    dingtalk:
+      webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+      # stream: { clientId: xxx, clientSecret: xxx }   # 启用双向 stream 模式
 ```
+
+> 密钥类字段（`appSecret`/`botToken`/`clientSecret`）也可以只存进 DSH 凭据库，由 Web 设置面板写入——见 [配置参考](docs/config-reference.md)。
 
 ### 运行
 

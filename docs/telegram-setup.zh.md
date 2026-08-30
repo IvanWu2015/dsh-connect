@@ -4,6 +4,8 @@
 
 本文说明如何创建 Telegram 机器人并与 `dsh-connect-telegram` 对接。
 
+> **安装**：使用单插件合集——`dsh plugin add dsh-connect dsh-connect-all`——把该渠道的设置放在合集配置块的 `telegram` 名下（`botToken` 可存 DSH 凭据库）。详见 [config-reference.md](config-reference.md)。单独的 `dsh-connect-telegram` 包也仍可独立使用。
+
 ## 1. 创建机器人(BotFather)
 
 1. 在 Telegram 里搜索并打开 **[@BotFather](https://t.me/BotFather)**。

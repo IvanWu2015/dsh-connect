@@ -107,3 +107,14 @@ jobs:
           else
             npm publish --provenance
           fi
+      - name: Publish dsh-connect-all (single-install bundle — last, it depends on the channel packages)
+        working-directory: packages/connect-all
+        run: |
+          # Its dependencies on the channel packages are literal ^version (not the
+          # workspace protocol), so no rewrite is needed before publishing.
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "dsh-connect-all@${VERSION}" version >/dev/null 2>&1; then
+            echo "dsh-connect-all@${VERSION} already published — skipping"
+          else
+            npm publish --provenance
+          fi

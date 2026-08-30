@@ -13,12 +13,11 @@
 - 一份配置（`channels` + `channelDefaults` + N 个渠道块）启用任意渠道组合；渠道失败隔离、渠道级配置透传。
 - Web 可视化设置：`/dsh-connect` RPC（`settings.get/save/status` + `credentials.save`）+ JSON 持久化 + DSH 凭据库读写，配置与凭据**读写闭环**（round-trip 已验证）。
 - 凭据从配置挪到凭据库：面板写密钥 → 激活时 `injectSecrets` 注入 adapter（非侵入，渠道包零改动）。
-- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；56 项测试 + core 57 + feishu 16 + smoke 全绿。
+- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；57 项测试 + core 57 + feishu 16 + smoke 全绿。
 
 **还差什么（需要你/本机，沙箱内无法验证）：**
 1. `dsh web` 内构建并渲染前端 `settings-client` 组件（沙箱禁 Vite/子进程、无真实 `dsh web`）。
-2. 决策 A/B/C（本建议 A）→ 将 `packages/connect-all` 加进 workspace 并提交。
-3. 推送 v0.7.2：需有效 GitHub 凭据（当前 git-credential-manager 在沙箱崩溃、推送被拒）。
+2. 推送 v0.7.2：需有效 GitHub 凭据（当前 git-credential-manager 在沙箱崩溃、推送被拒）。
 
 ## 1. 现状：配置与安装复杂度
 
@@ -190,5 +189,27 @@
 - 校验（npm pack 被沙箱禁止写 npm 缓存日志，故用 node 直接校验）：files 全部存在、exports 根入口的 types/default 均解析到 lib/index、main=lib/index.js 存在。可发布。
 - run-all 56 项仍全过、exit 0。
 ### 已补齐：一键发布门禁 scripts/verify.mjs（构建 + 全部测试一键跑）
-- 唯一入口：node scripts/verify.mjs。依次跑 connect-all 构建、run-all(56)、connect 单元(57)、smoke、connect-feishu(16)、客户端语法检查；全绿输出 VERIFY OK、C=0。
+- 唯一入口：node scripts/verify.mjs。依次跑 connect-all 构建、run-all(57)、connect 单元(57)、smoke、connect-feishu(16)、客户端语法检查；全绿输出 VERIFY OK、C=0。
 - 注：本沙箱把输出经管道传给上层时会误报 exit 1（Windows 管道 EPERM 产物），重定向到文件后 C=0、FAILED=false、VERIFY OK；在你本机直接运行即可。
+
+### 已修复：钉钉 stream 密钥的嵌套注入缺陷（F1）+ 注释纠正（F2）
+- 缺陷：`injectSecrets` 此前把 `clientId`/`clientSecret` **平铺**进 `dingtalk`，而钉钉 adapter 读取 `config.stream.clientId` → 仅凭凭据库配置时 stream 适配器从未注册（Case A=3 适配器、缺 DingtalkStream；Case B 嵌套配置则注册）。
+- 修复：`channels.ts` 新增 `NESTED_SECRET_KEYS`（`dingtalk: { clientId:"stream.clientId", clientSecret:"stream.clientSecret" }`）与 `mergeSecrets(target, secrets, nested)`——按点分路径把密钥放回 `stream` 下的嵌套节点；复用 `structuredClone`，不改动调用方对象。
+- 新增单测：`injectSecrets nests dingtalk stream secrets under stream without mutating caller`，断言 `out.dingtalk.stream = {url?, clientId, clientSecret}` 且原配置未被改写。run-all 现 **57 项全过、exit 0**。
+- F2：`injectSecrets` 的 docstring 原先声称「渠道配置优先于凭据库」，与实现（store 覆盖 config）相反，已纠正为「store 密钥注入并覆盖渠道配置」。
+
+### 已完成：全部文档按「多合一 / 单配置块 + 凭据库注密」模式改写
+- 根 README.md / README.zh.md：仓库结构加 `connect-all` 行；渠道矩阵加「任意子集 / dsh-connect-all」并标为**推荐**；安装→`dsh plugin add dsh-connect dsh-connect-all`；配置→单 `connect-all` 块（channels + channelDefaults + 每渠道）+ 凭据库说明。
+- docs/QUICKSTART.md/.zh：构建产物、安装、配置、启动日志均改为 connect-all 单插件路径。
+- docs/feishu-setup.md / telegram-setup.md / dingtalk-setup.md（+ .zh）：加「安装」推荐块，指向 config-reference.md。
+- docs/config-reference.md：钉钉表澄清 `stream.clientId`/`clientSecret` **嵌套在 stream 下**；第四节「Web 设置」改为已实现的宿主侧状态。
+- packages/connect-all/README.md/.zh：配置要点 + `settingsStatePath` + 凭据库注密说明（含钉钉 stream 嵌套）+ Web 设置节。
+- docs/PUBLISHING.md/.zh：全部 6 包（connect-all 最后发布）、手动发布顺序加入 connect-all、命名表加「多合一合集」行。
+
+### 已完成：升级/发布脚本改为单组件路径（不再分别维护多包）
+- scripts/bump-version.ps1：`$PackageFiles` 加入 `packages\connect-all\package.json`；「Next steps」改 6 包、connect-all 最后；手动发布清单加 connect-all。
+- scripts/reload.ps1：`$ws = Split-Path -Parent $PSScriptRoot`（不再硬编码路径）；connect-all 的 tsc 构建；头部 `[1/3] 按依赖顺序重建 6 个插件（含 connect-all）`。
+- .github/workflows/publish.yml：加「Publish dsh-connect-all」步骤（顺序最后，依赖各渠道包；其渠道依赖为字面 `^0.7.2`，无需 workspace 协议改写）。
+
+### 代码侧状态：完整 + 57/57 可测
+- 多合一 + Web 设置（配置读写 + 凭据读写闭环 + 钉钉 stream 嵌套注入）+ 配置化简全部落地并有测试；core 57 / feishu 16 无回归。

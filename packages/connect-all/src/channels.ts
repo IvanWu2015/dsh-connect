@@ -68,10 +68,52 @@ export function activateChannels<Ctx extends LoggerLike>(
   return started;
 }
 /**
+ * Secret config-keys that live under a *dotted path* rather than at the channel
+ * config root, because the adapter reads them from a sub-object (e.g. dingtalk's
+ * bidirectional stream credentials read from `config.stream.clientId`). Keys
+ * absent from this map are injected flat. Used by `injectSecrets`.
+ */
+const NESTED_SECRET_KEYS: Record<ChannelName, Record<string, string>> = {
+  feishu: {},
+  telegram: {},
+  dingtalk: { clientId: "stream.clientId", clientSecret: "stream.clientSecret" },
+  web: {},
+};
+
+/** Copy `secrets` into `target`, writing nested keys at their dotted path. */
+function mergeSecrets(
+  target: Record<string, unknown>,
+  secrets: Record<string, string>,
+  nested: Record<string, string>,
+): Record<string, unknown> {
+  for (const [key, value] of Object.entries(secrets)) {
+    const path = nested[key];
+    if (path === undefined) {
+      target[key] = value;
+      continue;
+    }
+    const segments = path.split(".");
+    let node: Record<string, unknown> = target;
+    for (let i = 0; i < segments.length - 1; i += 1) {
+      const segment = segments[i];
+      const next = node[segment];
+      if (next === null || typeof next !== "object" || Array.isArray(next)) {
+        node[segment] = {};
+      }
+      node = node[segment] as Record<string, unknown>;
+    }
+    node[segments[segments.length - 1]] = value;
+  }
+  return target;
+}
+
+/**
  * Return a shallow-cloned config whose enabled channels are enriched with the
- * secrets returned by `getSecrets` (channel config wins over stored secrets).
+ * secrets returned by `getSecrets` (stored secrets win over channel config).
  * Used by `apply` to feed store-backed credentials into each adapter while
- * leaving the caller's config object untouched.
+ * leaving the caller's config object untouched. Secrets are placed at the slot
+ * each adapter expects — flat keys at the channel root, nested keys (dingtalk's
+ * `stream.clientId`/`stream.clientSecret`) under their sub-object.
  */
 export async function injectSecrets(
   config: ConnectAllConfig,
@@ -83,7 +125,11 @@ export async function injectSecrets(
     try {
       const secrets = await getSecrets(name);
       if (Object.keys(secrets).length > 0) {
-        (out as Record<string, unknown>)[name] = { ...((out as Record<string, unknown>)[name] ?? {}), ...secrets };
+        // Deep-clone the channel config so we never mutate the caller's nested
+        // objects (e.g. `dingtalk.stream`) when writing nested secret keys.
+        const base = (out as Record<string, unknown>)[name] ?? {};
+        const cloned = structuredClone(base) as Record<string, unknown>;
+        (out as Record<string, unknown>)[name] = mergeSecrets(cloned, secrets, NESTED_SECRET_KEYS[name]);
       }
     } catch {
       // A channel's secret resolution failing should never block activation.

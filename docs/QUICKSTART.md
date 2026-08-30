@@ -17,17 +17,17 @@ pnpm install
 pnpm build
 ```
 
-Build output goes to `packages/connect/lib` and `packages/connect-feishu/lib`.
+Build output goes to each package's `lib/` (`packages/connect/lib`, `packages/connect-feishu/lib`, …, and the bundle's `packages/connect-all/lib`).
 
-## 2. Install the plugins into a DSH profile
+## 2. Install a plugin into a DSH profile
 
-`dsh plugin` forwards its arguments to the pnpm inside the profile directory, so **local paths must be absolute**:
+`dsh plugin` forwards its arguments to the pnpm inside the profile directory, so **local paths must be absolute**. Install the **all-in-one bundle** (one plugin, one config block, pulls in every channel adapter):
 
 ```powershell
-dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect D:\ACOINFO\code\dsh_feishu\packages\connect-feishu
+dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect D:\ACOINFO\code\dsh_feishu\packages\connect-all
 ```
 
-> The npm packages are published automatically by `.github/workflows/publish.yml` whenever a GitHub Release is created, so in a released setup you can install by package name instead: `dsh plugin --profile web add dsh-connect dsh-connect-feishu`. During local development the absolute-path install above is the way to go.
+> The npm packages are published automatically by `.github/workflows/publish.yml` whenever a GitHub Release is created, so in a released setup you can install by package name instead: `dsh plugin --profile web add dsh-connect dsh-connect-all`. During local development the absolute-path install above is the way to go. (If you want each channel as its own package, add the individual adapter paths instead of `connect-all`.)
 
 ## 3. Configure the profile's cordis.patch.yml
 
@@ -38,20 +38,22 @@ Edit `%DSH_HOME%\profiles\web\cordis.patch.yml` (usually `C:\Users\you\.dsh\prof
 > a duplicate `id` makes dsh refuse to boot with `duplicate loader entry id`.
 
 ```yaml
-- id: connect
-  name: dsh-connect
-- id: connect-feishu
-  name: dsh-connect-feishu
+- id: connect-all
+  name: dsh-connect-all
   config:
-    appId: cli_yourAppId
-    appSecret: yourAppSecret
-    transport: websocket      # long connection, no public network needed
-    requireMention: true      # groups need @mention
-    dmMode: open              # DMs open
-    # language: en            # user-facing message language: zh (default) / en
+    channels: [feishu]                       # which adapters to enable (default: all built-in)
+    channelDefaults:
+      language: zh                           # common keys inherited by every channel
+    feishu:
+      appId: cli_yourAppId
+      appSecret: yourAppSecret
+      transport: websocket      # long connection, no public network needed
+      requireMention: true      # groups need @mention
+      dmMode: open              # DMs open
+      # language: en            # user-facing message language: zh (default) / en
 ```
 
-> Instead of putting credentials in the file you can use the environment variables `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and omit `appId`/`appSecret` in the config.
+> Instead of putting credentials in the file you can use the environment variables `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and omit `appId`/`appSecret` in the config — or save them to the DSH credential store from the Web settings pane (see [config-reference.md](config-reference.md)).
 
 ## 4. Restart dsh web
 
@@ -59,7 +61,7 @@ Host plugins only load after a process restart:
 
 1. Stop the running `dsh web` (press `Ctrl+C` in its terminal).
 2. Start `dsh web` again.
-3. Check the startup log for `connect` / `connect-feishu` output (or the absence of errors).
+3. Check the startup log for `connect` / `connect-all` output (or the absence of errors).
 
 ## 5. Feishu-side setup (if not done yet)
 

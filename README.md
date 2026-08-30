@@ -36,6 +36,7 @@ packages/
   connect-telegram/  dsh-connect-telegram Telegram adapter: Bot API long-polling, streaming edits, inline-keyboard choices
   connect-dingtalk/  dsh-connect-dingtalk DingTalk: stream-mode bidirectional adapter (STOMP over WebSocket) + webhook push service (one-way)
   connect-web/       dsh-connect-web Web mirror adapter: tracks mirror sessions for DSH Web GUI (no synthesized messages; outbound is a contract no-op)
+  connect-all/       dsh-connect-all single-install bundle: one plugin + one config block, activates any subset of the above channels
 docs/
   QUICKSTART.md      step-by-step run guide (DSH side + Feishu side)
   feishu-setup.md    Feishu Open Platform configuration manual
@@ -53,6 +54,7 @@ examples/
 | Feishu / Lark | `dsh-connect-feishu` | bidirectional | WebSocket long connection | full features (streaming, menus, images) |
 | Telegram | `dsh-connect-telegram` | bidirectional | Bot API long polling | full features (streaming edits, inline keyboards) |
 | DingTalk | `dsh-connect-dingtalk` | bidirectional (stream) / one-way push | stream gateway (STOMP over WebSocket) / group-robot webhook | stream mode: @-mention triggers the agent, replies & numbered-text menus; webhook mode: push service (sendMarkdown / sendText / @mentions) |
+| **Any subset** | `dsh-connect-all` | bundles the above | activates the channels in its `channels` config | **recommended**: one plugin + one config block, per-channel secrets stored in the DSH credential store |
 
 All bidirectional adapters share the same `dsh-connect` core: commands, `/menu`, notification levels, the proactive progress watchdog, interactive choices & approvals, and per-chat settings work identically on every channel.
 
@@ -60,11 +62,13 @@ All bidirectional adapters share the same `dsh-connect` core: commands, `/menu`,
 
 ### Install
 
-The packages are published to npm automatically on every GitHub Release — [`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs `pnpm build` + typecheck first, then publishes all five packages serially. Install straight into your DSH profile:
+The packages are published to npm automatically on every GitHub Release — [`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs `pnpm build` + typecheck first, then publishes all six packages serially. **Install the single all-in-one bundle** — one plugin, one config block, and enable only the channels you use:
 
 ```sh
-dsh plugin --profile web add dsh-connect dsh-connect-feishu dsh-connect-telegram dsh-connect-dingtalk
+dsh plugin --profile web add dsh-connect dsh-connect-all
 ```
+
+(Installing the bundle pulls in the core plus every channel adapter. If you prefer each channel as its own package, install them individually instead — the standalone adapters keep working.)
 
 For local development (before the packages are published), load the built packages by absolute path as shown in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
@@ -73,26 +77,27 @@ For local development (before the packages are published), load the built packag
 Append to the profile's `cordis.patch.yml` (`$DSH_HOME/profiles/web/cordis.patch.yml`). The plugins register themselves automatically via their bundle manifests, so this file only overrides their config — do **not** `insert` them again (a duplicate `id` makes dsh refuse to boot with `duplicate loader entry id`):
 
 ```yaml
-- id: connect
-  name: dsh-connect
-- id: connect-feishu
-  name: dsh-connect-feishu
+- id: connect-all
+  name: dsh-connect-all
   config:
-    appId: cli_xxxx
-    appSecret: cli_secret_xxxx
-    transport: websocket
-    requireMention: true
-    dmMode: open
-- id: connect-telegram
-  name: dsh-connect-telegram
-  config:
-    botToken: "123456:ABC-YourBotToken"   # from @BotFather
-    requireMention: true
-- id: connect-dingtalk
-  name: dsh-connect-dingtalk
-  config:
-    webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+    channels: [feishu, telegram, dingtalk]   # which adapters to enable (default: all built-in)
+    channelDefaults:
+      language: zh                            # common keys inherited by every channel
+    feishu:
+      appId: cli_xxxx
+      appSecret: cli_secret_xxxx
+      transport: websocket
+      requireMention: true
+      dmMode: open
+    telegram:
+      botToken: "123456:ABC-YourBotToken"     # from @BotFather
+      requireMention: true
+    dingtalk:
+      webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+      # stream: { clientId: xxx, clientSecret: xxx }   # enable bidirectional stream mode
 ```
+
+> Credentials (`appSecret`/`botToken`/`clientSecret`) can instead live in the DSH credential store and be written from the Web settings pane — see [docs/config-reference.md](docs/config-reference.md).
 
 ### Run
 

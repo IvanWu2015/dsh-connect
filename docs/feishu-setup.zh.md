@@ -4,6 +4,8 @@
 
 本插件默认使用飞书**长连接（WebSocket）事件订阅**模式——无需公网 IP / 域名 / 隧道，事件在本地接收。**Webhook 模式也已实现**（见 [Webhook 传输](#webhook-传输)），供必须使用公网 HTTPS 回调地址的场景使用。
 
+> **安装**：使用单插件合集——`dsh plugin add dsh-connect dsh-connect-all`——把该渠道的设置放在合集配置块的 `feishu` 名下（密钥可存 DSH 凭据库）。详见 [config-reference.md](config-reference.md)。单独的 `dsh-connect-feishu` 包也仍可独立使用。
+
 ## 1. 创建自建应用
 
 1. 打开[飞书开放平台](https://open.feishu.cn/) → 开发者后台 → **创建企业自建应用**。

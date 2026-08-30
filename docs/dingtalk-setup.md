@@ -4,6 +4,8 @@ English | [中文](dingtalk-setup.zh.md)
 
 This document explains how to create a DingTalk group custom robot and use `dsh-connect-dingtalk`, which provides a **one-way push service** (`ctx.dingtalk`): other plugins or scripts can call it to push messages into a DingTalk group.
 
+> **Installing**: use the all-in-one bundle — `dsh plugin add dsh-connect dsh-connect-all` — and put this channel's settings under `dingtalk` in the bundle's config block (`webhookUrl`/`secret` flat, `clientId`/`clientSecret` under `stream`). Secrets may live in the DSH credential store. See [config-reference.md](config-reference.md). The standalone `dsh-connect-dingtalk` package still works on its own.
+
 > ⚠️ **What this package does NOT do**: there are **no automatic task-progress / result / alert push hooks** (nothing in the connect core pushes to DingTalk on its own), **no `/dingtalk` command**, and the channel **cannot receive messages**. Any "task progress / result / alert push" scenario means some other plugin or script calls `ctx.dingtalk` proactively.
 >
 > ⚠️ A group custom robot is a **one-way webhook**: it can only send messages, not receive user messages. Two-way conversations require an enterprise internal app robot (Stream mode); see the note at the end of this document.

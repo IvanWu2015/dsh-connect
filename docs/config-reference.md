@@ -69,11 +69,13 @@
 ### `connect-dingtalk`
 | 键 | 说明 |
 |---|---|
-| `webhookUrl` / `secret` | **必填**（webhook 机器人）或 `clientId`/`clientSecret`（stream 应用） |
-| `clientId` / `clientSecret` | stream 模式应用凭据 |
-| `stream` | 用长连接还是 webhook |
-| `defaultAt` / `mobiles` / `userIds` / `all` | @ 目标 |
-| `url` / `language` / `requireMention` | |
+| `webhookUrl` / `secret` | webhook 推送机器人（**平铺**在 `dingtalk` 顶层） |
+| `stream.clientId` / `stream.clientSecret` | **stream 双向模式**应用凭据（**嵌套在 `stream` 下**） |
+| `stream.url` / `stream.requireMention` | stream 网关地址 / 是否需 @ 才响应 |
+| `defaultAt.mobiles` / `defaultAt.userIds` / `defaultAt.all` | 推送默认 @ 目标 |
+| `language` | 渠道默认语言 |
+
+> 钉钉的 stream 密钥在配置与凭据库里都是**嵌套在 `stream` 下**的（不是平铺的 `clientId`），否则 stream 适配器收不到它们——`connect-all` 的 `injectSecrets` 已按此结构注入。
 
 ### `connect-web`
 | 键 | 说明 |
@@ -82,5 +84,5 @@
 
 ---
 
-## 四、Web 设置（规划）
-`connect-all` 通过宿主 RPC（通道 `/dsh-connect`，端点 `settings.get/save/status`）把上面的配置暴露给 Web 设置页，凭据走 DSH 凭据库。见 `docs/all-in-one-and-web-settings.md`。
+## 四、Web 设置（已实现：宿主侧完整，前端待联调）
+`connect-all` 通过宿主 RPC（通道 `/dsh-connect`，端点 `settings.get/save/status` + `credentials.save`）把上面的配置暴露给 Web 设置页：非密钥字段写 JSON 状态文件（`settingsStatePath`），密钥写 DSH 凭据库（`credentials.save`），激活时由 `injectSecrets` 注入各渠道适配器（钉钉 stream 密钥嵌套进 `stream`）。前端 `client/settings-client.mjs`（React）需在 `dsh web` 内构建联调。见 `docs/all-in-one-and-web-settings.md`。

@@ -14,6 +14,7 @@ This document answers two questions: **what is it called**, and **how do DSH use
 | Feishu adapter | `dsh-connect-feishu` | Feishu/Lark channel |
 | Telegram adapter | `dsh-connect-telegram` | Telegram channel |
 | DingTalk adapter | `dsh-connect-dingtalk` | One-way DingTalk group push |
+| **All-in-one bundle** | `dsh-connect-all` | **Recommended install**: single plugin + config block, activates any channel subset (published **last** — it depends on the channel packages) |
 | Naming rule | `dsh-connect-<channel>` | For future channels |
 
 **Why this naming:**
@@ -58,7 +59,7 @@ The first paragraph must naturally include searchable terms — see the opening 
 
 DSH's plugin install command is `dsh plugin --profile web add <package>` (it forwards to pnpm underneath), so **publishing to npm is the prerequisite for DSH users to install with one command**.
 
-Publishing is **automatic**: `.github/workflows/publish.yml` runs on every **GitHub Release** and publishes all **5 packages** (`dsh-connect`, `dsh-connect-web`, `dsh-connect-feishu`, `dsh-connect-telegram`, `dsh-connect-dingtalk`) sequentially — `dsh-connect` **first** (the other packages list it as a peer dependency), then `connect-web` → `connect-feishu` → `connect-telegram` → `connect-dingtalk`. A parallel matrix would race that peer dependency. Before testing/publishing the CI runs `pnpm build` (the `lib/` output is gitignored) and `pnpm typecheck`; `pnpm test` must also pass.
+Publishing is **automatic**: `.github/workflows/publish.yml` runs on every **GitHub Release** and publishes all **6 packages** (`dsh-connect`, `dsh-connect-web`, `dsh-connect-feishu`, `dsh-connect-telegram`, `dsh-connect-dingtalk`, `dsh-connect-all`) sequentially — `dsh-connect` **first** (the other packages list it as a peer dependency), then `connect-web` → `connect-feishu` → `connect-telegram` → `connect-dingtalk` → `connect-all` (**last** — it depends on the channel packages). A parallel matrix would race that peer dependency. Before testing/publishing the CI runs `pnpm build` (the `lib/` output is gitignored) and `pnpm typecheck`; `pnpm test` must also pass.
 
 Manually, the same order applies:
 
@@ -69,6 +70,7 @@ pnpm --filter dsh-connect-web publish --access public
 pnpm --filter dsh-connect-feishu publish --access public
 pnpm --filter dsh-connect-telegram publish --access public
 pnpm --filter dsh-connect-dingtalk publish --access public
+pnpm --filter dsh-connect-all publish --access public  # last — depends on the channel packages
 ```
 
 Before publishing, confirm the placeholder `"name"`/`"version"` in each package.json and fill in `description`, `keywords`, `repository`, `license`. npm's **`keywords` field** also participates in npm search:
@@ -91,5 +93,5 @@ Search engines aren't enough — proactively get in front of "people who use DSH
 - [ ] GitHub repo named `dsh-connect`, Description contains keywords
 - [ ] About topics filled in (see 2.2)
 - [ ] README opening paragraph contains "DeepSeek Harness / Feishu"
-- [ ] All five packages published to npm with `keywords` filled in (auto via GitHub Release)
+- [ ] All six packages published to npm with `keywords` filled in (auto via GitHub Release)
 - [ ] Leave traces in the official DSH repo + at least one awesome list

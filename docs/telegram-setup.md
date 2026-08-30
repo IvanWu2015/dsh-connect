@@ -4,6 +4,8 @@ English | [中文](telegram-setup.zh.md)
 
 This document explains how to create a Telegram bot and connect it to `dsh-connect-telegram`.
 
+> **Installing**: use the all-in-one bundle — `dsh plugin add dsh-connect dsh-connect-all` — and put this channel's settings under `telegram` in the bundle's config block (`botToken` may live in the DSH credential store). See [config-reference.md](config-reference.md). The standalone `dsh-connect-telegram` package still works on its own.
+
 ## 1. Creating a Bot (BotFather)
 
 1. In Telegram, search for and open **[@BotFather](https://t.me/BotFather)**.

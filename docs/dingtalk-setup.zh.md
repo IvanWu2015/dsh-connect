@@ -4,6 +4,8 @@
 
 本文说明如何创建钉钉群自定义机器人,并用 `dsh-connect-dingtalk`——它提供**单向推送服务**(`ctx.dingtalk`):其他插件或脚本可调用它把消息推送到钉钉群。
 
+> **安装**:使用单插件合集——`dsh plugin add dsh-connect dsh-connect-all`——把该渠道的设置放在合集配置块的 `dingtalk` 名下(`webhookUrl`/`secret` 平铺,`clientId`/`clientSecret` 放在 `stream` 下)。密钥可存 DSH 凭据库。详见 [config-reference.md](config-reference.md)。单独的 `dsh-connect-dingtalk` 包也仍可独立使用。
+
 > ⚠️ **本包不做什么**:没有**自动的任务进度/结果/告警推送钩子**(connect 核心不会自己向钉钉推送),没有 **`/dingtalk` 命令**,通道**不能接收消息**。任何"任务进度/结果/告警推送"场景都意味着其他插件或脚本主动调用 `ctx.dingtalk`。
 >
 > ⚠️ 群自定义机器人是**单向 Webhook**:只能发消息,不能接收用户消息。双向对话需要企业内部应用机器人(Stream 模式),见文末说明。

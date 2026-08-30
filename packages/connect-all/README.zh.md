@@ -28,9 +28,17 @@ dsh plugin add dsh-connect dsh-connect-all
 - `channels` — 启用哪些渠道（`feishu`/`telegram`/`dingtalk`/`web`）；不填=全部。
 - `feishu`/`telegram`/`dingtalk`/`web` — 各渠道配置，键与独立渠道插件一致。
 - `channelDefaults` — 公共项，每个渠道继承，渠道自身覆盖。
+- `settingsStatePath` —（可选）Web 设置页持久化非密钥设置的文件路径。
 
 某个渠道启动失败会被记录并跳过，不影响其他渠道。最小的可运行示例见
 [`examples/minimal.config.json`](./examples/minimal.config.json)。
+
+> **密钥走 DSH 凭据库**：不必把 `appSecret`/`botToken`/`clientSecret` 写进配置文件——从 Web 设置面板保存即可；`injectSecrets` 会在激活时把它们注入各渠道配置，让配置文件免于出现密钥。钉钉的 stream 凭据（`clientId`/`clientSecret`）会自动嵌套进 `stream`。
+
+## Web 设置
+
+本包注册了 `/dsh-connect` RPC 通道（`settings.get`/`settings.save`/`settings.status` + `credentials.save`）支撑设置面板：非密钥配置持久化到 JSON 状态文件，密钥写入 DSH 凭据库，下次加载由 `injectSecrets` 回填给各适配器（round-trip 已测）。前端插件 `client/settings-client.mjs` 仍需在 `dsh web`（Vite）里构建/渲染。详见
+[`docs/all-in-one-and-web-settings.md`](../../docs/all-in-one-and-web-settings.md) 与 [`docs/config-reference.md`](../../docs/config-reference.md)。
 
 ## 构建 / 测试
 

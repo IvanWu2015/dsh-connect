@@ -4,6 +4,8 @@ English | [中文](feishu-setup.zh.md)
 
 This plugin uses Feishu's **long-connection (WebSocket) event subscription** mode by default — no public IP / domain / tunnel is required, and events are received locally. A **webhook mode is also implemented** (see [Webhook transport](#webhook-transport)) for setups that must use a public HTTPS callback URL.
 
+> **Installing**: use the all-in-one bundle — `dsh plugin add dsh-connect dsh-connect-all` — and put this channel's settings under `feishu` in the bundle's config block (secrets may live in the DSH credential store). See [config-reference.md](config-reference.md). The standalone `dsh-connect-feishu` package still works on its own.
+
 ## 1. Create a custom app
 
 1. Open the [Feishu Open Platform](https://open.feishu.cn/) → Developer Console → **Create enterprise self-built app**.
