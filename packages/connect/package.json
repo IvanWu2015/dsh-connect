@@ -1,6 +1,6 @@
 {
   "name": "dsh-connect",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "All-in-one DeepSeek Harness (DSH) chat bridge: one plugin, one config block — Feishu/Lark, Telegram, DingTalk, and Web mirror adapters plus the web-settings pane, all behind a channels[] selector",
   "type": "module",
   "main": "lib/index.js",
