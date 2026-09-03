@@ -46,7 +46,7 @@
 - 单插件（就是把渠道吸收进 `dsh-connect`，做成一个多合一包），一个 `dsh plugin add dsh-connect` 装完。
 - Web 设置页「设置 → 通道」：按渠道分 Tab，每个通道可加**多个机器人**；每个机器人卡片配工作区、Agent Preset、通知/进度、访问模式（白名单）等。
 - 连接方式走 QR 扫码 / App Manifest / 手工凭据（复用现有 `onboard.ts` 的扫码流并扩展到各渠道）。
-- Secret 只写本地 Harness 凭据存储，不写进普通配置；状态接口只回传脱敏信息。
+- Secret 只写本地 Harness 凭据存储，不写进普通配置；`dsh-connect-settings.json` 状态文件绝不落密钥。面板可回显凭据库里的值（非机密 id 如 `appId` 明文、真密钥掩码）以便老版本配置的用户确认；老版本写在配置文件里的密钥会在启动时自动迁入凭据库（`migrateConfigSecrets`），渠道因此显示「已配置」而非「未配置凭据」。
 - 每个机器人独立工作区、会话、绑定；会话绑定按 channel+chatKey，多机器人互不干扰。
 
 ## 3. 关键：DSH 宿主的 Web 设置插件机制（已在本机确认存在）

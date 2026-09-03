@@ -11,6 +11,7 @@ await import("./settings-rpc.test.mjs");
 await import("./settings-service.test.mjs");
 await import("./rpc-client.test.mjs");
 await import("./credential-store.test.mjs");
+await import("./channels.test.mjs");
 await import("./web-settings-integration.test.mjs");
 await import("./web-settings-roundtrip.test.mjs");
 await import("./settings-model.test.mjs");

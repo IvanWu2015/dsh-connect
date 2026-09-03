@@ -80,6 +80,40 @@ const NESTED_SECRET_KEYS: Record<ChannelName, Record<string, string>> = {
   web: {},
 };
 
+/** Read a value at a dotted path (e.g. `"stream.clientId"`), undefined if absent. */
+function readDotPath(obj: Record<string, unknown>, path: string): unknown {
+  let node: unknown = obj;
+  for (const segment of path.split(".")) {
+    if (node === null || typeof node !== "object") return undefined;
+    node = (node as Record<string, unknown>)[segment];
+  }
+  return node;
+}
+
+/**
+ * Extract the build-time secret values (configKey → value) that a channel config
+ * carries for a given secret-key map, reading each key at its *actual* config
+ * location (flat at the channel root, or nested per `NESTED_SECRET_KEYS` — e.g.
+ * dingtalk's `stream.clientId`). Only non-empty string values are returned, so it
+ * doubles as the source for migrating config-file secrets into the credential
+ * store on boot. Read-only: never mutates `config`.
+ */
+export function extractConfigSecrets(
+  config: Record<string, unknown> | undefined,
+  channel: ChannelName,
+  secretKeys: Record<string, string>,
+): Record<string, string> {
+  if (!config || typeof config !== "object") return {};
+  const nested = NESTED_SECRET_KEYS[channel] ?? {};
+  const out: Record<string, string> = {};
+  for (const configKey of Object.keys(secretKeys)) {
+    const path = nested[configKey];
+    const value = path ? readDotPath(config, path) : config[configKey];
+    if (typeof value === "string" && value.length > 0) out[configKey] = value;
+  }
+  return out;
+}
+
 /** Copy `secrets` into `target`, writing nested keys at their dotted path. */
 function mergeSecrets(
   target: Record<string, unknown>,

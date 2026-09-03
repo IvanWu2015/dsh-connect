@@ -98,3 +98,21 @@ test("saveCredentials without a store throws not-configured", async () => {
   const svc = createSettingsService({ statePath: tmpFile() });
   await assert.rejects(svc.saveCredentials("feishu", { appId: "x" }), (e) => e.code === "not-configured");
 });
+
+test("snapshot echoes store-backed secrets but never writes them to the state file", async () => {
+  const provider = mapProvider();
+  const store = createCredentialStore(provider);
+  const file = tmpFile();
+  const svc = createSettingsService({ statePath: file, credentialStore: store });
+  await svc.save({ channels: ["feishu"] });
+  await svc.saveCredentials("feishu", { appId: "cli_9", appSecret: "sec_9" });
+  const snap = await svc.get();
+  // presence + prefilled values come back for the pane to render
+  assert.equal(snap.credentials.feishu, true);
+  assert.deepEqual(snap.secrets.feishu, { appId: "cli_9", appSecret: "sec_9" });
+  // the on-disk state file carries no secret values (only non-secret config)
+  const raw = JSON.parse(fsN.readFileSync(file, "utf8"));
+  assert.deepEqual(raw.channels, ["feishu"]);
+  assert.equal(raw.feishu, undefined);
+  assert.ok(!JSON.stringify(raw).includes("sec_9"));
+});

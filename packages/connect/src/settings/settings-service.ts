@@ -74,14 +74,24 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
     const enabled = (Array.isArray(config.channels) ? config.channels : [...channels])
       .filter((name) => channels.includes(name as ChannelName)) as string[];
     const credentials: Record<string, boolean> = {};
+    const secrets: Record<string, Record<string, string>> = {};
     for (const name of channels) {
       if (credentialStore) {
-        try { credentials[name] = await credentialStore.configured(name); } catch { credentials[name] = false; }
+        try {
+          credentials[name] = await credentialStore.configured(name);
+          // Echo store-backed secret values so the pane can prefill (e.g. an
+          // upgraded user's appId). Never sourced from the state file.
+          secrets[name] = await credentialStore.get(name);
+        } catch {
+          credentials[name] = false;
+          secrets[name] = {};
+        }
       } else {
         credentials[name] = false;
+        secrets[name] = {};
       }
     }
-    return { config, enabled, credentials };
+    return { config, enabled, credentials, secrets };
   }
 
   return {

@@ -101,7 +101,10 @@ export function snapshotToForm(snapshot: SettingsSnapshot): SettingsForm {
     channels,
     channelDefaults: (config.channelDefaults ?? {}) as Record<string, unknown>,
     channelConfigs,
-    secrets: {},
+    // Echo store-backed secret values (e.g. an upgraded user's appId) so the pane
+    // prefills them. Absent keys stay blank — the pane only learns a value if it
+    // actually exists in the credential store, never from the state file.
+    secrets: (snapshot.secrets ?? {}) as Record<string, Record<string, string>>,
     settingsStatePath: config.settingsStatePath as string | undefined,
   };
 }

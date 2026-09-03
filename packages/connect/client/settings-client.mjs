@@ -61,6 +61,13 @@ function injectStyles() {
   document.head.appendChild(el);
 }
 
+// A secret config key is masked as a password unless it's a non-confidential
+// identifier (appId / clientId / webhookUrl) that's safe to show in plain text
+// so an upgraded user can confirm it. Keys ending in Secret/Token stay masked.
+function isMaskedSecret(field) {
+  return /(secret|token|password)/i.test(field);
+}
+
 // Render a single config field control per its `kind` (text / number / boolean / select).
 function renderConfigField(field, value, onChange) {
   const label = field.label ?? field.key;
@@ -146,7 +153,7 @@ export function ConnectSettingsTab({ rpcCall, t }) {
         h('div', { className: 'ds-fields' },
           ...CHANNEL_SECRET_FIELDS[ch].map((field) => h('label', { className: 'ds-field', key: `sec-${field}` },
             field,
-            h('input', { className: 'ds-input', type: 'password', placeholder: field, value: form.secrets?.[ch]?.[field] ?? '', onChange: (e) => setField(ch, field, e.target.value) }))),
+            h('input', { className: 'ds-input', type: isMaskedSecret(field) ? 'password' : 'text', autoComplete: 'off', placeholder: field, value: form.secrets?.[ch]?.[field] ?? '', onChange: (e) => setField(ch, field, e.target.value) }))),
           ...(CHANNEL_CONFIG_FIELDS[ch] ?? []).map((field) => renderConfigField(field, form.channelConfigs?.[ch]?.[field.key], (raw) => setChannelConfig(ch, field.key, raw))),
         ),
       )),

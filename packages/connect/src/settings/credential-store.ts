@@ -3,7 +3,10 @@
  * `credentials` provider (`resolve/describe/set/unset`, env-style refs) into a
  * per-channel interface, so secrets live in the DSH credential store instead of
  * the plugin config (mirroring dsh-im's `credential-store.mjs`). The web
- * settings pane only ever sees `configured` booleans, never secret values.
+ * settings pane reports `configured` booleans and may echo store-backed secret
+ * values (e.g. an appId) so an upgraded user can confirm them, but secrets
+ * never persist to the settings state file — the credential store is the only
+ * place secret values are held.
  *
  * @module dsh-connect/settings/credential-store
  */

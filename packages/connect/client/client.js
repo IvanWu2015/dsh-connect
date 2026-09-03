@@ -152,7 +152,10 @@ function snapshotToForm(snapshot) {
     channels,
     channelDefaults: config.channelDefaults ?? {},
     channelConfigs,
-    secrets: {},
+    // Echo store-backed secret values (e.g. an upgraded user's appId) so the pane
+    // prefills them. Absent keys stay blank — the pane only learns a value if it
+    // actually exists in the credential store, never from the state file.
+    secrets: snapshot.secrets ?? {},
     settingsStatePath: config.settingsStatePath
   };
 }
@@ -223,6 +226,9 @@ function injectStyles() {
   el.id = "dsh-connect-settings-style";
   el.textContent = STYLE;
   document.head.appendChild(el);
+}
+function isMaskedSecret(field) {
+  return /(secret|token|password)/i.test(field);
 }
 function renderConfigField(field, value, onChange) {
   const label = field.label ?? field.key;
@@ -337,7 +343,7 @@ function ConnectSettingsTab({ rpcCall, t }) {
             "label",
             { className: "ds-field", key: `sec-${field}` },
             field,
-            h("input", { className: "ds-input", type: "password", placeholder: field, value: form.secrets?.[ch]?.[field] ?? "", onChange: (e) => setField(ch, field, e.target.value) })
+            h("input", { className: "ds-input", type: isMaskedSecret(field) ? "password" : "text", autoComplete: "off", placeholder: field, value: form.secrets?.[ch]?.[field] ?? "", onChange: (e) => setField(ch, field, e.target.value) })
           )),
           ...(CHANNEL_CONFIG_FIELDS[ch] ?? []).map((field) => renderConfigField(field, form.channelConfigs?.[ch]?.[field.key], (raw) => setChannelConfig(ch, field.key, raw)))
         )

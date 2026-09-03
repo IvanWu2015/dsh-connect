@@ -31,6 +31,10 @@ All notable changes to this project are documented following [Keep a Changelog](
 
 - Web-settings stack absorbed into core: the `/dsh-connect` RPC channel (`settings.get`/`settings.save`/`settings.status` + `credentials.save`), the DSH credential-store adapter, JSON state persistence, and the client settings pane (`client/settings-client.mjs`). Secrets saved from the pane are injected on the next load via `injectSecrets` (dingtalk stream credentials are nested under `stream`).
 
+### Fixed
+
+- **Backward-compat: config-file credentials now show in the settings pane** (`dsh-connect`). On boot, `apply()` migrates channel secrets that already live in the config (e.g. a pre-consolidation `feishu.appId`/`appSecret` in `cordis.patch.yml`) into the credential store — only for refs the store doesn't already hold, so pane-saved credentials always win. The pane then reports those channels as `已配置` instead of `未配置凭据`, and prefills each channel's secret fields from the store (non-confidential ids like `appId` shown plain; real secrets masked). Secret values are never written into `dsh-connect-settings.json`. (`migrateConfigSecrets` in `src/index.ts`, `extractConfigSecrets` in `src/settings/channels.ts`, `SettingsSnapshot.secrets`, `client/settings-client.mjs`.)
+
 ## [0.7.0] - 2026-08-25
 
 ### Added

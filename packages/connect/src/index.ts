@@ -18,6 +18,7 @@ import type { ConnectConfig } from "./runner.js";
 import {
   activateChannels,
   CHANNELS,
+  extractConfigSecrets,
   injectSecrets,
   type ChannelApply,
   type ChannelName,
@@ -26,6 +27,7 @@ import { installSettingsRpc } from "./settings/settings-rpc.js";
 import { createSettingsService } from "./settings/settings-service.js";
 import { CHANNEL_CONFIG_FIELDS } from "./settings/settings-model.js";
 import {
+  CHANNEL_SECRET_KEYS,
   createCredentialStore,
   type CredentialStore,
   type CredentialsProvider,
@@ -83,6 +85,49 @@ export * as web from "./channels/web/index.js";
 
 // Web-settings stack (host RPC + credential store + persistence + client model).
 export * as settings from "./settings/index.js";
+
+/**
+ * Backward-compat: on boot, seed the credential store from secrets a channel
+ * config already carries (e.g. `feishu.appId`/`appSecret` written into the
+ * profile before the web-settings pane existed). Keeps the pane's presence
+ * reporting honest — an upgraded user whose channels work via config-file
+ * secrets sees them as "已配置" instead of "未配置凭据".
+ *
+ * Non-destructive by design: a ref the store already holds is never re-written
+ * (pane-saved credentials always win), and only refs present in the config
+ * (non-empty string, at their real flat/nested location) are migrated. Secrets
+ * still never reach the settings state file — they only move into the store.
+ */
+async function migrateConfigSecrets(
+  provider: CredentialsProvider,
+  cfg: ConnectSettingsConfig,
+  enabled: readonly ChannelName[],
+): Promise<void> {
+  for (const ch of enabled) {
+    const secretKeys = CHANNEL_SECRET_KEYS[ch] ?? {};
+    if (Object.keys(secretKeys).length === 0) continue;
+    const raw = (cfg as Record<string, unknown>)[ch] as Record<string, unknown> | undefined;
+    const secrets = extractConfigSecrets(raw, ch, secretKeys);
+    if (Object.keys(secrets).length === 0) continue;
+    for (const [configKey, ref] of Object.entries(secretKeys)) {
+      const value = secrets[configKey];
+      if (value === undefined) continue;
+      let alreadyConfigured = false;
+      try {
+        alreadyConfigured = (await provider.describe(ref)).configured === true;
+      } catch {
+        alreadyConfigured = false;
+      }
+      if (!alreadyConfigured) {
+        try {
+          await provider.set(ref, value);
+        } catch {
+          // Per-ref migration failure should never block activation.
+        }
+      }
+    }
+  }
+}
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = "connect";
@@ -184,6 +229,16 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
     try { credentialStore = createCredentialStore(credentialsProvider); } catch { credentialStore = undefined; }
   }
   const wanted = cfg.channels ?? CHANNELS;
+  // Migrate config-file secrets into the store before activation, so an upgraded
+  // user's already-working channels report as configured (and the store becomes
+  // the single source of truth). Best-effort: never blocks the plugin load.
+  if (credentialStore && credentialsProvider) {
+    try {
+      await migrateConfigSecrets(credentialsProvider, cfg, wanted);
+    } catch {
+      // Ignore a migration failure; activation continues with existing config.
+    }
+  }
   const finalCfg = credentialStore
     ? await injectSecrets(cfg, wanted, (name) => credentialStore.get(name))
     : cfg;

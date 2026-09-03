@@ -38,6 +38,13 @@ export interface SettingsSnapshot {
   enabled: string[];
   /** Per-channel credential presence (true = stored & set). */
   credentials: Record<string, boolean>;
+  /**
+   * Per-channel secret values echoed back for the pane to prefill (e.g. so an
+   * upgraded user sees their appId). Sourced ONLY from the credential store — never
+   * from the settings state file, which stays secret-free. Values that aren't in
+   * the store are absent (the pane renders a blank field).
+   */
+  secrets?: Record<string, Record<string, string>>;
 }
 
 /** The service backing the RPC; supplied by the web-settings integration. */
