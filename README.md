@@ -25,18 +25,15 @@ Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**D
 - **Admin broadcast**: `/broadcast <text>` pushes a message to every bound chat across all channels (admins listed in `allowUsers`).
 - **Thread isolation (feishu, optional)**: `threadIsolation: true` keeps each group thread in its own DSH session.
 - **Local commands** (no model tokens): `/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/export` `/goals` `/schedule` `/remind` `/send` `/broadcast` `/model` `/notify` `/progress` `/mirror` `/unlock` `/renew` `/new` `/clear` `/stop` `/settings` `/help`.
-- **Extensible, multi-platform**: `dsh-connect` (channel-agnostic core) + per-channel adapter packages — `dsh-connect-feishu` (bidirectional Feishu/Lark), `dsh-connect-telegram` (bidirectional Telegram), `dsh-connect-dingtalk` (bidirectional stream mode + one-way webhook push). Adding a channel is one more adapter package.
+- **All-in-one, multi-platform**: `dsh-connect` is the single plugin — the core `connect` service plus every channel adapter (Feishu/Lark, Telegram, DingTalk) and the web-settings stack, all behind one `channels` selector. Enable exactly the channels you use.
 
 ## Repository layout
 
 ```
 packages/
-  connect/           dsh-connect core: services, bindings, runner, streaming bridge, commands
-  connect-feishu/    dsh-connect-feishu Feishu adapter: createLarkChannel long connection, normalization, streaming replies
-  connect-telegram/  dsh-connect-telegram Telegram adapter: Bot API long-polling, streaming edits, inline-keyboard choices
-  connect-dingtalk/  dsh-connect-dingtalk DingTalk: stream-mode bidirectional adapter (STOMP over WebSocket) + webhook push service (one-way)
-  connect-web/       dsh-connect-web Web mirror adapter: tracks mirror sessions for DSH Web GUI (no synthesized messages; outbound is a contract no-op)
-  connect-all/       dsh-connect-all single-install bundle: one plugin + one config block, activates any subset of the above channels
+  connect/           dsh-connect all-in-one plugin: core connect service + channel adapters + web-settings stack
+    src/channels/    per-channel adapters: feishu (Feishu long connection, normalization, streaming replies), telegram (Bot API long-polling, streaming edits), dingtalk (stream-mode bidirectional + webhook push), web (mirror monitor)
+    src/settings/    web-settings stack: host RPC, credential store, settings pane/service
 docs/
   QUICKSTART.md      step-by-step run guide (DSH side + Feishu side)
   feishu-setup.md    Feishu Open Platform configuration manual
@@ -49,38 +46,38 @@ examples/
 
 ## Channel matrix
 
-| Channel | Package | Direction | Transport | Notes |
+| Channel | Adapter (in `dsh-connect`) | Direction | Transport | Notes |
 |---|---|---|---|---|
-| Feishu / Lark | `dsh-connect-feishu` | bidirectional | WebSocket long connection | full features (streaming, menus, images) |
-| Telegram | `dsh-connect-telegram` | bidirectional | Bot API long polling | full features (streaming edits, inline keyboards) |
-| DingTalk | `dsh-connect-dingtalk` | bidirectional (stream) / one-way push | stream gateway (STOMP over WebSocket) / group-robot webhook | stream mode: @-mention triggers the agent, replies & numbered-text menus; webhook mode: push service (sendMarkdown / sendText / @mentions) |
-| **Any subset** | `dsh-connect-all` | bundles the above | activates the channels in its `channels` config | **recommended**: one plugin + one config block, per-channel secrets stored in the DSH credential store |
+| Feishu / Lark | `feishu` channel | bidirectional | WebSocket long connection | full features (streaming, menus, images) |
+| Telegram | `telegram` channel | bidirectional | Bot API long polling | full features (streaming edits, inline keyboards) |
+| DingTalk | `dingtalk` channel | bidirectional (stream) / one-way push | stream gateway (STOMP over WebSocket) / group-robot webhook | stream mode: @-mention triggers the agent, replies & numbered-text menus; webhook mode: push service (sendMarkdown / sendText / @mentions) |
+| Web mirror | `web` channel | outbound no-op | monitor | tracks mirror sessions for DSH Web GUI (no synthesized messages) |
 
-All bidirectional adapters share the same `dsh-connect` core: commands, `/menu`, notification levels, the proactive progress watchdog, interactive choices & approvals, and per-chat settings work identically on every channel.
+All channels share the same `dsh-connect` core: commands, `/menu`, notification levels, the proactive progress watchdog, interactive choices & approvals, and per-chat settings work identically on every channel. Enable the channels you want via the `channels` selector; per-channel secrets can live in the DSH credential store.
 
 ## Quick start
 
 ### Install
 
-The packages are published to npm automatically on every GitHub Release — [`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs `pnpm build` + typecheck first, then publishes all six packages serially. **Install the single all-in-one bundle** — one plugin, one config block, and enable only the channels you use:
+The package is published to npm automatically on every GitHub Release — [`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs `pnpm build` + typecheck first, then publishes `dsh-connect`. **Install it once** — one plugin, one config block, and enable only the channels you use:
 
 ```sh
-dsh plugin --profile web add dsh-connect dsh-connect-all
+dsh plugin --profile web add dsh-connect
 ```
 
-(Installing the bundle pulls in the core plus every channel adapter. If you prefer each channel as its own package, install them individually instead — the standalone adapters keep working.)
+(Installing the single package pulls in the core `connect` service, every channel adapter, and the web-settings stack. Enable the channels you need via the `channels` selector.)
 
-For local development (before the packages are published), load the built packages by absolute path as shown in [docs/QUICKSTART.md](docs/QUICKSTART.md).
+For local development (before the package is published), load the built package by absolute path as shown in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ### Configure
 
-Append to the profile's `cordis.patch.yml` (`$DSH_HOME/profiles/web/cordis.patch.yml`). The plugins register themselves automatically via their bundle manifests, so this file only overrides their config — do **not** `insert` them again (a duplicate `id` makes dsh refuse to boot with `duplicate loader entry id`):
+Append to the profile's `cordis.patch.yml` (`$DSH_HOME/profiles/web/cordis.patch.yml`). The plugin registers itself automatically via its bundle manifest, so this file only overrides its config — do **not** `insert` it again (a duplicate `id` makes dsh refuse to boot with `duplicate loader entry id`):
 
 ```yaml
-- id: connect-all
-  name: dsh-connect-all
+- id: connect
+  name: dsh-connect
   config:
-    channels: [feishu, telegram, dingtalk]   # which adapters to enable (default: all built-in)
+    channels: [feishu, telegram, dingtalk]   # which channels to enable (default: all built-in)
     channelDefaults:
       language: zh                            # common keys inherited by every channel
     feishu:
@@ -155,7 +152,7 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | `notifyLevel` | `important` | Default notification level: `full` (stream everything) / `important` (key milestones) / `result` (answer only); per-chat override via `/settings` or `/notify` |
 | `progressTimeoutMs` | `300000` | Proactive progress-notice interval (ms): when a turn has sent nothing for this long, a standalone status card is pushed; `0` disables; per-chat override via `/settings` or `/progress` |
 
-### dsh-connect-feishu (Feishu)
+### Feishu channel (`feishu`)
 
 | Key | Default | Description |
 |---|---|---|
@@ -181,18 +178,20 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 
 ## Testing
 
-Five test suites, all `node:test` (build `lib/` first):
+All suites are `node:test`, run through the consolidated runner (build `lib/` first):
 
 ```sh
 pnpm build        # build first (generates lib/)
-pnpm test         # 5 test suites, all node:test
+pnpm test         # runs every suite via packages/connect/test/run-all.mjs
 ```
 
+- `packages/connect/test/run-all.mjs`: imports every suite in-process (see each suite below).
 - `packages/connect/test/unit.test.mjs` + `packages/connect/test/smoke.mjs` (connect core suite): command parsing, binding persistence, async queue, turn outcome derivation; plus loading the plugins into a real Cordis context to verify the plugin contract, including the `isChatAllowed` allowlist pre-filter assertion.
-- `packages/connect-dingtalk/test/unit.test.mjs`: signature verification, retry/rate-limit, 20000-character truncation.
-- `packages/connect-telegram/test/unit.test.mjs`: HTML escaping, @mention detection, offset confirmation semantics.
-- `packages/connect-feishu/test/unit.test.mjs`: button grid, label alignment, filename sanitization, error extraction.
-- `packages/connect-web/test/unit.test.mjs`: mirror records, no-synthesized-message regression test.
+- `packages/connect/test/feishu.test.mjs`: button grid, label alignment, filename sanitization, error extraction.
+- `packages/connect/test/telegram.test.mjs`: HTML escaping, @mention detection, offset confirmation semantics.
+- `packages/connect/test/dingtalk.test.mjs`: signature verification, retry/rate-limit, 20000-character truncation.
+- `packages/connect/test/web.test.mjs`: mirror records, no-synthesized-message regression test.
+- `packages/connect/test/settings-*.test.mjs`, `rpc-client.test.mjs`, `credential-store.test.mjs`, `apply.test.mjs`, `web-settings-*.test.mjs`: the all-in-one config + web-settings stack (channel activation, host RPC, settings persistence, credential store, round-trip).
 
 ## Documentation
 

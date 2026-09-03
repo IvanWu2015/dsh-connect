@@ -4,7 +4,7 @@ English | [中文](WEB_MIRROR_IMPLEMENTATION.zh.md)
 
 ## Overview
 
-`dsh-connect-web` is the **Web channel adapter** for `dsh-connect`: it makes Feishu's mirrored sessions visible to the DSH Web GUI. It monitors the shared `BindingStore` for chats that have a `webMirrorSessionId` set (via `/mirror`, or automatically through `autoMirror`) and records them as known mirrors.
+The **`web` channel** of `dsh-connect` is the Web mirror adapter: it makes Feishu's mirrored sessions visible to the DSH Web GUI. It monitors the shared `BindingStore` for chats that have a `webMirrorSessionId` set (via `/mirror`, or automatically through `autoMirror`) and records them as known mirrors.
 
 The mirrored conversation itself needs no adapter plumbing: the DSH Web GUI reads sessions directly from DSH's session store, so a mirrored session simply appears in the GUI under the shared workspace. See [Web Mirror Session](./MIRROR_SESSION.md) for the user-facing behavior.
 
@@ -38,7 +38,7 @@ The core `dsh-connect` package exposes the store's types through a new **`"./bin
 
 ## Testing
 
-`dsh-connect-web` uses **`node:test`** — the suite is `packages/connect-web/test/unit.test.mjs` (run via `node packages/connect-web/test/unit.test.mjs`). It is wired into the **root `pnpm test`** (which runs all 6 suites: connect unit + smoke, dingtalk, telegram, feishu, connect-web). Remember to `pnpm build` first, since the tests import from `lib/` (gitignored).
+The `web` channel uses **`node:test`** — the suite is `packages/connect/test/web.test.mjs`, imported by the consolidated runner `packages/connect/test/run-all.mjs` (or run alone with `node packages/connect/test/web.test.mjs`). The root `pnpm test` runs it along with the other suites. Remember to `pnpm build` first, since the tests import from `lib/` (gitignored).
 
 Covered behaviors:
 - clean `start` / `stop`
@@ -53,7 +53,7 @@ Covered behaviors:
 
 - [Web Mirror Session](./MIRROR_SESSION.md) — user-facing mirror & lock behavior
 - [Shared Workspace Setup](./SHARED_WORKSPACE_SETUP.md) — workspace/session visibility in the Web GUI
-- [Enhancements Summary](./ENHANCEMENTS_SUMMARY.md) — round fixes including connect-web
+- [Enhancements Summary](./ENHANCEMENTS_SUMMARY.md) — round fixes for the former `dsh-connect-web` adapter (now the `web` channel)
 - [Binding Store API](../packages/connect/src/binding.ts) — the store the adapter monitors
 
 ---

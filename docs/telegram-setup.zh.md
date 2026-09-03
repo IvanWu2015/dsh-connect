@@ -2,9 +2,9 @@
 
 [English](telegram-setup.md) | 中文
 
-本文说明如何创建 Telegram 机器人并与 `dsh-connect-telegram` 对接。
+本文说明如何创建 Telegram 机器人并与 `dsh-connect` 的 `telegram` 通道对接。
 
-> **安装**：使用单插件合集——`dsh plugin add dsh-connect dsh-connect-all`——把该渠道的设置放在合集配置块的 `telegram` 名下（`botToken` 可存 DSH 凭据库）。详见 [config-reference.md](config-reference.md)。单独的 `dsh-connect-telegram` 包也仍可独立使用。
+> **安装**：安装唯一的多合一插件——`dsh plugin --profile web add dsh-connect`——把该渠道的设置放在插件配置块的 `telegram` 名下（`botToken` 可存 DSH 凭据库）。详见 [config-reference.md](config-reference.md)。
 
 ## 1. 创建机器人(BotFather)
 
@@ -25,14 +25,16 @@
 在 DSH profile 的 `cordis.patch.yml` 中。该插件会通过自身的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）:
 
 ```yaml
-- id: connect-telegram
-  name: dsh-connect-telegram
+- id: connect
+  name: dsh-connect
   config:
-    botToken: "1234567890:AAHf7xHfZxHfxxxxxxxxxxxxxxxxxxxxxxxxxx"
-    requireMention: true
-    pollingTimeoutSeconds: 50   # getUpdates 长轮询超时(默认 50)
-        language: zh
-        # baseUrl: "http://localhost:8081"   # 可选:本地 Bot API 服务器
+    channels: [telegram]        # 启用 Telegram 通道
+    telegram:
+      botToken: "1234567890:AAHf7xHfZxHfxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      requireMention: true
+      pollingTimeoutSeconds: 50   # getUpdates 长轮询超时(默认 50)
+      language: zh
+      # baseUrl: "http://localhost:8081"   # 可选:本地 Bot API 服务器
 ```
 
 或设置环境变量 `TELEGRAM_BOT_TOKEN`(两者都配置时,优先用 config)。

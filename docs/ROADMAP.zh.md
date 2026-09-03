@@ -24,7 +24,7 @@
 
 | # | 内容 | 状态 |
 |---|---|---|
-| B1 | **钉钉双向**：`stream` 模式（`dsh-connect-dingtalk`），零新增依赖——STOMP 编解码（`src/stomp.ts`）+ 消息归一化/回复体（`src/message.ts`）+ 网关客户端（`src/stream.ts`，惰性 `globalThis.WebSocket`）+ ChannelAdapter（`src/adapter.ts`）；群 @提及触发任务、结果回推原消息；菜单为编号文本列表（回复数字作答）；主动推送仍走 webhook | ✅ |
+| B1 | **钉钉双向**：`stream` 模式（`dsh-connect` 的 `dingtalk` 通道），零新增依赖——STOMP 编解码（`src/stomp.ts`）+ 消息归一化/回复体（`src/message.ts`）+ 网关客户端（`src/stream.ts`，惰性 `globalThis.WebSocket`）+ ChannelAdapter（`src/adapter.ts`）；群 @提及触发任务、结果回推原消息；菜单为编号文本列表（回复数字作答）；主动推送仍走 webhook | ✅ |
 | B2 | **定时提醒**：`/remind <时间> <内容>`（`10分钟`/`2h`/`14:30`），持久化到 `stateDir/reminders.json`，15s 循环到点投递（不唤醒智能体、不耗 token、重启生效）；`/schedule` 合并展示智能体级与会话级提醒 | ✅ |
 | B3 | **图片/文件回传**：`ChannelAdapter.sendFile`（可选）契约；飞书用 SDK `{ image:{source} }`/`{ file:{source,fileName} }`（图片内联/其余附件）、Telegram 用 `sendPhoto`/`sendDocument`；`/send <路径>` 命令（相对 workdir、20MB 上限、无能力通道回退为发路径文本） | ✅ |
 | B4 | **群聊线程隔离**（飞书，可选）：`threadIsolation: true` 时按线程绑定独立会话（`chatKey=chatId:thread=<rootId>`），出站仍发基础 chatId（经 replyRef 回线程）；纯编解码函数单测 | ✅ |

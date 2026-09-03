@@ -1,18 +1,20 @@
 # 配置简化 + Web 设置 + 多合一重构（对齐 dsh-im）
 
+> **当前状态更新（2026-08-31）**：本仓库已按**方案 B（吸收进核心）**完成最终实现——`dsh-connect` 现在是**唯一的包**：核心 connect 服务、全部通道适配器（feishu / telegram / dingtalk / web）与 Web 设置栈全部内置，通过 `channels` 选择器启用。此前的拆分包（`dsh-connect-feishu` / `dsh-connect-telegram` / `dsh-connect-dingtalk` / `dsh-connect-web`）与聚合包（`dsh-connect-all`，即方案 A）均已被删除。下文是设计决策与实施过程的**历史记录**，不代表当前架构；安装与配置请以根 `README.md` / `docs/config-reference.md` 为准。
+
 > 结论先行：**参考 xmanrui/dsh-im 的「单插件、单一设置入口、Web 可视化配置、凭据入库、多渠道多机器人」模型**是正确方向。dsh-connect 目前的「每渠道一个包、逐包安装、YAML 配置一把梭」确实复杂。但 dsh-im 是 v4 成熟版、自带完整的 client/server 双端 Web 插件，全部复刻是一次不小的工程。下面给出诊断、目标形态、落地路径与取舍。
 
 
 ## 零、TL;DR（给决策者的结论）
 
-**推荐 方案 A（聚合包，已完整实现并验证）**：保留 dsh-connect 核心包与各渠道包不动，**新增一个聚合包 `dsh-connect-all`**——一份配置即可启用任意渠道组合。
+**最终采用 方案 B（吸收进核心，已完整实现并验证）**：把 feishu / telegram / dingtalk / web 的通道适配器收进 `dsh-connect` 包内，按 `channels` 选择器按需激活；`dsh-connect` 现在是**唯一的包**，核心 connect 服务、全部通道适配器与 Web 设置栈全部内置。
 
-为何选 A：把 4 个渠道包合并成单包会破坏现有用户/插件的解耦安装与各自版本节奏；A 在保持每个渠道仍是独立 cordis 适配器的前提下，用一个插件「按需启用多个渠道」来消除「逐个安装 + 多份配置」的痛点，改动面最小、风险最低、回滚最容易。聚合包还提供**单一 `/dsh-connect` 设置入口**，镜像 dsh-im 的单入口模型，Web 端只出现一次「连接设置」。
+为何选 B：一个插件、一份配置（`channels` + `channelDefaults` + 各通道子键），按 `channels` 显式激活启用的通道（`channels: ["feishu","dingtalk"]`），未启用的通道不启动；它还提供**单一 `/dsh-connect` 设置入口**，镜像 dsh-im 的单入口模型，Web 端只出现一次「连接设置」。代价是核心包包含全部渠道 SDK（见下文「方案 B」依赖膨胀风险），且拆分包与聚合包（方案 A）均已删除。
 
 **现在能拿到什么（全部通过 `node scripts/verify.mjs`，全绿）：**
 - 一份配置（`channels` + `channelDefaults` + N 个渠道块）启用任意渠道组合；渠道失败隔离、渠道级配置透传。
 - Web 可视化设置：`/dsh-connect` RPC（`settings.get/save/status` + `credentials.save`）+ JSON 持久化 + DSH 凭据库读写，配置与凭据**读写闭环**（round-trip 已验证）。
-- 凭据从配置挪到凭据库：面板写密钥 → 激活时 `injectSecrets` 注入 adapter（非侵入，渠道包零改动）。
+- 凭据从配置挪到凭据库：面板写密钥 → 激活时 `injectSecrets` 注入各渠道适配器（非侵入，渠道适配器零改动）。
 - 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；57 项测试 + core 57 + feishu 16 + smoke 全绿。
 
 **还差什么（需要你/本机，沙箱内无法验证）：**
@@ -41,7 +43,7 @@
 
 **一个插件、一个设置入口，多渠道统一管理，Web 可视化配置，凭据入库。**
 
-- 单插件（例如 `dsh-connect-all` 或直接把渠道吸收进 `dsh-connect`），一个 `dsh plugin add` 装完。
+- 单插件（就是把渠道吸收进 `dsh-connect`，做成一个多合一包），一个 `dsh plugin add dsh-connect` 装完。
 - Web 设置页「设置 → 通道」：按渠道分 Tab，每个通道可加**多个机器人**；每个机器人卡片配工作区、Agent Preset、通知/进度、访问模式（白名单）等。
 - 连接方式走 QR 扫码 / App Manifest / 手工凭据（复用现有 `onboard.ts` 的扫码流并扩展到各渠道）。
 - Secret 只写本地 Harness 凭据存储，不写进普通配置；状态接口只回传脱敏信息。
@@ -56,7 +58,7 @@
    }))` 注册「设置 → 通道」。
 2. **前后端通信**：前端 `ctx.connection.rpc.call('<通道>', endpoint, payload, signal)`；宿主插件注册 RPC 通道，处理读写配置/凭据/重启等。
 3. **凭据库**：secret 走宿主凭据存储（dsh-im 写明「Device Token 只写入 Harness 凭据存储」），普通配置只保留非敏感 id。
-4. **Web 镜像**：`connect-web` 已存在复用关系。
+4. **Web 镜像**：`web` 通道已存在复用关系。
 
 ## 4. 三种「多合一」打包方案对比
 

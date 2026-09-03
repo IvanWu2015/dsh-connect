@@ -2,9 +2,9 @@
 
 English | [中文](README.zh.md)
 
-The **channel-agnostic core** for connecting [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**DSH**) agents to chat platforms (Feishu / Lark, Telegram, DingTalk; more to come): session binding, agent driving, streaming reply bridging, interactive menu cards, and local commands.
+The **all-in-one plugin** for connecting [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**DSH**) agents to chat platforms (Feishu / Lark, Telegram, DingTalk, and the Web mirror; more to come): session binding, agent driving, streaming reply bridging, interactive menu cards, local commands, and the web-settings stack.
 
-> Install together with a channel adapter — e.g. [dsh-connect-feishu](https://www.npmjs.com/package/dsh-connect-feishu), [dsh-connect-telegram](https://www.npmjs.com/package/dsh-connect-telegram) or the push-only [dsh-connect-dingtalk](https://www.npmjs.com/package/dsh-connect-dingtalk) — or the optional [dsh-connect-web](https://www.npmjs.com/package/dsh-connect-web) mirror monitor.
+> One install, one config block: the core `connect` service, every channel adapter (feishu / telegram / dingtalk / web), and the web-settings stack all live in this single package. Enable the channels you use via the `channels` selector. The former split packages (`dsh-connect-feishu`, `dsh-connect-telegram`, `dsh-connect-dingtalk`, `dsh-connect-web`) and the `dsh-connect-all` bundle no longer exist.
 
 ## Overview
 
@@ -37,31 +37,28 @@ The plugin runs on the DSH **Host plane** (process-level singleton services), no
 Plugin management is a thin wrapper over pnpm in the DSH profile:
 
 ```sh
-# Install (core + Feishu adapter)
-dsh plugin --profile web add dsh-connect dsh-connect-feishu
-
-# Optional: Web mirror monitor
-dsh plugin --profile web add dsh-connect-web
+# Install the single all-in-one plugin (core + all channel adapters + web-settings)
+dsh plugin --profile web add dsh-connect
 ```
 
 **Upgrade**
 
 ```sh
-dsh plugin --profile web update dsh-connect dsh-connect-feishu
+dsh plugin --profile web update dsh-connect
 ```
 
-**Disable** — override the bundle-registered entries with `disabled: true` in the profile patch (see `~/.dsh/profiles/<profile>/cordis.patch.yml`):
+**Disable** — override the bundle-registered entry with `disabled: true` in the profile patch (see `~/.dsh/profiles/<profile>/cordis.patch.yml`):
 
 ```yaml
-- id: connect            # set disabled: true (and connect-feishu) to disable
+- id: connect
   name: dsh-connect
   disabled: true
 ```
 
-**Complete removal** — uninstall the packages and delete the data they created:
+**Complete removal** — uninstall the package and delete the data it created:
 
 ```sh
-dsh plugin --profile web remove dsh-connect dsh-connect-feishu
+dsh plugin --profile web remove dsh-connect
 # then remove the plugin data (see "Permissions & data" below):
 rm -rf .dsh-connect            # binding route store (stateDir)
 rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
@@ -70,30 +67,31 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 ## Quick start
 
 1. **Install the plugins** (see above).
-2. **Add the minimal config** to `~/.dsh/profiles/<profile>/cordis.patch.yml` (also see [`examples/profile-cordis.patch.yml`](../../examples/profile-cordis.patch.yml)). The plugins register themselves via their bundle manifests, so only override their config — do **not** `insert` them again (duplicate ids crash dsh at boot):
+2. **Add the minimal config** to `~/.dsh/profiles/<profile>/cordis.patch.yml` (also see [`examples/profile-cordis.patch.yml`](../../examples/profile-cordis.patch.yml)). The plugin registers itself via its bundle manifest, so only override its config — do **not** `insert` it again (a duplicate id crashes dsh at boot):
 
    ```yaml
    - id: connect
      name: dsh-connect
      # workDir: D:\your\workdir     # agent working directory (default: process cwd)
-   - id: connect-feishu
-     name: dsh-connect-feishu
      config:
-       appId: cli_xxxx
-       appSecret: cli_secret_xxxx
-       transport: websocket
-       requireMention: true
-       dmMode: open
+       channels: [feishu]            # which channels to activate; omit = all built-in
+       # channelDefaults: { language: zh }   # keys applied to every channel that doesn't set its own
+       feishu:
+         appId: cli_xxxx
+         appSecret: cli_secret_xxxx
+         transport: websocket
+         requireMention: true
+         dmMode: open
    ```
 
-3. **Start the host** — `dsh web` (or `dsh run`). With no credentials configured, `dsh-connect-feishu` enters **one-click onboarding**: scan the QR / open the link from the log to authorize the bot.
+3. **Start the host** — `dsh web` (or `dsh run`). With no credentials configured, the `feishu` channel enters **one-click onboarding**: scan the QR / open the link from the log to authorize the bot.
 4. **Send a message** to the bot in Feishu. The bot replies with a streaming card; `/help` lists all commands; the conversation also appears in the DSH Web GUI automatically (auto-mirror).
 
 A fully reproducible example is the `examples/` folder plus `docs/feishu-setup.md` (Feishu app creation, event subscriptions, publishing).
 
 ## Configuration
 
-Configuration lives in the DSH profile patch (`cordis.patch.yml`) under each plugin's `config:`. `dsh.shared.config.json` in the project root (or its parent) can supply workspace/state defaults that take precedence for those keys.
+Configuration lives in the DSH profile patch (`cordis.patch.yml`) under the plugin's `config:`. `dsh.shared.config.json` in the project root (or its parent) can supply workspace/state defaults that take precedence for those keys.
 
 ### `dsh-connect` (core)
 
@@ -112,7 +110,15 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under each plu
 | `notifyLevel` | `important` | Default notification level: `full` (stream everything) / `important` (key milestones) / `result` (answer only); per-chat override via settings menu or `/notify` |
 | `progressTimeoutMs` | `300000` | Proactive progress-notice interval (ms): when a turn has sent no standalone card/text for this long, a status card reports the latest milestone; `0` disables; per-chat override via settings menu or `/progress` |
 
-### `dsh-connect-feishu` (adapter)
+### Shared (all channels)
+
+| Key | Default | Description |
+|---|---|---|
+| `channels` | all built-in | Which channels to activate: `feishu` / `telegram` / `dingtalk` / `web`. Omit to activate all built-in channels. |
+| `channelDefaults` | `{}` | Keys applied to every channel that doesn't set its own (e.g. `{ language: "zh" }`). |
+| `settingsStatePath` | — | Optional path for the web-settings pane to persist non-secret config (e.g. `.dsh-connect/settings.json`). |
+
+### `feishu` (Feishu / Lark channel)
 
 | Key | Default | Description |
 |---|---|---|
@@ -136,6 +142,35 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under each plu
 | `DSH_HOME` | Overrides the `~/.dsh` base for credential files |
 
 **Sensitive items** — `appSecret`, `verificationToken`, `encryptKey`, and `feishu-credentials.json`. Prefer environment variables or one-click onboarding; keep them out of version control.
+
+### `telegram` (Telegram channel)
+
+| Key | Default | Description |
+|---|---|---|
+| `botToken` | env `TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather (**secret**) |
+| `requireMention` | `true` | Groups only respond when the bot is @mentioned (or replying to the bot's own message) |
+| `pollingTimeoutSeconds` | `50` | `getUpdates` long-poll timeout in seconds |
+| `baseUrl` | — | Optional Bot API base URL override (e.g. a local Bot API server) |
+| `language` | `zh` | User-facing message language: `zh` / `en` |
+
+### `dingtalk` (DingTalk channel)
+
+| Key | Default | Description |
+|---|---|---|
+| `webhookUrl` | env `DINGTALK_WEBHOOK_URL` | Group custom-robot webhook URL (proactive push) |
+| `secret` | env `DINGTALK_WEBHOOK_SECRET` | Signing secret (`SEC…`) only when signing is enabled |
+| `stream.clientId` / `stream.clientSecret` | env `DINGTALK_STREAM_CLIENT_ID` / `DINGTALK_STREAM_CLIENT_SECRET` | Bidirectional stream-mode app credentials (**secret**, nested under `stream`) |
+| `stream.requireMention` | `true` | Group replies need an @-mention (stream mode) |
+| `defaultAt` | — | Default @-mentions merged into every push (`{ mobiles, userIds, all }`) |
+| `language` | `zh` | User-facing message language: `zh` / `en` |
+
+### `web` (Web mirror channel)
+
+| Key | Default | Description |
+|---|---|---|
+| `pollIntervalMs` | `1000` | Mirror-session polling interval (ms) |
+
+Environment variables (`FEISHU_*`, `TELEGRAM_*`, `DINGTALK_*`, `DSH_CONNECT_STATE_DIR`, `DSH_HOME`) and the DSH credential store are the preferred way to supply per-channel secrets — the web settings pane writes them to the credential store and `injectSecrets` populates them on load.
 
 ## Permissions & data
 
@@ -168,31 +203,32 @@ Logs come from the DSH host logger (run `dsh web` in a terminal); plugin message
 
 ## Development
 
-This is a pnpm workspace; the plugins are independent npm packages under `packages/`:
+This is a pnpm workspace; `dsh-connect` is the single package under `packages/`:
 
 ```
 packages/
-  connect/          # this package — channel-agnostic core
-  connect-feishu/   # Feishu / Lark adapter
-  connect-telegram/ # Telegram adapter (getUpdates long polling)
-  connect-dingtalk/ # DingTalk group-webhook push channel
-  connect-web/      # optional Web mirror monitor
+  connect/          # this package — the all-in-one plugin
+    src/            # core: runner, service, binding, commands, i18n, menus …
+    src/channels/   # channel adapters: feishu / telegram / dingtalk / web
+    src/settings/   # web-settings stack: host RPC, credential store, settings service/pane
+    test/           # node:test suites (run-all.mjs imports every suite)
+    client/         # web-settings frontend plugin
 ```
 
 ```sh
 pnpm install
 
-# build & typecheck one package
+# build & typecheck the package
 pnpm --filter dsh-connect build
 pnpm --filter dsh-connect typecheck
 
-# unit tests (node:test)
+# unit tests (node:test) — run-all.mjs imports every suite in-process
 pnpm test
 # or run one suite
 node packages/connect/test/unit.test.mjs
 ```
 
-**Structure** — `src/runner.ts` owns the per-chat agent driver and the streaming bridge (`applyStreamChunk` is the pure, unit-tested chunk assembler); `src/service.ts` owns the adapter registry and routing; `src/i18n.ts` holds the `zh`/`en` dictionaries (keep keys in sync across both); `src/binding.ts` is the route store.
+**Structure** — `src/runner.ts` owns the per-chat agent driver and the streaming bridge (`applyStreamChunk` is the pure, unit-tested chunk assembler); `src/service.ts` owns the adapter registry and routing; `src/channels/` holds the feishu / telegram / dingtalk / web channel adapters; `src/settings/` holds the web-settings stack (host RPC, credential store, settings service); `src/i18n.ts` holds the `zh`/`en` dictionaries (keep keys in sync across both); `src/binding.ts` is the route store.
 
 **Contributing** — PRs welcome at [github.com/IvanWu2015/dsh-connect](https://github.com/IvanWu2015/dsh-connect). For user-facing strings, add the key to both `zh` and `en` in `src/i18n.ts`. Release notes live in `CHANGELOG.md`; see `docs/PUBLISHING.md` for the release flow.
 

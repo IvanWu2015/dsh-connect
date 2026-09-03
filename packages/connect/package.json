@@ -1,7 +1,7 @@
 {
   "name": "dsh-connect",
-  "version": "0.7.2",
-  "description": "Channel-agnostic messaging bridge core for DeepSeek Harness (DSH): binds chat channels to DSH agents, streams replies, and pushes work summaries",
+  "version": "0.8.0",
+  "description": "All-in-one DeepSeek Harness (DSH) chat bridge: one plugin, one config block — Feishu/Lark, Telegram, DingTalk, and Web mirror adapters plus the web-settings pane, all behind a channels[] selector",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -13,10 +13,36 @@
     "./binding": {
       "types": "./lib/binding.d.ts",
       "default": "./lib/binding.js"
-    }
+    },
+    "./feishu": {
+      "types": "./lib/channels/feishu/index.d.ts",
+      "default": "./lib/channels/feishu/index.js"
+    },
+    "./telegram": {
+      "types": "./lib/channels/telegram/index.d.ts",
+      "default": "./lib/channels/telegram/index.js"
+    },
+    "./dingtalk": {
+      "types": "./lib/channels/dingtalk/index.d.ts",
+      "default": "./lib/channels/dingtalk/index.js"
+    },
+    "./web": {
+      "types": "./lib/channels/web/index.d.ts",
+      "default": "./lib/channels/web/index.js"
+    },
+    "./settings": {
+      "types": "./lib/settings/index.d.ts",
+      "default": "./lib/settings/index.js"
+    },
+    "./client": {
+      "default": "./client/client.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "lib",
+    "client",
+    "examples",
     "README.md",
     "README.zh.md",
     "README.i18n.yaml",
@@ -25,6 +51,16 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
     }
   },
   "keywords": [
@@ -33,6 +69,8 @@
     "feishu",
     "lark",
     "dingtalk",
+    "telegram",
+    "all-in-one",
     "ai-agent",
     "chatbot",
     "cordis",
@@ -49,11 +87,14 @@
     "url": "https://github.com/IvanWu2015/dsh-connect/issues"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node test/run-all.mjs",
+    "prepack": "tsc -p tsconfig.json && node scripts/build-client.mjs"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@larksuiteoapi/node-sdk": "^1.73.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -67,6 +108,7 @@
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
     "@types/node": "^22.15.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.6.3"
   }
 }

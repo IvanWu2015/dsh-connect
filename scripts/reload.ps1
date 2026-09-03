@@ -4,20 +4,9 @@
 $ws = Split-Path -Parent $PSScriptRoot
 Set-Location $ws
 
-Write-Host "[1/3] 按依赖顺序重建 6 个插件（含 connect-all）..." -ForegroundColor Cyan
+Write-Host "[1/3] 重建 dsh-connect（单包，含全部渠道）..." -ForegroundColor Cyan
 node "$ws\node_modules\typescript\bin\tsc" -p "$ws\packages\connect\tsconfig.json"
 if ($LASTEXITCODE -ne 0) { Write-Host "connect 构建失败，已中止（未重启）" -ForegroundColor Red; exit 1 }
-node "$ws\node_modules\typescript\bin\tsc" -p "$ws\packages\connect-web\tsconfig.json"
-if ($LASTEXITCODE -ne 0) { Write-Host "connect-web 构建失败，已中止（未重启）" -ForegroundColor Red; exit 1 }
-node "$ws\node_modules\typescript\bin\tsc" -p "$ws\packages\connect-feishu\tsconfig.json"
-if ($LASTEXITCODE -ne 0) { Write-Host "connect-feishu 构建失败，已中止（未重启）" -ForegroundColor Red; exit 1 }
-node "$ws\node_modules\typescript\bin\tsc" -p "$ws\packages\connect-telegram\tsconfig.json"
-if ($LASTEXITCODE -ne 0) { Write-Host "connect-telegram 构建失败，已中止（未重启）" -ForegroundColor Red; exit 1 }
-node "$ws\node_modules\typescript\bin\tsc" -p "$ws\packages\connect-dingtalk\tsconfig.json"
-if ($LASTEXITCODE -ne 0) { Write-Host "connect-dingtalk 构建失败，已中止（未重启）" -ForegroundColor Red; exit 1 }
-# connect-all depends on each channel's lib/, so build it last.
-node "$ws\node_modules\typescript\bin\tsc" -p "$ws\packages\connect-all\tsconfig.json"
-if ($LASTEXITCODE -ne 0) { Write-Host "connect-all 构建失败，已中止（未重启）" -ForegroundColor Red; exit 1 }
 
 Write-Host "[2/3] 停止旧 dsh web（占用 3080 端口的进程）..." -ForegroundColor Cyan
 $conns = Get-NetTCPConnection -LocalPort 3080 -State Listen -ErrorAction SilentlyContinue

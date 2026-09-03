@@ -4,7 +4,7 @@
 
 本插件默认使用飞书**长连接（WebSocket）事件订阅**模式——无需公网 IP / 域名 / 隧道，事件在本地接收。**Webhook 模式也已实现**（见 [Webhook 传输](#webhook-传输)），供必须使用公网 HTTPS 回调地址的场景使用。
 
-> **安装**：使用单插件合集——`dsh plugin add dsh-connect dsh-connect-all`——把该渠道的设置放在合集配置块的 `feishu` 名下（密钥可存 DSH 凭据库）。详见 [config-reference.md](config-reference.md)。单独的 `dsh-connect-feishu` 包也仍可独立使用。
+> **安装**：安装唯一的多合一插件——`dsh plugin --profile web add dsh-connect`——把该渠道的设置放在插件配置块的 `feishu` 名下（密钥可存 DSH 凭据库）。详见 [config-reference.md](config-reference.md)。
 
 ## 1. 创建自建应用
 
@@ -54,14 +54,14 @@
 # the profile's cordis.patch.yml
 - id: connect
   name: dsh-connect
-- id: connect-feishu
-  name: dsh-connect-feishu
   config:
-    appId: cli_xxxx
-    appSecret: cli_secret_xxxx
-    transport: websocket          # long connection
-    requireMention: true          # groups need @mention
-    dmMode: open                  # DMs open
+    channels: [feishu]            # 启用飞书通道
+    feishu:
+      appId: cli_xxxx
+      appSecret: cli_secret_xxxx
+      transport: websocket          # long connection
+      requireMention: true          # groups need @mention
+      dmMode: open                  # DMs open
 ```
 
 启动 `dsh web`；当日志显示连接成功后，就可以在飞书中聊天了。

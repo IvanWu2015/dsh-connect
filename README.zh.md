@@ -25,18 +25,15 @@
 - **管理员广播**：`/broadcast <内容>` 向所有通道的全部已绑定会话推送消息（仅 `allowUsers` 中配置的管理员可用）。
 - **线程隔离（飞书，可选）**：开启 `threadIsolation: true` 后，群里的每个话题线程各自绑定一个独立的 DSH 会话。
 - **本地命令**（不消耗模型 token）：`/status` `/task` `/chat` `/dir` `/workspace` `/workspaces` `/plugins` `/compact` `/history` `/export` `/goals` `/schedule` `/remind` `/send` `/broadcast` `/model` `/notify` `/progress` `/mirror` `/unlock` `/renew` `/new` `/clear` `/stop` `/settings` `/help`。
-- **可扩展、多平台**：`dsh-connect`（通道无关核心）+ 各通道适配器包——`dsh-connect-feishu`（飞书/Lark 双向）、`dsh-connect-telegram`（Telegram 双向）、`dsh-connect-dingtalk`（双向 stream 模式 + 单向 webhook 推送）。新增一个通道只需再写一个适配器包。
+- **多合一、多平台**：`dsh-connect` 是唯一的插件——核心 `connect` 服务 + 全部通道适配器（飞书/Lark、Telegram、钉钉）+ Web 设置栈，全部通过一个 `channels` 选择器启用。按需启用你要用的通道。
 
 ## 仓库结构
 
 ```
 packages/
-  connect/           dsh-connect core: services, bindings, runner, streaming bridge, commands
-  connect-feishu/    dsh-connect-feishu Feishu adapter: createLarkChannel long connection, normalization, streaming replies
-  connect-telegram/  dsh-connect-telegram Telegram adapter: Bot API long-polling, streaming edits, inline-keyboard choices
-  connect-dingtalk/  dsh-connect-dingtalk 钉钉：stream 模式双向适配器（STOMP over WebSocket）+ webhook 单向推送服务
-  connect-web/       dsh-connect-web Web mirror adapter: tracks mirror sessions for DSH Web GUI (no synthesized messages; outbound is a contract no-op)
-  connect-all/       dsh-connect-all 单插件合集：一个插件 + 一份配置，按需启用上述任意渠道
+  connect/           dsh-connect 多合一插件：核心 connect 服务 + 通道适配器 + Web 设置栈
+    src/channels/    各通道适配器：feishu（飞书长连接、归一化、流式回复）、telegram（Bot API 长轮询、流式编辑）、dingtalk（stream 双向 + webhook 推送）、web（镜像监视器）
+    src/settings/    Web 设置栈：宿主 RPC、凭据库、设置面板/服务
 docs/
   QUICKSTART.md      step-by-step run guide (DSH side + Feishu side)
   feishu-setup.md    Feishu Open Platform configuration manual
@@ -49,38 +46,38 @@ examples/
 
 ## 通道矩阵
 
-| 通道 | 包 | 方向 | 传输方式 | 说明 |
+| 通道 | 适配器（`dsh-connect` 内） | 方向 | 传输方式 | 说明 |
 |---|---|---|---|---|
-| 飞书 / Lark | `dsh-connect-feishu` | 双向 | WebSocket 长连接 | 功能完整（流式、菜单、图片） |
-| Telegram | `dsh-connect-telegram` | 双向 | Bot API 长轮询 | 功能完整（流式编辑、内联键盘） |
-| 钉钉 | `dsh-connect-dingtalk` | 双向（stream）/ 单向推送 | stream 网关（STOMP over WebSocket）/ 群机器人 webhook | stream 模式：@提及触发智能体、回复与编号文本菜单；webhook 模式：推送服务（sendMarkdown / sendText / @提及） |
-| **任意子集** | `dsh-connect-all` | 打包上述 | 按 `channels` 配置启用 | **推荐**：一个插件 + 一份配置，各渠道密钥存进 DSH 凭据库 |
+| 飞书 / Lark | `feishu` 通道 | 双向 | WebSocket 长连接 | 功能完整（流式、菜单、图片） |
+| Telegram | `telegram` 通道 | 双向 | Bot API 长轮询 | 功能完整（流式编辑、内联键盘） |
+| 钉钉 | `dingtalk` 通道 | 双向（stream）/ 单向推送 | stream 网关（STOMP over WebSocket）/ 群机器人 webhook | stream 模式：@提及触发智能体、回复与编号文本菜单；webhook 模式：推送服务（sendMarkdown / sendText / @提及） |
+| Web 镜像 | `web` 通道 | 出站空操作 | 监视器 | 跟踪 DSH Web GUI 的镜像会话（不合成消息） |
 
-所有双向适配器共享同一个 `dsh-connect` 核心：命令、`/menu`、通知级别、主动进度看门狗、交互式选择与审批以及按会话设置，在每个通道上行为完全一致。
+所有通道共享同一个 `dsh-connect` 核心：命令、`/menu`、通知级别、主动进度看门狗、交互式选择与审批以及按会话设置，在每个通道上行为完全一致。通过 `channels` 选择器启用你要的通道；各通道密钥可存进 DSH 凭据库。
 
 ## 快速开始
 
 ### 安装
 
-6 个包在每次 GitHub Release 时自动发布到 npm——[`.github/workflows/publish.yml`](.github/workflows/publish.yml) 会先运行 `pnpm build` + typecheck，再串行发布 6 个包。**安装这个单插件合集**——一个插件、一份配置，按需启用你用的渠道：
+该包会在每次 GitHub Release 时自动发布到 npm——[`.github/workflows/publish.yml`](.github/workflows/publish.yml) 会先运行 `pnpm build` + typecheck，再发布 `dsh-connect`。**安装一次即可**——一个插件、一份配置，按需启用你用的渠道：
 
 ```sh
-dsh plugin --profile web add dsh-connect dsh-connect-all
+dsh plugin --profile web add dsh-connect
 ```
 
-（装合集会把核心 + 所有渠道适配器一起拉进来。若你偏好每个渠道独立成包，也可逐个安装——独立适配器依旧可用。）
+（安装这一个包会拉进核心 `connect` 服务、所有通道适配器以及 Web 设置栈。通过 `channels` 选择器启用你要的通道。）
 
 本地开发（包尚未发布时）请按 [快速开始](docs/QUICKSTART.zh.md) 中的绝对路径方式加载本地构建的包。
 
 ### 配置
 
-在 profile 的 `cordis.patch.yml`（`$DSH_HOME/profiles/web/cordis.patch.yml`）末尾追加配置。这些插件会通过各自的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它们的配置——**不要**再用 `insert` 重新插入它们（重复的 `id` 会让 dsh 以 `duplicate loader entry id` 拒绝启动）：
+在 profile 的 `cordis.patch.yml`（`$DSH_HOME/profiles/web/cordis.patch.yml`）末尾追加配置。该插件会通过其 bundle 清单自动注册，因此这里只需要**覆盖（override）**它的配置——**不要**再用 `insert` 重新插入它（重复的 `id` 会让 dsh 以 `duplicate loader entry id` 拒绝启动）：
 
 ```yaml
-- id: connect-all
-  name: dsh-connect-all
+- id: connect
+  name: dsh-connect
   config:
-    channels: [feishu, telegram, dingtalk]   # 启用哪些适配器（默认：全部内置）
+    channels: [feishu, telegram, dingtalk]   # 启用哪些通道（默认：全部内置）
     channelDefaults:
       language: zh                           # 所有渠道继承的公共键
     feishu:
@@ -155,7 +152,7 @@ dsh plugin --profile web add dsh-connect dsh-connect-all
 | `notifyLevel` | `important` | 默认通知级别：`full`（全量流式）/ `important`（关键里程碑）/ `result`（仅答案）；可通过 `/settings` 或 `/notify` 按会话覆盖 |
 | `progressTimeoutMs` | `300000` | 主动进度通知间隔（毫秒）：一轮对话在此时间内未发送任何内容时，推送一张独立状态卡片；`0` 禁用；可通过 `/settings` 或 `/progress` 按会话覆盖 |
 
-### dsh-connect-feishu（飞书）
+### 飞书通道（`feishu`）
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
@@ -181,18 +178,20 @@ dsh plugin --profile web add dsh-connect dsh-connect-all
 
 ## 测试
 
-5 个测试套件，全部使用 `node:test`（需先构建 `lib/`）：
+所有套件均使用 `node:test`，经统一 runner 运行（需先构建 `lib/`）：
 
 ```sh
 pnpm build        # build first (generates lib/)
-pnpm test         # 5 个测试套件，全部 node:test
+pnpm test         # 经 packages/connect/test/run-all.mjs 运行全部套件
 ```
 
+- `packages/connect/test/run-all.mjs`：进程内导入每个套件（见下方各套件）。
 - `packages/connect/test/unit.test.mjs` + `packages/connect/test/smoke.mjs`（connect 核心套件）：命令解析、绑定持久化、异步队列、回合结果推导；以及把插件加载进真实 Cordis 上下文验证插件契约，含 `isChatAllowed` 允许列表预过滤断言。
-- `packages/connect-dingtalk/test/unit.test.mjs`：签名校验、重试/限流、20000 字符截断。
-- `packages/connect-telegram/test/unit.test.mjs`：HTML 转义、@提及判断、offset 确认语义。
-- `packages/connect-feishu/test/unit.test.mjs`：按钮网格、标签对齐、文件名清洗、错误提取。
-- `packages/connect-web/test/unit.test.mjs`：镜像记录、无合成消息回归测试。
+- `packages/connect/test/feishu.test.mjs`：按钮网格、标签对齐、文件名清洗、错误提取。
+- `packages/connect/test/telegram.test.mjs`：HTML 转义、@提及判断、offset 确认语义。
+- `packages/connect/test/dingtalk.test.mjs`：签名校验、重试/限流、20000 字符截断。
+- `packages/connect/test/web.test.mjs`：镜像记录、无合成消息回归测试。
+- `packages/connect/test/settings-*.test.mjs`、`rpc-client.test.mjs`、`credential-store.test.mjs`、`apply.test.mjs`、`web-settings-*.test.mjs`：多合一配置 + Web 设置栈（通道激活、宿主 RPC、设置持久化、凭据库、round-trip）。
 
 ## 文档
 

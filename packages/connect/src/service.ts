@@ -147,7 +147,7 @@ export class ConnectService extends Service {
     }
   }
 
-  /** Expose the binding store so adapters (e.g. connect-web) can monitor mirror sessions. */
+  /** Expose the binding store so adapters (e.g. the web channel) can monitor mirror sessions. */
   get bindingStore(): BindingStore {
     return this.bindings;
   }

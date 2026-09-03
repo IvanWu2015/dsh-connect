@@ -2,6 +2,8 @@
 
 English | [中文](ENHANCEMENTS_SUMMARY.zh.md)
 
+> **历史说明**：本文档记录 **v0.6.2** 这一轮的修复。此后本仓库已合并为**唯一的 `dsh-connect` 包**——下文提到的各分包（`dsh-connect-feishu`、`dsh-connect-telegram`、`dsh-connect-dingtalk`、`dsh-connect-web`）与 `packages/connect-*/test/` 拆分目录已不存在；这些通道现在是 `dsh-connect` 单个插件的子键（`feishu:` / `telegram:` / `dingtalk:` / `web:`）。
+
 ## 📋 概述
 
 本轮修复让仓库行为与代码事实保持一致：核心的崩溃/挂死修复、Telegram 适配器的正确性与流式修复、飞书适配器的真实 webhook 支持与安全下载、钉钉适配器的重试/截断行为、重构后的 connect-web 适配器、串行 5 包发布流水线，以及死配置清理。版本 **0.6.2**。

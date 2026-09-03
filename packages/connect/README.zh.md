@@ -2,9 +2,9 @@
 
 [English](README.md) | 中文
 
-**与渠道无关的核心**，用于将 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（**DSH**）智能体连接到聊天平台（飞书 / Lark、Telegram、钉钉，更多平台陆续到来）：会话绑定、智能体驱动、流式回复桥接、交互式菜单卡片与本地命令。
+**多合一插件**，将 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（**DSH**）智能体连接到聊天平台（飞书 / Lark、Telegram、钉钉，以及 Web 镜像，更多平台陆续到来）：会话绑定、智能体驱动、流式回复桥接、交互式菜单卡片、本地命令，以及 Web 设置栈。
 
-> 请与渠道适配器一起安装——例如 [dsh-connect-feishu](https://www.npmjs.com/package/dsh-connect-feishu)、[dsh-connect-telegram](https://www.npmjs.com/package/dsh-connect-telegram) 或仅推送的 [dsh-connect-dingtalk](https://www.npmjs.com/package/dsh-connect-dingtalk)——或可选的 [dsh-connect-web](https://www.npmjs.com/package/dsh-connect-web) 镜像监视器。
+> 一次安装、一份配置：核心 `connect` 服务、全部通道适配器（feishu / telegram / dingtalk / web）以及 Web 设置栈都内置在这个包里。通过 `channels` 选择器启用你要用的通道。此前的拆分包（`dsh-connect-feishu`、`dsh-connect-telegram`、`dsh-connect-dingtalk`、`dsh-connect-web`）与 `dsh-connect-all` 合集已不存在。
 
 ## 概述
 
@@ -37,31 +37,28 @@
 插件管理是 DSH profile 中对 pnpm 的轻量封装：
 
 ```sh
-# Install (core + Feishu adapter)
-dsh plugin --profile web add dsh-connect dsh-connect-feishu
-
-# Optional: Web mirror monitor
-dsh plugin --profile web add dsh-connect-web
+# 安装唯一的多合一插件（核心 + 全部通道适配器 + Web 设置）
+dsh plugin --profile web add dsh-connect
 ```
 
 **升级**
 
 ```sh
-dsh plugin --profile web update dsh-connect dsh-connect-feishu
+dsh plugin --profile web update dsh-connect
 ```
 
 **禁用** —— 在 profile patch 中将 bundle 注册的条目覆盖为 `disabled: true`（参见 `~/.dsh/profiles/<profile>/cordis.patch.yml`）：
 
 ```yaml
-- id: connect            # set disabled: true (and connect-feishu) to disable
+- id: connect
   name: dsh-connect
   disabled: true
 ```
 
-**彻底移除** —— 卸载软件包并删除它们产生的数据：
+**彻底移除** —— 卸载软件包并删除它产生的数据：
 
 ```sh
-dsh plugin --profile web remove dsh-connect dsh-connect-feishu
+dsh plugin --profile web remove dsh-connect
 # then remove the plugin data (see "Permissions & data" below):
 rm -rf .dsh-connect            # binding route store (stateDir)
 rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
@@ -70,30 +67,31 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 ## 快速开始
 
 1. **安装插件**（见上文）。
-2. **添加最小配置**到 `~/.dsh/profiles/<profile>/cordis.patch.yml`（另见 [`examples/profile-cordis.patch.yml`](../../examples/profile-cordis.patch.yml)）。这些插件会通过各自的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它们的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）：
+2. **添加最小配置**到 `~/.dsh/profiles/<profile>/cordis.patch.yml`（另见 [`examples/profile-cordis.patch.yml`](../../examples/profile-cordis.patch.yml)）。该插件会通过其 bundle 清单自动注册，因此这里只需要**覆盖（override）**它的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）：
 
    ```yaml
    - id: connect
      name: dsh-connect
      # workDir: D:\your\workdir     # agent working directory (default: process cwd)
-   - id: connect-feishu
-     name: dsh-connect-feishu
      config:
-       appId: cli_xxxx
-       appSecret: cli_secret_xxxx
-       transport: websocket
-       requireMention: true
-       dmMode: open
+       channels: [feishu]             # 启用哪些通道；省略 = 全部内置
+       # channelDefaults: { language: zh }   # 应用到未单独设置该键的每个通道
+       feishu:
+         appId: cli_xxxx
+         appSecret: cli_secret_xxxx
+         transport: websocket
+         requireMention: true
+         dmMode: open
    ```
 
-3. **启动宿主** —— `dsh web`（或 `dsh run`）。未配置凭据时，`dsh-connect-feishu` 会进入**一键开通**流程：扫描日志中的二维码 / 打开链接以授权机器人。
+3. **启动宿主** —— `dsh web`（或 `dsh run`）。未配置凭据时，`feishu` 通道会进入**一键开通**流程：扫描日志中的二维码 / 打开链接以授权机器人。
 4. **在飞书中给机器人发一条消息**。机器人以流式卡片回复；`/help` 列出所有命令；会话也会自动出现在 DSH Web GUI 中（自动镜像）。
 
 一个完全可复现的示例是 `examples/` 文件夹加上 `docs/feishu-setup.zh.md`（飞书应用创建、事件订阅、发布）。
 
 ## 配置
 
-配置位于 DSH profile patch（`cordis.patch.yml`）中每个插件的 `config:` 下。项目根目录（或其父目录）中的 `dsh.shared.config.json` 可以提供工作区/状态默认值，并对这些键具有更高优先级。
+配置位于 DSH profile patch（`cordis.patch.yml`）中该插件的 `config:` 下。项目根目录（或其父目录）中的 `dsh.shared.config.json` 可以提供工作区/状态默认值，并对这些键具有更高优先级。
 
 ### `dsh-connect`（核心）
 
@@ -112,7 +110,15 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 | `notifyLevel` | `important` | 默认通知级别：`full`（全部流式输出）/ `important`（关键节点）/ `result`（仅结果）；可通过设置菜单或 `/notify` 按聊天覆盖 |
 | `progressTimeoutMs` | `300000` | 主动进度通知间隔（毫秒）：当一轮对话在此时间内没有发送独立卡片/文本时，状态卡片会报告最新节点；`0` 表示禁用；可通过设置菜单或 `/progress` 按聊天覆盖 |
 
-### `dsh-connect-feishu`（适配器）
+### 公共（所有通道）
+
+| 键 | 默认值 | 说明 |
+|---|---|---|
+| `channels` | 全部内置 | 启用哪些通道：`feishu` / `telegram` / `dingtalk` / `web`。省略则启用全部内置通道。 |
+| `channelDefaults` | `{}` | 应用到未单独设置该键的每个通道（如 `{ language: "zh" }`）。 |
+| `settingsStatePath` | — | Web 设置面板持久化非密钥配置的路径（如 `.dsh-connect/settings.json`）。 |
+
+### `feishu`（飞书 / Lark 通道）
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
@@ -136,6 +142,35 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 | `DSH_HOME` | 覆盖凭据文件所在的 `~/.dsh` 基目录 |
 
 **敏感项** —— `appSecret`、`verificationToken`、`encryptKey` 和 `feishu-credentials.json`。优先使用环境变量或一键开通；切勿将它们提交到版本控制。
+
+### `telegram`（Telegram 通道）
+
+| 键 | 默认值 | 说明 |
+|---|---|---|
+| `botToken` | 环境变量 `TELEGRAM_BOT_TOKEN` | 来自 @BotFather 的机器人 token（**机密**） |
+| `requireMention` | `true` | 群聊仅在 @提及机器人（或回复机器人自己发的消息）时响应 |
+| `pollingTimeoutSeconds` | `50` | `getUpdates` 长轮询超时（秒） |
+| `baseUrl` | — | 可选：Bot API 基地址覆盖（如本地 Bot API 服务器） |
+| `language` | `zh` | 面向用户的消息语言：`zh` / `en` |
+
+### `dingtalk`（钉钉通道）
+
+| 键 | 默认值 | 说明 |
+|---|---|---|
+| `webhookUrl` | 环境变量 `DINGTALK_WEBHOOK_URL` | 群自定义机器人 webhook（主动推送） |
+| `secret` | 环境变量 `DINGTALK_WEBHOOK_SECRET` | 仅启用加签时的 `SEC…` 密钥 |
+| `stream.clientId` / `stream.clientSecret` | 环境变量 `DINGTALK_STREAM_CLIENT_ID` / `DINGTALK_STREAM_CLIENT_SECRET` | 双向 stream 模式应用凭据（**机密**，嵌套在 `stream` 下） |
+| `stream.requireMention` | `true` | 群回复需要 @提及（stream 模式） |
+| `defaultAt` | — | 每次推送默认合并的 @列表（`{ mobiles, userIds, all }`） |
+| `language` | `zh` | 面向用户的消息语言：`zh` / `en` |
+
+### `web`（Web 镜像通道）
+
+| 键 | 默认值 | 说明 |
+|---|---|---|
+| `pollIntervalMs` | `1000` | 镜像会话轮询间隔（毫秒） |
+
+环境变量（`FEISHU_*`、`TELEGRAM_*`、`DINGTALK_*`、`DSH_CONNECT_STATE_DIR`、`DSH_HOME`）与 DSH 凭据库是提供各通道密钥的推荐方式——Web 设置面板把密钥写入凭据库，加载时由 `injectSecrets` 注入。
 
 ## 权限与数据
 
@@ -168,31 +203,32 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 
 ## 开发
 
-这是一个 pnpm workspace；插件是 `packages/` 下相互独立的 npm 包：
+这是一个 pnpm workspace；`dsh-connect` 是 `packages/` 下的**唯一**包：
 
 ```
 packages/
-  connect/          # 本包 — 与渠道无关的核心
-  connect-feishu/   # 飞书 / Lark 适配器
-  connect-telegram/ # Telegram 适配器（getUpdates 长轮询）
-  connect-dingtalk/ # 钉钉群机器人 Webhook 推送渠道
-  connect-web/      # 可选的 Web 镜像监视器
+  connect/          # 本包 — 多合一插件
+    src/            # 核心：runner、service、binding、commands、i18n、menus …
+    src/channels/   # 通道适配器：feishu / telegram / dingtalk / web
+    src/settings/   # Web 设置栈：宿主 RPC、凭据库、设置服务/面板
+    test/           # node:test 套件（run-all.mjs 导入每个套件）
+    client/         # Web 设置前端插件
 ```
 
 ```sh
 pnpm install
 
-# build & typecheck one package
+# build & typecheck the package
 pnpm --filter dsh-connect build
 pnpm --filter dsh-connect typecheck
 
-# unit tests (node:test)
+# unit tests (node:test) — run-all.mjs 进程内导入每个套件
 pnpm test
 # or run one suite
 node packages/connect/test/unit.test.mjs
 ```
 
-**结构** —— `src/runner.ts` 负责每个聊天的智能体驱动与流式桥接（`applyStreamChunk` 是纯函数、有单元测试的块组装器）；`src/service.ts` 负责适配器注册表与路由；`src/i18n.ts` 存放 `zh`/`en` 词典（两种语言的关键字需保持同步）；`src/binding.ts` 是路由存储。
+**结构** —— `src/runner.ts` 负责每个聊天的智能体驱动与流式桥接（`applyStreamChunk` 是纯函数、有单元测试的块组装器）；`src/service.ts` 负责适配器注册表与路由；`src/channels/` 存放 feishu / telegram / dingtalk / web 通道适配器；`src/settings/` 存放 Web 设置栈（宿主 RPC、凭据库、设置服务）；`src/i18n.ts` 存放 `zh`/`en` 词典（两种语言的关键字需保持同步）；`src/binding.ts` 是路由存储。
 
 **贡献** —— 欢迎在 [github.com/IvanWu2015/dsh-connect](https://github.com/IvanWu2015/dsh-connect) 提交 PR。对于面向用户的字符串，请在 `src/i18n.ts` 中同时为 `zh` 和 `en` 添加关键字。发布说明在 `CHANGELOG.md` 中；发布流程参见 `docs/PUBLISHING.zh.md`。
 

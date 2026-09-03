@@ -1,14 +1,14 @@
 # dsh-connect 配置参考
 
-> 目标：把「要记几十个键」简化成「只设**几个必须键**，其余用默认值」。推荐用 **`dsh-connect-all`** 单插件，整个配置只有一个块。
+> 目标：把「要记几十个键」简化成「只设**几个必须键**，其余用默认值」。用 **`dsh-connect`** 单插件，整个配置只有一个块。
 
-## 一、推荐：最小配置（`dsh-connect-all`）
+## 一、推荐：最小配置（`dsh-connect`）
 
 只装一个插件，只写一个块。**必须设的只有渠道凭据**，其余全部有默认值。
 
 ```json
 {
-  "dsh-connect-all": {
+  "dsh-connect": {
     "channels": ["feishu", "telegram"],
     "channelDefaults": { "language": "zh" },
     "feishu":   { "appId": "cli_xxxx", "appSecret": "REPLACE_ME" },
@@ -47,7 +47,7 @@
 
 ## 三、各渠道（子配置）
 
-### `connect-feishu`
+### `feishu`
 | 键 | 说明 |
 |---|---|
 | `appId` / `appSecret` | **必填**，飞书应用凭据 |
@@ -59,14 +59,14 @@
 | `threadIsolation` | 线程隔离 |
 | `language` | 渠道默认语言 |
 
-### `connect-telegram`
+### `telegram`
 | 键 | 说明 |
 |---|---|
 | `botToken` | **必填** |
 | `language` / `requireMention` | |
 | `pollingTimeoutSeconds` / `baseUrl` | 长轮询/代理 |
 
-### `connect-dingtalk`
+### `dingtalk`
 | 键 | 说明 |
 |---|---|
 | `webhookUrl` / `secret` | webhook 推送机器人（**平铺**在 `dingtalk` 顶层） |
@@ -75,9 +75,9 @@
 | `defaultAt.mobiles` / `defaultAt.userIds` / `defaultAt.all` | 推送默认 @ 目标 |
 | `language` | 渠道默认语言 |
 
-> 钉钉的 stream 密钥在配置与凭据库里都是**嵌套在 `stream` 下**的（不是平铺的 `clientId`），否则 stream 适配器收不到它们——`connect-all` 的 `injectSecrets` 已按此结构注入。
+> 钉钉的 stream 密钥在配置与凭据库里都是**嵌套在 `stream` 下**的（不是平铺的 `clientId`），否则 stream 适配器收不到它们——`dsh-connect` 的 `injectSecrets` 已按此结构注入。
 
-### `connect-web`
+### `web`
 | 键 | 说明 |
 |---|---|
 | `pollIntervalMs` | 轮询间隔 |
@@ -85,4 +85,4 @@
 ---
 
 ## 四、Web 设置（已实现：宿主侧完整，前端待联调）
-`connect-all` 通过宿主 RPC（通道 `/dsh-connect`，端点 `settings.get/save/status` + `credentials.save`）把上面的配置暴露给 Web 设置页：非密钥字段写 JSON 状态文件（`settingsStatePath`），密钥写 DSH 凭据库（`credentials.save`），激活时由 `injectSecrets` 注入各渠道适配器（钉钉 stream 密钥嵌套进 `stream`）。前端 `client/settings-client.mjs`（React）需在 `dsh web` 内构建联调。见 `docs/all-in-one-and-web-settings.md`。
+`dsh-connect` 通过宿主 RPC（通道 `/dsh-connect`，端点 `settings.get/save/status` + `credentials.save`）把上面的配置暴露给 Web 设置页：非密钥字段写 JSON 状态文件（`settingsStatePath`），密钥写 DSH 凭据库（`credentials.save`），激活时由 `injectSecrets` 注入各渠道适配器（钉钉 stream 密钥嵌套进 `stream`）。前端 `client/settings-client.mjs`（React）需在 `dsh web` 内构建联调。见 `docs/all-in-one-and-web-settings.md`。

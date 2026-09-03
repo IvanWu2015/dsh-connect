@@ -1,18 +1,15 @@
-# Publish all dsh-connect packages to npm using npm Trusted Publishing (OIDC).
+# Publish the dsh-connect package to npm using npm Trusted Publishing (OIDC).
 #
 # No npm token is stored anywhere. The publish-npm job authenticates to npm via
-# GitHub Actions OIDC (short-lived credentials), so you must configure each
+# GitHub Actions OIDC (short-lived credentials), so you must configure the
 # package on npmjs.com to trust this repo's publish.yml workflow:
 #   package → Settings → Publishing Access → "Add Trusted Publisher"
 #   - Platform: GitHub Actions
 #   - Repository: IvanWu2015/dsh-connect
 #   - Workflow filename: publish.yml
-# npm requires each package to already exist on the registry before OIDC can be
-# configured (it does — 0.6.6 is live), and the npm CLI must be >= 11.5.1
-# (upgraded in the publish job below).
+# npm requires the package to already exist on the registry before OIDC can be
+# configured, and the npm CLI must be >= 11.5.1 (upgraded in the publish job).
 #
-# Packages are published sequentially in dependency order (connect first,
-# adapters after) — a parallel matrix would race the peerDependency.
 # `pnpm build` runs before test and publish because lib/ is gitignored.
 
 name: Publish to npm
@@ -59,62 +56,12 @@ jobs:
         run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - name: Publish dsh-connect (core, first)
+      - name: Publish dsh-connect (all-in-one package)
         working-directory: packages/connect
         run: |
           VERSION="$(node -p "require('./package.json').version")"
           if npm view "dsh-connect@${VERSION}" version >/dev/null 2>&1; then
             echo "dsh-connect@${VERSION} already published — skipping"
-          else
-            npm publish --provenance
-          fi
-      - name: Publish dsh-connect-web
-        working-directory: packages/connect-web
-        run: |
-          # pnpm's workspace protocol is meaningless on the registry — pin the
-          # core dependency to this package's own version before publishing.
-          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('package.json'));j.dependencies['dsh-connect']=j.version;fs.writeFileSync('package.json',JSON.stringify(j,null,2)+'\n')"
-          VERSION="$(node -p "require('./package.json').version")"
-          if npm view "dsh-connect-web@${VERSION}" version >/dev/null 2>&1; then
-            echo "dsh-connect-web@${VERSION} already published — skipping"
-          else
-            npm publish --provenance
-          fi
-      - name: Publish dsh-connect-feishu
-        working-directory: packages/connect-feishu
-        run: |
-          VERSION="$(node -p "require('./package.json').version")"
-          if npm view "dsh-connect-feishu@${VERSION}" version >/dev/null 2>&1; then
-            echo "dsh-connect-feishu@${VERSION} already published — skipping"
-          else
-            npm publish --provenance
-          fi
-      - name: Publish dsh-connect-telegram
-        working-directory: packages/connect-telegram
-        run: |
-          VERSION="$(node -p "require('./package.json').version")"
-          if npm view "dsh-connect-telegram@${VERSION}" version >/dev/null 2>&1; then
-            echo "dsh-connect-telegram@${VERSION} already published — skipping"
-          else
-            npm publish --provenance
-          fi
-      - name: Publish dsh-connect-dingtalk
-        working-directory: packages/connect-dingtalk
-        run: |
-          VERSION="$(node -p "require('./package.json').version")"
-          if npm view "dsh-connect-dingtalk@${VERSION}" version >/dev/null 2>&1; then
-            echo "dsh-connect-dingtalk@${VERSION} already published — skipping"
-          else
-            npm publish --provenance
-          fi
-      - name: Publish dsh-connect-all (single-install bundle — last, it depends on the channel packages)
-        working-directory: packages/connect-all
-        run: |
-          # Its dependencies on the channel packages are literal ^version (not the
-          # workspace protocol), so no rewrite is needed before publishing.
-          VERSION="$(node -p "require('./package.json').version")"
-          if npm view "dsh-connect-all@${VERSION}" version >/dev/null 2>&1; then
-            echo "dsh-connect-all@${VERSION} already published — skipping"
           else
             npm publish --provenance
           fi

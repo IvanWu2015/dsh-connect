@@ -17,31 +17,31 @@ pnpm install
 pnpm build
 ```
 
-Build output goes to each package's `lib/` (`packages/connect/lib`, `packages/connect-feishu/lib`, …, and the bundle's `packages/connect-all/lib`).
+Build output goes to the package's `lib/` (`packages/connect/lib`).
 
 ## 2. Install a plugin into a DSH profile
 
-`dsh plugin` forwards its arguments to the pnpm inside the profile directory, so **local paths must be absolute**. Install the **all-in-one bundle** (one plugin, one config block, pulls in every channel adapter):
+`dsh plugin` forwards its arguments to the pnpm inside the profile directory, so **local paths must be absolute**. Install the **single all-in-one plugin** (one plugin, one config block, pulls in the core + every channel adapter + the web-settings stack):
 
 ```powershell
-dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect D:\ACOINFO\code\dsh_feishu\packages\connect-all
+dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect
 ```
 
-> The npm packages are published automatically by `.github/workflows/publish.yml` whenever a GitHub Release is created, so in a released setup you can install by package name instead: `dsh plugin --profile web add dsh-connect dsh-connect-all`. During local development the absolute-path install above is the way to go. (If you want each channel as its own package, add the individual adapter paths instead of `connect-all`.)
+> The npm package is published automatically by `.github/workflows/publish.yml` whenever a GitHub Release is created, so in a released setup you can install by package name instead: `dsh plugin --profile web add dsh-connect`. During local development the absolute-path install above is the way to go.
 
 ## 3. Configure the profile's cordis.patch.yml
 
 Edit `%DSH_HOME%\profiles\web\cordis.patch.yml` (usually `C:\Users\you\.dsh\profiles\web\cordis.patch.yml`) and replace the empty array `[]` with:
 
-> The plugins register themselves automatically via their bundle manifests, so
-> this file only **overrides** their config. Do not `insert` them here again —
+> The plugin registers itself automatically via its bundle manifest, so
+> this file only **overrides** its config. Do not `insert` it here again —
 > a duplicate `id` makes dsh refuse to boot with `duplicate loader entry id`.
 
 ```yaml
-- id: connect-all
-  name: dsh-connect-all
+- id: connect
+  name: dsh-connect
   config:
-    channels: [feishu]                       # which adapters to enable (default: all built-in)
+    channels: [feishu]                       # which channels to enable (default: all built-in)
     channelDefaults:
       language: zh                           # common keys inherited by every channel
     feishu:
@@ -61,7 +61,7 @@ Host plugins only load after a process restart:
 
 1. Stop the running `dsh web` (press `Ctrl+C` in its terminal).
 2. Start `dsh web` again.
-3. Check the startup log for `connect` / `connect-all` output (or the absence of errors).
+3. Check the startup log for `connect` output (or the absence of errors).
 
 ## 5. Feishu-side setup (if not done yet)
 

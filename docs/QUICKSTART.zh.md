@@ -17,29 +17,29 @@ pnpm install
 pnpm build
 ```
 
-构建输出位于各包的 `lib/`（`packages/connect/lib`、`packages/connect-feishu/lib`、…、以及合集包的 `packages/connect-all/lib`）。
+构建输出位于该包的 `lib/`（`packages/connect/lib`）。
 
 ## 2. 将插件安装到 DSH profile
 
-`dsh plugin` 会把参数转发给 profile 目录内的 pnpm，因此**本地路径必须是绝对路径**。安装**单插件合集**（一个插件、一份配置，拉进所有渠道适配器）：
+`dsh plugin` 会把参数转发给 profile 目录内的 pnpm，因此**本地路径必须是绝对路径**。安装**唯一的多合一插件**（一个插件、一份配置，拉进核心 + 全部通道适配器 + Web 设置栈）：
 
 ```powershell
-dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect D:\ACOINFO\code\dsh_feishu\packages\connect-all
+dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect
 ```
 
-> npm 包会在每次创建 GitHub Release 时由 `.github/workflows/publish.yml` 自动发布，因此正式发布后可直接用包名安装：`dsh plugin --profile web add dsh-connect dsh-connect-all`。本地开发时请使用上面的绝对路径安装方式。（若你想每个渠道独立成包，就分别添加各适配器路径，而不是 `connect-all`。）
+> npm 包会在每次创建 GitHub Release 时由 `.github/workflows/publish.yml` 自动发布，因此正式发布后可直接用包名安装：`dsh plugin --profile web add dsh-connect`。本地开发时请使用上面的绝对路径安装方式。
 
 ## 3. 配置 profile 的 cordis.patch.yml
 
 编辑 `%DSH_HOME%\profiles\web\cordis.patch.yml`（通常是 `C:\Users\you\.dsh\profiles\web\cordis.patch.yml`），把空数组 `[]` 替换为：
 
-> 这些插件会通过各自的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它们的配置。**不要**再用 `insert` 重新插入它们——重复的 `id` 会让 dsh 以 `duplicate loader entry id` 拒绝启动。
+> 该插件会通过其 bundle 清单自动注册，因此这里只需要**覆盖（override）**它的配置。**不要**再用 `insert` 重新插入它——重复的 `id` 会让 dsh 以 `duplicate loader entry id` 拒绝启动。
 
 ```yaml
-- id: connect-all
-  name: dsh-connect-all
+- id: connect
+  name: dsh-connect
   config:
-    channels: [feishu]                     # 启用哪些适配器（默认：全部内置）
+    channels: [feishu]                     # 启用哪些通道（默认：全部内置）
     channelDefaults:
       language: zh                         # 所有渠道继承的公共键
     feishu:
@@ -59,7 +59,7 @@ Host 插件只有在进程重启后才会加载：
 
 1. 停止正在运行的 `dsh web`（在其终端按 `Ctrl+C`）。
 2. 重新启动 `dsh web`。
-3. 检查启动日志中是否有 `connect` / `connect-all` 的输出（或确认没有报错）。
+3. 检查启动日志中是否有 `connect` 的输出（或确认没有报错）。
 
 ## 5. 飞书侧配置（如果还没完成）
 

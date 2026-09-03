@@ -1,18 +1,16 @@
 /**
- * One-command release gate for dsh-connect. Runs every package build + test
- * suite and exits non-zero if anything fails. Usage: node scripts/verify.mjs
+ * One-command release gate for dsh-connect. Builds the single package, runs the
+ * entire test suite, and syntax-checks the client plugin — exits non-zero if
+ * anything fails. Usage: node scripts/verify.mjs
  */
 import { spawnSync } from "node:child_process";
 
 const steps = [
-  // connecct-all build + all suites
-  { name: "build connect-all", cmd: "node", args: ["node_modules/typescript/bin/tsc", "-p", "packages/connect-all/tsconfig.json"] },
-  { name: "connect-all tests", cmd: "node", args: ["packages/connect-all/test/run-all.mjs"] },
-  // core + feishu + smoke
-  { name: "connect tests", cmd: "node", args: ["packages/connect/test/unit.test.mjs"] },
-  { name: "connect smoke", cmd: "node", args: ["packages/connect/test/smoke.mjs"] },
-  { name: "connect-feishu tests", cmd: "node", args: ["packages/connect-feishu/test/unit.test.mjs"] },
-  { name: "client plugin syntax", cmd: "node", args: ["--check", "packages/connect-all/client/settings-client.mjs"] },
+  // dsh-connect build + all suites
+  { name: "build dsh-connect", cmd: "node", args: ["node_modules/typescript/bin/tsc", "-p", "packages/connect/tsconfig.json"] },
+  { name: "build dsh-connect client bundle", cmd: "node", args: ["packages/connect/scripts/build-client.mjs"] },
+  { name: "dsh-connect tests", cmd: "node", args: ["packages/connect/test/run-all.mjs"] },
+  { name: "client plugin syntax", cmd: "node", args: ["--check", "packages/connect/client/settings-client.mjs"] },
 ];
 
 let failed = false;
@@ -25,5 +23,5 @@ for (const step of steps) {
     failed = true;
   }
 }
-process.stdout.write(`\n${failed ? "VERIFY FAILED" : "VERIFY OK (all builds + tests green)"}\n`);
+process.stdout.write(`\n${failed ? "VERIFY FAILED" : "VERIFY OK (build + all tests green)"}\n`);
 process.exit(failed ? 1 : 0);

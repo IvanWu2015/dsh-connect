@@ -9,13 +9,8 @@ This document answers two questions: **what is it called**, and **how do DSH use
 | Object | Name | Notes |
 |---|---|---|
 | GitHub repo | `dsh-connect` | The monorepo |
-| Core package | `dsh-connect` | Channel-agnostic core (published **first** — every adapter depends on it) |
-| Web mirror adapter | `dsh-connect-web` | Mirrors Feishu sessions into the DSH Web GUI |
-| Feishu adapter | `dsh-connect-feishu` | Feishu/Lark channel |
-| Telegram adapter | `dsh-connect-telegram` | Telegram channel |
-| DingTalk adapter | `dsh-connect-dingtalk` | One-way DingTalk group push |
-| **All-in-one bundle** | `dsh-connect-all` | **Recommended install**: single plugin + config block, activates any channel subset (published **last** — it depends on the channel packages) |
-| Naming rule | `dsh-connect-<channel>` | For future channels |
+| **The only npm package** | `dsh-connect` | All-in-one plugin: core `connect` service + every channel adapter (feishu / telegram / dingtalk / web) + the web-settings stack, all behind a `channels` selector. This is the single package that is installed and published. |
+| Channel adapters | inside `dsh-connect` (`src/channels/feishu`, `…/telegram`, `…/dingtalk`, `…/web`) | No longer separate npm packages |
 
 **Why this naming:**
 
@@ -23,7 +18,7 @@ This document answers two questions: **what is it called**, and **how do DSH use
 - `connect` says plainly what the product does: connect DSH to chat channels for bidirectional message sync and work arrangement.
 - The `-feishu` suffix makes searches like "feishu + dsh" hit too.
 
-> For publishing, avoid taking the official `@deepseek-ai` scope (that belongs to DeepSeek). Use the unscoped names `dsh-connect` / `dsh-connect-feishu` (most discoverable); if those are taken, use your own scope, e.g. `@your-org/dsh-connect`.
+> For publishing, avoid taking the official `@deepseek-ai` scope (that belongs to DeepSeek). Use the unscoped name `dsh-connect` (most discoverable); if it is taken, use your own scope, e.g. `@your-org/dsh-connect`.
 
 ## 2. GitHub discoverability (so DSH users can find it)
 
@@ -59,18 +54,13 @@ The first paragraph must naturally include searchable terms — see the opening 
 
 DSH's plugin install command is `dsh plugin --profile web add <package>` (it forwards to pnpm underneath), so **publishing to npm is the prerequisite for DSH users to install with one command**.
 
-Publishing is **automatic**: `.github/workflows/publish.yml` runs on every **GitHub Release** and publishes all **6 packages** (`dsh-connect`, `dsh-connect-web`, `dsh-connect-feishu`, `dsh-connect-telegram`, `dsh-connect-dingtalk`, `dsh-connect-all`) sequentially — `dsh-connect` **first** (the other packages list it as a peer dependency), then `connect-web` → `connect-feishu` → `connect-telegram` → `connect-dingtalk` → `connect-all` (**last** — it depends on the channel packages). A parallel matrix would race that peer dependency. Before testing/publishing the CI runs `pnpm build` (the `lib/` output is gitignored) and `pnpm typecheck`; `pnpm test` must also pass.
+Publishing is **automatic**: `.github/workflows/publish.yml` runs on every **GitHub Release** and publishes the **single `dsh-connect` package** (working-directory `packages/connect`) via npm trusted publishing (OIDC). Before testing/publishing the CI runs `pnpm build` (the `lib/` output is gitignored) and `pnpm typecheck`; `pnpm test` must also pass.
 
-Manually, the same order applies:
+Manually, publish the one package:
 
 ```sh
-# In dependency order (connect first); lib/ must exist → run pnpm build first
+# lib/ must exist → run pnpm build first
 pnpm --filter dsh-connect publish --access public
-pnpm --filter dsh-connect-web publish --access public
-pnpm --filter dsh-connect-feishu publish --access public
-pnpm --filter dsh-connect-telegram publish --access public
-pnpm --filter dsh-connect-dingtalk publish --access public
-pnpm --filter dsh-connect-all publish --access public  # last — depends on the channel packages
 ```
 
 Before publishing, confirm the placeholder `"name"`/`"version"` in each package.json and fill in `description`, `keywords`, `repository`, `license`. npm's **`keywords` field** also participates in npm search:
@@ -93,5 +83,5 @@ Search engines aren't enough — proactively get in front of "people who use DSH
 - [ ] GitHub repo named `dsh-connect`, Description contains keywords
 - [ ] About topics filled in (see 2.2)
 - [ ] README opening paragraph contains "DeepSeek Harness / Feishu"
-- [ ] All six packages published to npm with `keywords` filled in (auto via GitHub Release)
+- [ ] The `dsh-connect` package published to npm with `keywords` filled in (auto via GitHub Release)
 - [ ] Leave traces in the official DSH repo + at least one awesome list

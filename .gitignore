@@ -2,6 +2,8 @@ node_modules/
 .pnpm-store/
 .npm-cache/
 .npm-cache-tmp/
+package-lock.json
+yarn.lock
 lib/
 dist/
 *.log

@@ -2,6 +2,35 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] - 2026-08-31
+
+### Changed (breaking)
+
+- **`dsh-connect` is now the single all-in-one plugin.** The former split packages — `dsh-connect-feishu`, `dsh-connect-telegram`, `dsh-connect-dingtalk`, `dsh-connect-web` and the `dsh-connect-all` bundle — were deleted. Everything (core `connect` service, all four channel adapters, and the web-settings stack) now ships in the one `dsh-connect` package. Install once:
+  ```sh
+  dsh plugin --profile web add dsh-connect
+  ```
+- **One config block**: all settings live under a single `dsh-connect` entry with a `channels` selector and `channelDefaults`, plus per-channel sub-keys:
+  ```yaml
+  - id: connect
+    name: dsh-connect
+    config:
+      channels: [feishu, telegram]
+      channelDefaults: { language: zh }
+      feishu:   { appId: cli_xxxx, appSecret: REPLACE_ME, transport: websocket }
+      telegram: { botToken: "123456:ABC" }
+      dingtalk: { webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx", stream: { clientId: "x", clientSecret: "y" } }
+      web:      { pollIntervalMs: 1000 }
+      settingsStatePath: .dsh-connect/settings.json
+  ```
+  The former per-plugin blocks (`connect-feishu`, `connect-telegram`, `connect-dingtalk`, `connect-web`) and the `dsh-connect-all` block must be migrated to this shape.
+- **Feishu SDK is now a mandatory dependency** (`@larksuiteoapi/node-sdk`) rather than isolated in the Feishu adapter package.
+- **Package export surface grows** (`dsh-connect/feishu`, `/telegram`, `/dingtalk`, `/web`, `/settings`) alongside the existing `.` and `/binding`.
+
+### Added
+
+- Web-settings stack absorbed into core: the `/dsh-connect` RPC channel (`settings.get`/`settings.save`/`settings.status` + `credentials.save`), the DSH credential-store adapter, JSON state persistence, and the client settings pane (`client/settings-client.mjs`). Secrets saved from the pane are injected on the next load via `injectSecrets` (dingtalk stream credentials are nested under `stream`).
+
 ## [0.7.0] - 2026-08-25
 
 ### Added

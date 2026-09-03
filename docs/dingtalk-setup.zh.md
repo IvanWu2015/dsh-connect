@@ -2,9 +2,9 @@
 
 [English](dingtalk-setup.md) | 中文
 
-本文说明如何创建钉钉群自定义机器人,并用 `dsh-connect-dingtalk`——它提供**单向推送服务**(`ctx.dingtalk`):其他插件或脚本可调用它把消息推送到钉钉群。
+本文说明如何创建钉钉群自定义机器人,并用 `dsh-connect` 的 `dingtalk` 通道——它提供**单向推送服务**(`ctx.dingtalk`):其他插件或脚本可调用它把消息推送到钉钉群。
 
-> **安装**:使用单插件合集——`dsh plugin add dsh-connect dsh-connect-all`——把该渠道的设置放在合集配置块的 `dingtalk` 名下(`webhookUrl`/`secret` 平铺,`clientId`/`clientSecret` 放在 `stream` 下)。密钥可存 DSH 凭据库。详见 [config-reference.md](config-reference.md)。单独的 `dsh-connect-dingtalk` 包也仍可独立使用。
+> **安装**:安装唯一的多合一插件——`dsh plugin --profile web add dsh-connect`——把该渠道的设置放在插件配置块的 `dingtalk` 名下(`webhookUrl`/`secret` 平铺,`clientId`/`clientSecret` 放在 `stream` 下)。密钥可存 DSH 凭据库。详见 [config-reference.md](config-reference.md)。
 
 > ⚠️ **本包不做什么**:没有**自动的任务进度/结果/告警推送钩子**(connect 核心不会自己向钉钉推送),没有 **`/dingtalk` 命令**,通道**不能接收消息**。任何"任务进度/结果/告警推送"场景都意味着其他插件或脚本主动调用 `ctx.dingtalk`。
 >
@@ -30,13 +30,15 @@
 在 DSH profile 的 `cordis.patch.yml` 中。该插件会通过自身的 bundle 清单自动注册，因此这里只需要**覆盖（override）**它的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）:
 
 ```yaml
-- id: connect-dingtalk
-  name: dsh-connect-dingtalk
+- id: connect
+  name: dsh-connect
   config:
-    webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxx"
-    secret: "SECxxxxxxxx"        # 仅当启用加签时
-    language: zh
-    # defaultAt: { mobiles: ["13800000000"] }   # 可选:每次推送默认 @ 的人
+    channels: [dingtalk]        # 启用钉钉通道
+    dingtalk:
+      webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxx"
+      secret: "SECxxxxxxxx"        # 仅当启用加签时
+      language: zh
+      # defaultAt: { mobiles: ["13800000000"] }   # 可选:每次推送默认 @ 的人
 ```
 
 或设置环境变量 `DINGTALK_WEBHOOK_URL`(加签密钥用 `DINGTALK_WEBHOOK_SECRET`)。

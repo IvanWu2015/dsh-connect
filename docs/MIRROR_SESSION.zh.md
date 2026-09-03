@@ -43,7 +43,7 @@
 `lockOwner`（`"feishu" | "web"`）**只由飞书侧的 `AgentRunner` 强制**：
 
 - 飞书 runner 在每次任务回合前后检查 / 获取 / 释放锁。
-- **DSH Web 从不经过 connect-web 适配器、从不查询锁**：Web GUI 直接读写 DSH 会话（经由 DSH 自己的 api-proxy）。实际上 Web 侧**永远可写**。
+- **DSH Web 从不经过 `dsh-connect` 的 `web` 通道、从不查询锁**：Web GUI 直接读写 DSH 会话（经由 DSH 自己的 api-proxy）。实际上 Web 侧**永远可写**。
 - 结论：锁可以串行化飞书侧的任务回合、记录谁"拥有"会话，但**无法阻止** Web 用户同时写入同一个会话。这是当前 DSH Web GUI 的架构限制，**无法在本仓库修复**——不要假设 Web 侧会遵守互斥锁。
 
 ### 🔒 锁的作用范围
@@ -340,7 +340,7 @@ Bot: 🔄 正在处理任务...
 🤖 Agent: [深度思考中...]
           项目包含以下模块：
           - packages/connect (核心)
-          - packages/connect-feishu (适配器)
+          - packages/connect/src/channels/feishu (适配器)
           ...
 
 [状态：空闲，可查看完整历史]

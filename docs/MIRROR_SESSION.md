@@ -43,7 +43,7 @@ The mirror is **bookkeeping on the shared binding**: when a chat is mirrored, it
 `lockOwner` (`"feishu" | "web"`) is enforced **only by the Feishu-side `AgentRunner`**:
 
 - The Feishu runner checks / acquires / releases the lock around each task turn.
-- **DSH Web never goes through the connect-web adapter and never queries the lock**: the Web GUI reads and writes DSH sessions directly (through DSH's own api-proxy). In practice the Web side is **always writable**.
+- **DSH Web never goes through the `web` channel of `dsh-connect` and never queries the lock**: the Web GUI reads and writes DSH sessions directly (through DSH's own api-proxy). In practice the Web side is **always writable**.
 - Consequence: the lock can serialize Feishu-side turns and record who "owns" the session, but it **cannot** stop a Web user from writing into the same session at the same time. This is an architectural limitation of the current DSH Web GUI and **cannot be fixed from this repository** — do not assume the Web side obeys the mutex.
 
 ### 🔒 Lock Scope
@@ -340,7 +340,7 @@ Bot: 🔄 正在处理任务...
 🤖 Agent: [深度思考中...]
           项目包含以下模块：
           - packages/connect (核心)
-          - packages/connect-feishu (适配器)
+          - packages/connect/src/channels/feishu (适配器)
           ...
 
 [状态：空闲，可查看完整历史]

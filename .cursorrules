@@ -42,13 +42,12 @@
 1. Read current version from all relevant `package.json` files
 2. Parse as semver: `MAJOR.MINOR.PATCH`
 3. Increment only PATCH by default: `PATCH + 1`
-4. Update all packages consistently (connect and connect-feishu should share same version)
+4. `dsh-connect` is the only versioned package (there are no separate channel packages)
 5. Only bump MAJOR/MINOR if user explicitly says so (e.g., "bump minor version" or "release v1.0")
 
 ### Affected Files
 
 - `packages/connect/package.json`
-- `packages/connect-feishu/package.json`
 - Root `package.json` (workspace, usually stays at 1.0.0)
 
 ### AI Assistant Behavior

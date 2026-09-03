@@ -2,6 +2,8 @@
 
 English | [中文](ENHANCEMENTS_SUMMARY.zh.md)
 
+> **Historical note**: this documents the **v0.6.2** round of fixes. Since then the repo consolidated into a **single `dsh-connect` package** — the per-package references below (`dsh-connect-feishu`, `dsh-connect-telegram`, `dsh-connect-dingtalk`, `dsh-connect-web`) and the split `packages/connect-*/test/` directories no longer exist; those channels are now sub-keys of the one `dsh-connect` plugin (under `feishu:` / `telegram:` / `dingtalk:` / `web:`).
+
 ## 📋 Overview
 
 This round of fixes brings the repository in line with the code's actual behavior: crash/hang fixes in the core, correctness and streaming fixes in the Telegram adapter, real webhook support and safe downloads in the Feishu adapter, retry/truncation behavior in the DingTalk adapter, a reworked connect-web adapter, a serial 5-package publish pipeline, and dead-config cleanup. Version **0.6.2**.

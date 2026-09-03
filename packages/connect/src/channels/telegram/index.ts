@@ -1,0 +1,71 @@
+/**
+ * Telegram channel adapter: getUpdates long-polling intake, normalized message
+ * routing into `dsh-connect`, and replies back to Telegram (text / markdown /
+ * streaming edits / inline-keyboard choice prompts).
+ *
+ * @module dsh-connect/telegram
+ */
+import type { Context } from "@deepseek-ai/cordis";
+import z from "@deepseek-ai/schemastery";
+import { TelegramAdapter, type TelegramConfig } from "./adapter.js";
+
+export { TelegramAdapter } from "./adapter.js";
+export type { TelegramConfig } from "./adapter.js";
+export { TelegramClient } from "./client.js";
+export type { TelegramClientConfig, TelegramMessage, TelegramUpdate } from "./client.js";
+export { markdownToTelegramHtml, escapeHtml, buildInlineKeyboard, encodeMessageRef, decodeMessageRef, isBotMentioned } from "./adapter.js";
+
+/** Plugin config; secrets may come from config or the TELEGRAM_BOT_TOKEN environment. */
+export const Config = z.object({
+  botToken: z.string().role("secret"),
+  language: z.union([z.const("zh"), z.const("en")]),
+  requireMention: z.boolean(),
+  pollingTimeoutSeconds: z.number().min(1).max(60),
+  baseUrl: z.string(),
+});
+
+interface ConnectLike {
+  registerAdapter(adapter: unknown): void;
+}
+
+function start(connect: ConnectLike, config: TelegramConfig, logger?: { warn?: (...args: unknown[]) => void }): void {
+  try {
+    const adapter = new TelegramAdapter(config, logger);
+    connect.registerAdapter(adapter);
+    void adapter.start().catch((error) => {
+      logger?.warn?.(`connect-telegram: start failed: ${String(error)}`);
+    });
+  } catch (error) {
+    logger?.warn?.(`connect-telegram: adapter init failed: ${String(error)}`);
+  }
+}
+
+/**
+ * Register and start the Telegram adapter. `connect` is the already-constructed
+ * `ConnectService` instance (passed from the merged entry, not resolved via
+ * `ctx.get` — that returns undefined during the same plugin's `apply`).
+ */
+export function register(connect: ConnectLike, config: TelegramConfig | null = {}, ctx: Context): void {
+  // The DSH loader passes `null` for entries without an explicit config.
+  config = config ?? {};
+  const botToken = config.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
+  if (botToken === undefined || botToken === "") {
+    ctx.logger?.warn?.("connect-telegram: botToken is not configured (config or TELEGRAM_BOT_TOKEN) — adapter disabled.");
+    return;
+  }
+  start(connect, { ...config, botToken }, ctx.logger);
+}
+
+/**
+ * Compatibility shell for the old split-plugin registration path (when `connect`
+ * is an already-active, separate plugin). The merged entry calls `register`
+ * directly instead, because `ctx.get("connect")` returns undefined inside this
+ * plugin's own `apply`.
+ */
+export function apply(ctx: Context, config: TelegramConfig | null = {}): void {
+  const connect = ctx.get("connect") as ConnectLike | undefined;
+  if (connect === undefined) {
+    throw new Error("connect-telegram: the dsh-connect service is not present; load it before this adapter");
+  }
+  register(connect, config, ctx);
+}

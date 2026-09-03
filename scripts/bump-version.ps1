@@ -38,15 +38,10 @@ $ErrorActionPreference = "Stop"
 # Project root
 $RootDir = Split-Path -Parent $PSScriptRoot
 
-# Packages to update. dsh-connect-all is the single-install bundle users depend
-# on, so it must always ship at the same version as the core + channel packages.
+# Single all-in-one package: dsh-connect carries the core service, every channel
+# adapter, and the web-settings stack.
 $PackageFiles = @(
-    "packages\connect\package.json",
-    "packages\connect-feishu\package.json",
-    "packages\connect-dingtalk\package.json",
-    "packages\connect-telegram\package.json",
-    "packages\connect-web\package.json",
-    "packages\connect-all\package.json"
+    "packages\connect\package.json"
 )
 
 function Parse-SemVer {
@@ -158,9 +153,9 @@ try {
     Write-Host "  1. Review changes: git diff"
     Write-Host "  2. Commit: git commit -m `"chore: bump version to $NewVersion`""
     Write-Host "  3. Tag: git tag v$NewVersion && git push origin v$NewVersion"
-    Write-Host "  4. Publish: create a GitHub Release for v$NewVersion — .github/workflows/publish.yml builds, typechecks, tests and publishes all 6 packages (connect, connect-web, connect-feishu, connect-telegram, connect-dingtalk, connect-all) automatically, connect first and connect-all last (it depends on the channel packages)."
-    Write-Host "     Manual alternative (connect first, then adapters, then the all-in-one bundle):"
-    Write-Host "     cd packages/connect && npm publish && cd ../connect-web && npm publish && cd ../connect-feishu && npm publish && cd ../connect-telegram && npm publish && cd ../connect-dingtalk && npm publish && cd ../connect-all && npm publish"
+    Write-Host "  4. Publish: create a GitHub Release for v$NewVersion — .github/workflows/publish.yml builds, typechecks, tests and publishes the single dsh-connect package automatically."
+    Write-Host "     Manual alternative:"
+    Write-Host "     cd packages/connect && npm publish"
     Write-Host ""
     
 } catch {

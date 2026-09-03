@@ -4,7 +4,7 @@ English | [中文](feishu-setup.zh.md)
 
 This plugin uses Feishu's **long-connection (WebSocket) event subscription** mode by default — no public IP / domain / tunnel is required, and events are received locally. A **webhook mode is also implemented** (see [Webhook transport](#webhook-transport)) for setups that must use a public HTTPS callback URL.
 
-> **Installing**: use the all-in-one bundle — `dsh plugin add dsh-connect dsh-connect-all` — and put this channel's settings under `feishu` in the bundle's config block (secrets may live in the DSH credential store). See [config-reference.md](config-reference.md). The standalone `dsh-connect-feishu` package still works on its own.
+> **Installing**: install the single all-in-one plugin — `dsh plugin --profile web add dsh-connect` — and put this channel's settings under `feishu` in the plugin's config block (secrets may live in the DSH credential store). See [config-reference.md](config-reference.md).
 
 ## 1. Create a custom app
 
@@ -54,14 +54,14 @@ Enable and release the following permissions in **Permission Management** (at le
 # the profile's cordis.patch.yml
 - id: connect
   name: dsh-connect
-- id: connect-feishu
-  name: dsh-connect-feishu
   config:
-    appId: cli_xxxx
-    appSecret: cli_secret_xxxx
-    transport: websocket          # long connection
-    requireMention: true          # groups need @mention
-    dmMode: open                  # DMs open
+    channels: [feishu]            # enable the Feishu channel
+    feishu:
+      appId: cli_xxxx
+      appSecret: cli_secret_xxxx
+      transport: websocket          # long connection
+      requireMention: true          # groups need @mention
+      dmMode: open                  # DMs open
 ```
 
 Start `dsh web`; once the log shows a successful connection you can chat in Feishu.

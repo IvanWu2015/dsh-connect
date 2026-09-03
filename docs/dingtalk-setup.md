@@ -2,9 +2,9 @@
 
 English | [中文](dingtalk-setup.zh.md)
 
-This document explains how to create a DingTalk group custom robot and use `dsh-connect-dingtalk`, which provides a **one-way push service** (`ctx.dingtalk`): other plugins or scripts can call it to push messages into a DingTalk group.
+This document explains how to create a DingTalk group custom robot and use the `dingtalk` channel of `dsh-connect`, which provides a **one-way push service** (`ctx.dingtalk`): other plugins or scripts can call it to push messages into a DingTalk group.
 
-> **Installing**: use the all-in-one bundle — `dsh plugin add dsh-connect dsh-connect-all` — and put this channel's settings under `dingtalk` in the bundle's config block (`webhookUrl`/`secret` flat, `clientId`/`clientSecret` under `stream`). Secrets may live in the DSH credential store. See [config-reference.md](config-reference.md). The standalone `dsh-connect-dingtalk` package still works on its own.
+> **Installing**: install the single all-in-one plugin — `dsh plugin --profile web add dsh-connect` — and put this channel's settings under `dingtalk` in the plugin's config block (`webhookUrl`/`secret` flat, `clientId`/`clientSecret` under `stream`). Secrets may live in the DSH credential store. See [config-reference.md](config-reference.md).
 
 > ⚠️ **What this package does NOT do**: there are **no automatic task-progress / result / alert push hooks** (nothing in the connect core pushes to DingTalk on its own), **no `/dingtalk` command**, and the channel **cannot receive messages**. Any "task progress / result / alert push" scenario means some other plugin or script calls `ctx.dingtalk` proactively.
 >
@@ -30,13 +30,15 @@ This document explains how to create a DingTalk group custom robot and use `dsh-
 In the `cordis.patch.yml` of your DSH profile. The plugin registers itself via its bundle manifest, so only override its config — do **not** `insert` it again (duplicate ids crash dsh at boot):
 
 ```yaml
-- id: connect-dingtalk
-  name: dsh-connect-dingtalk
+- id: connect
+  name: dsh-connect
   config:
-    webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxx"
-    secret: "SECxxxxxxxx"        # only needed when signing is enabled
-    language: zh
-    # defaultAt: { mobiles: ["13800000000"] }   # optional default @-mentions for every push
+    channels: [dingtalk]        # enable the DingTalk channel
+    dingtalk:
+      webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxx"
+      secret: "SECxxxxxxxx"        # only needed when signing is enabled
+      language: zh
+      # defaultAt: { mobiles: ["13800000000"] }   # optional default @-mentions for every push
 ```
 
 Or set the environment variable `DINGTALK_WEBHOOK_URL` (use `DINGTALK_WEBHOOK_SECRET` for the signing secret).
@@ -81,17 +83,19 @@ await dingtalk.sendText("DSH 任务已开始");
 
 ## Two-Way Conversations (Stream mode)
 
-A group custom robot cannot receive messages. Since **0.7.0**, `dsh-connect-dingtalk` ships a **Stream-mode bidirectional adapter**: create an **enterprise internal app** on the DingTalk Open Platform, enable the Stream-mode gateway, and configure the credentials:
+A group custom robot cannot receive messages. Since **0.7.0**, the `dingtalk` channel of `dsh-connect` ships a **Stream-mode bidirectional adapter**: create an **enterprise internal app** on the DingTalk Open Platform, enable the Stream-mode gateway, and configure the credentials:
 
 ```yaml
-- id: connect-dingtalk
-  name: dsh-connect-dingtalk
+- id: connect
+  name: dsh-connect
   config:
-    stream:
-      clientId: "dingxxxx"
-      clientSecret: "xxxx"
-      requireMention: true   # group replies need an @-mention (default true)
-    # webhookUrl / secret can still be set for proactive pushes
+    channels: [dingtalk]        # enable the DingTalk channel
+    dingtalk:
+      stream:
+        clientId: "dingxxxx"
+        clientSecret: "xxxx"
+        requireMention: true   # group replies need an @-mention (default true)
+      # webhookUrl / secret can still be set for proactive pushes
 ```
 
-`DINGTALK_STREAM_CLIENT_ID` / `DINGTALK_STREAM_CLIENT_SECRET` environment variables work too. The adapter registers into `dsh-connect`: group @-mentions and DMs trigger the agent, replies stream back to the origin message, and menus render as numbered text lists (reply with a number). The STOMP codec, message normalization and reply bodies are unit-tested; validate live connectivity on a real app (needs outbound access to `wss://api.dingtalk.com/connect`).
+`DINGTALK_STREAM_CLIENT_ID` / `DINGTALK_STREAM_CLIENT_SECRET` environment variables work too. The `dingtalk` channel registers into the `dsh-connect` core: group @-mentions and DMs trigger the agent, replies stream back to the origin message, and menus render as numbered text lists (reply with a number). The STOMP codec, message normalization and reply bodies are unit-tested; validate live connectivity on a real app (needs outbound access to `wss://api.dingtalk.com/connect`).

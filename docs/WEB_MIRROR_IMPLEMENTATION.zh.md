@@ -4,7 +4,7 @@
 
 ## 概述
 
-`dsh-connect-web` 是 `dsh-connect` 的 **Web 通道适配器**：它让飞书的镜像会话在 DSH Web GUI 中可见。它监听共享的 `BindingStore`，找出设置了 `webMirrorSessionId` 的聊天（通过 `/mirror`，或 `autoMirror` 自动创建），并记录为已知镜像。
+`dsh-connect` 的 **`web` 通道**是 Web 镜像适配器：它让飞书的镜像会话在 DSH Web GUI 中可见。它监听共享的 `BindingStore`，找出设置了 `webMirrorSessionId` 的聊天（通过 `/mirror`，或 `autoMirror` 自动创建），并记录为已知镜像。
 
 镜像会话本身不需要适配器转发：DSH Web GUI 直接从 DSH 的会话存储读取会话，因此镜像会话会直接出现在 GUI 的共享工作区下。用户侧行为见 [Web Mirror Session](./MIRROR_SESSION.zh.md)。
 
@@ -38,7 +38,7 @@
 
 ## 测试
 
-`dsh-connect-web` 使用 **`node:test`**——测试套件为 `packages/connect-web/test/unit.test.mjs`（运行方式：`node packages/connect-web/test/unit.test.mjs`）。已接入**根目录 `pnpm test`**（共 6 个套件：connect unit + smoke、dingtalk、telegram、feishu、connect-web）。记得先 `pnpm build`——测试从 `lib/`（被 gitignore）导入。
+`web` 通道使用 **`node:test`**——测试套件为 `packages/connect/test/web.test.mjs`，由统一 runner `packages/connect/test/run-all.mjs` 导入（或单独运行：`node packages/connect/test/web.test.mjs`）。根 `pnpm test` 会与其他套件一起运行它。记得先 `pnpm build`——测试从 `lib/`（被 gitignore）导入。
 
 覆盖的行为：
 - 干净的 `start` / `stop`
@@ -53,7 +53,7 @@
 
 - [Web Mirror Session](./MIRROR_SESSION.zh.md) — 面向用户的镜像与锁行为
 - [Shared Workspace Setup](./SHARED_WORKSPACE_SETUP.zh.md) — Web GUI 中的工作区/会话可见性
-- [Enhancements Summary](./ENHANCEMENTS_SUMMARY.zh.md) — 本轮修复（含 connect-web）
+- [Enhancements Summary](./ENHANCEMENTS_SUMMARY.zh.md) — 本轮修复（原 `dsh-connect-web` 适配器，现为 `web` 通道）
 - [Binding Store API](../packages/connect/src/binding.ts) — 适配器监听的存储
 
 ---

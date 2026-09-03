@@ -1,7 +1,8 @@
 /**
- * Runtime smoke test: load both plugins into a real Cordis context and verify
- * the plugin contract (Service registration, adapter registry, authorization,
- * proactive notify) without any network or model access.
+ * Runtime smoke test: load the merged `dsh-connect` plugin into a real Cordis
+ * context and verify the plugin contract (Service registration, adapter
+ * registry, authorization, proactive notify) without any network or model
+ * access.
  *
  * Lives under packages/connect so `@deepseek-ai/cordis` (a package devDependency)
  * resolves through the package's node_modules.
@@ -9,7 +10,7 @@
 import assert from "node:assert/strict";
 import { Context } from "@deepseek-ai/cordis";
 import * as connect from "../lib/index.js";
-import * as feishu from "../../connect-feishu/lib/index.js";
+import * as feishu from "../lib/channels/feishu/index.js";
 
 // ── cordis plugin contract (compile-time exports are mirrored at runtime) ──
 assert.equal(connect.name, "connect");
@@ -17,9 +18,11 @@ assert.deepEqual(connect.inject, ["agents", "sessions", "agentDefaultModel"]);
 assert.equal(typeof connect.apply, "function");
 assert.equal(typeof connect.ConnectService, "function");
 
-assert.equal(feishu.name, "connect-feishu");
-assert.deepEqual(feishu.inject, ["connect"]);
+// The feishu channel is no longer a declarative cordis plugin: it exposes
+// register()/Config + the adapter, but no standalone name/inject.
+assert.equal(typeof feishu.register, "function");
 assert.equal(typeof feishu.apply, "function");
+assert.ok(feishu.Config, "feishu.Config (schemastery schema) is exported");
 assert.equal(typeof feishu.FeishuAdapter, "function");
 
 // ── load the core into a fresh root context ──
@@ -28,7 +31,7 @@ ctx.provide("agents", {});
 ctx.provide("sessions", {});
 ctx.provide("agentDefaultModel", { currentSelection: () => ({ provider: "p", model: "m" }) });
 
-connect.apply(ctx, { allowUsers: ["u1"], allowChats: ["c1"] });
+await connect.apply(ctx, { allowUsers: ["u1"], allowChats: ["c1"] });
 
 const service = ctx.get("connect");
 assert.ok(service, "ctx.connect service must be registered");
@@ -52,7 +55,7 @@ const openCtx = new Context();
 openCtx.provide("agents", {});
 openCtx.provide("sessions", {});
 openCtx.provide("agentDefaultModel", { currentSelection: () => ({ provider: "p", model: "m" }) });
-connect.apply(openCtx, {});
+await connect.apply(openCtx, {});
 const openService = openCtx.get("connect");
 assert.equal(openService.isAllowed({ channel: "feishu", chatKey: "any", chatType: "p2p", senderKey: "any", text: "x" }), true, "empty allowlists default to allow");
 

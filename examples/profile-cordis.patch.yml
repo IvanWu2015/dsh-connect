@@ -1,17 +1,21 @@
 # Append to the DSH profile's cordis.patch.yml (Host plane, not inside an agent preset)
 #
 # Notes:
-# - dsh-connect and dsh-connect-feishu must live on the Host plane (process-level singleton services).
-# - Each package registers itself automatically via its bundle manifest
-#   (`dsh.bundle.patch` → cordis.patch.yml), so this file only OVERRIDES their
-#   config. Do NOT `insert` them here — re-inserting the same ids makes the
-#   loader fail with "duplicate loader entry id" and dsh refuses to boot.
-# - Credentials can also come from the environment variables FEISHU_APP_ID /
-#   FEISHU_APP_SECRET to keep them out of config files.
+# - dsh-connect is the single all-in-one plugin: it carries the core connect
+#   service, every channel adapter, and the web-settings stack. Install it once;
+#   enable exactly the channels you use via `channels`.
+# - It registers itself automatically via its bundle manifest
+#   (`dsh.bundle.patch` → cordis.patch.yml), so this file only OVERRIDES its
+#   config. Do NOT `insert` it here — re-inserting the same id makes the loader
+#   fail with "duplicate loader entry id" and dsh refuses to boot.
+# - Credentials can come from a channel block, the environment, or the DSH
+#   credential store (web settings pane). Secrets (appSecret/botToken/clientSecret)
+#   should never be hard-coded here — save them from the web settings pane instead.
 
 - id: connect
   name: dsh-connect
   config:
+    # --- core (channel-agnostic) ---
     # agentPreset: standard      # Agent preset used per bound session (omitted = roster default)
     # workDir: D:\your\workdir   # Agent working directory (absolute path)
     # workspaces:                # Workdirs listed in the /dir picker
@@ -22,39 +26,49 @@
     # allowUsers: ['ou_xxx']     # Sender allowlist (empty = allow all)
     # allowChats: ['oc_xxx']     # Chat allowlist (empty = allow all)
     # stateDir: .dsh-connect     # Directory for the binding route bindings.json
+    # autoMirror: true           # Auto-create a DSH Web mirror for new sessions (default: true)
     # streamHeartbeatMs: 60000   # Streaming-card liveness heartbeat ms (0 = off)
-    # notifyLevel: important  # Streaming detail: full | important (default) | result
+    # notifyLevel: important     # Streaming detail: full | important (default) | result
     # progressTimeoutMs: 300000  # Proactive progress-notice interval ms (0 = off; default 300000 = 5 min)
 
-- id: connect-feishu
-  name: dsh-connect-feishu
-  config:
-    appId: cli_xxxx
-    appSecret: cli_secret_xxxx
-    transport: websocket          # long connection (recommended); webhook needs public HTTPS
-    requireMention: true          # groups only respond when @mentioned
-    dmMode: open                  # DM policy: open / allowlist / pair / disabled
-    # language: en                # user-facing message language: zh (default) / en
-    # --- only for transport: webhook ---
-    # webhookPort: 9000           # HTTP port the built-in webhook server listens on (default 9000)
-    # webhookPath: /              # URL path Feishu event callbacks post to (default "/")
-    # verificationToken: "xxx"    # webhook verification token (secret)
-    # encryptKey: "xxx"           # webhook encrypt key (secret)
+    # --- channel selector ---
+    # channels: [feishu, telegram]   # Which channels to activate; omit = all built-in channels
+    # channelDefaults:               # Keys applied to every channel that doesn't set its own
+    #   language: zh
 
-- id: connect-telegram
-  name: dsh-connect-telegram
-  config:
-    botToken: "123456:ABC-YourBotToken"  # from @BotFather; or env TELEGRAM_BOT_TOKEN
-    requireMention: true                 # groups only respond when @mentioned
-    # language: en
-    # pollingTimeoutSeconds: 50          # getUpdates long-poll timeout in seconds (default 50)
-    # baseUrl: "http://localhost:8081"   # Bot API base URL override (local Bot API server)
+    # --- per-channel config (keys are the same as the former split packages) ---
+    # feishu:
+    #   appId: cli_xxxx
+    #   appSecret: cli_secret_xxxx    # or env FEISHU_APP_ID / FEISHU_APP_SECRET; or web settings
+    #   transport: websocket          # long connection (recommended); webhook needs public HTTPS
+    #   requireMention: true          # groups only respond when @mentioned
+    #   dmMode: open                  # DM policy: open / allowlist / pair / disabled
+    #   # language: en
+    #   # --- only for transport: webhook ---
+    #   # webhookPort: 9000           # HTTP port the built-in webhook server listens on (default 9000)
+    #   # webhookPath: /              # URL path Feishu event callbacks post to (default "/")
+    #   # verificationToken: "xxx"    # webhook verification token (secret)
+    #   # encryptKey: "xxx"           # webhook encrypt key (secret)
 
-- id: connect-dingtalk
-  name: dsh-connect-dingtalk
-  config:
-    webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"  # or env DINGTALK_WEBHOOK_URL
-    # secret: "SECxxx"             # only if the robot has signing enabled
-    # language: en
-    # defaultAt:                   # @-mention on every push
-    #   mobiles: ["13800000000"]
+    # telegram:
+    #   botToken: "123456:ABC-YourBotToken"   # from @BotFather; or env TELEGRAM_BOT_TOKEN; or web settings
+    #   requireMention: true                  # groups only respond when @mentioned
+    #   # language: en
+    #   # pollingTimeoutSeconds: 50           # getUpdates long-poll timeout in seconds (default 50)
+    #   # baseUrl: "http://localhost:8081"    # Bot API base URL override (local Bot API server)
+
+    # dingtalk:
+    #   webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=xxx"  # or env DINGTALK_WEBHOOK_URL
+    #   # secret: "SECxxx"              # only if the robot has signing enabled
+    #   # language: en
+    #   # defaultAt:                    # @-mention on every push
+    #   #   mobiles: ["13800000000"]
+    #   # stream:                       # bidirectional stream mode (optional)
+    #   #   clientId: "xxx"             # DingTalk app Client ID (secret; or env DINGTALK_STREAM_CLIENT_ID)
+    #   #   clientSecret: "xxx"         # DingTalk app Client Secret (secret; or env DINGTALK_STREAM_CLIENT_SECRET)
+
+    # web:
+    #   pollIntervalMs: 1000            # mirror-session polling interval (default 1000)
+
+    # --- web-settings persistence (non-secret config) ---
+    # settingsStatePath: .dsh-connect/settings.json

@@ -2,9 +2,9 @@
 
 English | [中文](telegram-setup.zh.md)
 
-This document explains how to create a Telegram bot and connect it to `dsh-connect-telegram`.
+This document explains how to create a Telegram bot and connect it to the `telegram` channel of `dsh-connect`.
 
-> **Installing**: use the all-in-one bundle — `dsh plugin add dsh-connect dsh-connect-all` — and put this channel's settings under `telegram` in the bundle's config block (`botToken` may live in the DSH credential store). See [config-reference.md](config-reference.md). The standalone `dsh-connect-telegram` package still works on its own.
+> **Installing**: install the single all-in-one plugin — `dsh plugin --profile web add dsh-connect` — and put this channel's settings under `telegram` in the plugin's config block (`botToken` may live in the DSH credential store). See [config-reference.md](config-reference.md).
 
 ## 1. Creating a Bot (BotFather)
 
@@ -25,14 +25,16 @@ This document explains how to create a Telegram bot and connect it to `dsh-conne
 In the `cordis.patch.yml` of your DSH profile. The plugin registers itself via its bundle manifest, so only override its config — do **not** `insert` it again (duplicate ids crash dsh at boot):
 
 ```yaml
-- id: connect-telegram
-  name: dsh-connect-telegram
+- id: connect
+  name: dsh-connect
   config:
-    botToken: "1234567890:AAHf7xHfZxHfxxxxxxxxxxxxxxxxxxxxxxxxxx"
-    requireMention: true
-    pollingTimeoutSeconds: 50   # getUpdates long-poll timeout (default 50)
-    language: zh
-        # baseUrl: "http://localhost:8081"   # optional: local Bot API server
+    channels: [telegram]        # enable the Telegram channel
+    telegram:
+      botToken: "1234567890:AAHf7xHfZxHfxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      requireMention: true
+      pollingTimeoutSeconds: 50   # getUpdates long-poll timeout (default 50)
+      language: zh
+      # baseUrl: "http://localhost:8081"   # optional: local Bot API server
 ```
 
 Or set the environment variable `TELEGRAM_BOT_TOKEN` (when both are configured, the config takes precedence).
