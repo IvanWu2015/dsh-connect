@@ -41,6 +41,7 @@ const suites = [
   "web-settings-roundtrip.test.mjs",
   "settings-model.test.mjs",
   "apply.test.mjs",
+  "agent-scope.test.mjs",
 ];
 
 /** Marker `smoke.mjs` prints once every top-level assertion has passed. */
