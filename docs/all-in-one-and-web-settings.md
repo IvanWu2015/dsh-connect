@@ -1,6 +1,20 @@
 # 配置简化 + Web 设置 + 多合一重构（对齐 dsh-im）
 
-> **当前状态更新（2026-08-31）**：本仓库已按**方案 B（吸收进核心）**完成最终实现——`dsh-connect` 现在是**唯一的包**：核心 connect 服务、全部通道适配器（feishu / telegram / dingtalk / web）与 Web 设置栈全部内置，通过 `channels` 选择器启用。此前的拆分包（`dsh-connect-feishu` / `dsh-connect-telegram` / `dsh-connect-dingtalk` / `dsh-connect-web`）与聚合包（`dsh-connect-all`，即方案 A）均已被删除。下文是设计决策与实施过程的**历史记录**，不代表当前架构；安装与配置请以根 `README.md` / `docs/config-reference.md` 为准。
+> **当前状态更新（2026-09-21，0.9.0）**：设置页的持久化模型已换代——**不再写私有 JSON 状态文件**（`settingsStatePath` / `<stateDir>/dsh-connect-settings.json` 只在宿主没有设置服务时作为回退）。面板的权威存储是 **`$DSH_HOME/settings.yaml` 的 `dsh-connect` 段**，经 DSH 一方设置接缝注册（`installSection`，`src/settings/namespace.ts`）：热重载、原子写、文件锁、保留注释；取值顺序为 **schema 默认值 → 插件 `cordis.patch.yml` 配置 → `$DSH_HOME/settings.yaml`**，手改 `settings.yaml` 无需重启即生效。密钥永不写进 `settings.yaml` 或任何 JSON 状态文件，仍只进 DSH 凭据库。面板 UI 也已落地：**渠道 Tab 条 + 可折叠卡片**，低频字段收进二级「高级」折叠，保存/状态固定在底部。当前测试总数 **349 项全过**，DSH 依赖升到 `^0.1.5-rc.2`。详见根 `CHANGELOG.md` 的 0.9.0 段。
+
+### 设置页现状（0.9.0 截图）
+
+| 概览（渠道 Tab 条 + 卡片） | 高级折叠 |
+|---|---|
+| <img src="../packages/connect/docs/images/settings-overview-zh.png" alt="设置页概览" width="420"> | <img src="../packages/connect/docs/images/settings-advanced-zh.png" alt="高级折叠" width="420"> |
+
+<img src="../packages/connect/docs/images/settings-defaults-zh.png" alt="默认值展示" width="420">
+
+> 英文文档/README 使用同目录下的 `-en` 变体；路径约定见 `docs/PUBLISHING.md` 第 2.4 节。
+
+---
+
+> **历史说明（2026-08-31）**：本仓库已按**方案 B（吸收进核心）**完成最终实现——`dsh-connect` 现在是**唯一的包**：核心 connect 服务、全部通道适配器（feishu / telegram / dingtalk / web）与 Web 设置栈全部内置，通过 `channels` 选择器启用。此前的拆分包（`dsh-connect-feishu` / `dsh-connect-telegram` / `dsh-connect-dingtalk` / `dsh-connect-web`）与聚合包（`dsh-connect-all`，即方案 A）均已被删除。下文是设计决策与实施过程的**历史记录**，不代表当前架构；安装与配置请以根 `README.md` / `docs/config-reference.md` 为准。
 
 > 结论先行：**参考 xmanrui/dsh-im 的「单插件、单一设置入口、Web 可视化配置、凭据入库、多渠道多机器人」模型**是正确方向。dsh-connect 目前的「每渠道一个包、逐包安装、YAML 配置一把梭」确实复杂。但 dsh-im 是 v4 成熟版、自带完整的 client/server 双端 Web 插件，全部复刻是一次不小的工程。下面给出诊断、目标形态、落地路径与取舍。
 
@@ -11,19 +25,19 @@
 
 为何选 B：一个插件、一份配置（`channels` + `channelDefaults` + 各通道子键），按 `channels` 显式激活启用的通道（`channels: ["feishu","dingtalk"]`），未启用的通道不启动；它还提供**单一 `/dsh-connect` 设置入口**，镜像 dsh-im 的单入口模型，Web 端只出现一次「连接设置」。代价是核心包包含全部渠道 SDK（见下文「方案 B」依赖膨胀风险），且拆分包与聚合包（方案 A）均已删除。
 
-**现在能拿到什么（全部通过 `node scripts/verify.mjs`，全绿）：**
+**现在能拿到什么：**
 - 一份配置（`channels` + `channelDefaults` + N 个渠道块）启用任意渠道组合；渠道失败隔离、渠道级配置透传。
-- Web 可视化设置：`/dsh-connect` RPC（`settings.get/save/status` + `credentials.save`）+ JSON 持久化 + DSH 凭据库读写，配置与凭据**读写闭环**（round-trip 已验证）。
+- Web 可视化设置：`/dsh-connect` RPC（`settings.get/save/status` + `credentials.save`）+ 设置命名空间持久化（0.9.0 起为 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段；此前是 JSON 状态文件）+ DSH 凭据库读写，配置与凭据**读写闭环**（round-trip 已验证）。
 - 凭据从配置挪到凭据库：面板写密钥 → 激活时 `injectSecrets` 注入各渠道适配器（非侵入，渠道适配器零改动）。
-- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；57 项测试 + core 57 + feishu 16 + smoke 全绿。
+- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；当前 `packages/connect` 单包 **349 项测试全过**（详见 `CHANGELOG.md` 0.9.0）。
 
-**还差什么（需要你/本机，沙箱内无法验证）：**
-1. `dsh web` 内构建并渲染前端 `settings-client` 组件（沙箱禁 Vite/子进程、无真实 `dsh web`）。
-2. 推送 v0.7.2：需有效 GitHub 凭据（当前 git-credential-manager 在沙箱崩溃、推送被拒）。
+**当时还差什么（两项均已完成，保留存档）：**
+1. ~~`dsh web` 内构建并渲染前端 `settings-client` 组件~~——已完成：`client/client.js` 由 `scripts/build-client.mjs` 构建，`test/client-bundle.test.mjs` 直接加载构建产物在 Node 里渲染并断言。
+2. ~~推送 v0.7.2~~——已解决：v0.7.2 及其后的 0.8.0 / 0.8.1 均已发布，当前版本为 0.9.0（见根 `CHANGELOG.md`）。
 
-## 1. 现状：配置与安装复杂度
+## 1. 重构前的现状：配置与安装复杂度
 
-当前模型是「核心 + 每渠道一个插件」：
+重构前的模型是「核心 + 每渠道一个插件」：
 
 | 包 | 职责 | 配置字段数 | 备注 |
 | --- | --- | --- | --- |
@@ -44,7 +58,7 @@
 **一个插件、一个设置入口，多渠道统一管理，Web 可视化配置，凭据入库。**
 
 - 单插件（就是把渠道吸收进 `dsh-connect`，做成一个多合一包），一个 `dsh plugin add dsh-connect` 装完。
-- Web 设置页「设置 → 通道」：按渠道分 Tab，每个通道可加**多个机器人**；每个机器人卡片配工作区、Agent Preset、通知/进度、访问模式（白名单）等。
+- Web 设置页「设置 → 通道」：按渠道分 Tab，每个通道可加**多个机器人**；每个机器人卡片配工作区、Agent Preset、通知/进度、访问模式（白名单）等。（0.9.0 已落地的是**渠道 Tab 条 + 可折叠卡片**，见本页顶部截图；「每渠道多机器人」仍未实现。）
 - 连接方式走 QR 扫码 / App Manifest / 手工凭据（复用现有 `onboard.ts` 的扫码流并扩展到各渠道）。
 - Secret 只写本地 Harness 凭据存储，不写进普通配置；`dsh-connect-settings.json` 状态文件绝不落密钥。面板可回显凭据库里的值（非机密 id 如 `appId` 明文、真密钥掩码）以便老版本配置的用户确认；老版本写在配置文件里的密钥会在启动时自动迁入凭据库（`migrateConfigSecrets`），渠道因此显示「已配置」而非「未配置凭据」。
 - 每个机器人独立工作区、会话、绑定；会话绑定按 channel+chatKey，多机器人互不干扰。
@@ -112,6 +126,8 @@
 
 ## 进展（实现中）
 
+> **历史存档**：以下是 `packages/connect-all/`（聚合包，方案 A）时期的按时间顺序记录，**该包已随 0.8.0 的单包化被删除**。因此本节所有 `packages/connect-all/...` 路径、`dsh-connect-all` 包名与安装命令都已不存在；下文出现的测试计数（**37 / 40 / 44 / 50 / 52 / 56 / 57**）只统计当时那套 connect-all 测试，既不是当前套件、也不可与它相加——当前是 `packages/connect` 单包 **349 项全过**（DSH `0.1.5-rc.2`，见 `CHANGELOG.md` 0.9.0）。文中「前端待联调」一类表述同样只反映当时状态。
+
 ### 已完成：`dsh-connect-all` 聚合包（方案 A 骨架，已 build + 单测通过）
 - 新增 `packages/connect-all/` 单插件：一个 `dsh plugin add dsh-connect dsh-connect-all` 装齐核心 + 4 渠道。
 - `src/channels.ts` 是**不依赖任何渠道 SDK** 的纯编排核心 `activateChannels(ctx, config, channels)`：按 `channels` 数组只激活指定 adapter；未知渠道跳过并告警；单个渠道抛错被捕获，不影响其他渠道；每渠道配置切片透传给对应 `apply`。
@@ -119,11 +135,11 @@
 - 验证：`npx tsc -p packages/connect-all/tsconfig.json` 通过；`node packages/connect-all/test/unit.test.mjs` 5 项全过（默认全量/子集/未知渠道/失败隔离/配置透传）；`import lib/index.js` 冒烟确认 `name/inject/apply/Config/CHANNELS/activateChannels` 正确输出；原有 connect(57)+feishu(16)+smoke 均通过（pnpm 重装无回归）。
 - `pnpm-lock.yaml` 已纳入 connect-all；`allowBuilds.protobufjs=false`（pnpm 11 自动插入的占位已修正）。
 
-### 待办（需用户确认方向后继续）
-- **阶段一 配置简化**：统一 `channels` 命名空间、收敛重复键、最小示例。
-- **阶段三 Web 设置页**：客户端 `settings.section` + 宿主 RPC + 凭据库 + 渠道 Tab/机器人卡片；需 `dsh web` 联调。
-- **阶段四 多机器人 + 独立绑定**。
-- **单插件按需加载**：目前 `connect-all` 静态引入 4 个渠道，SDK 会随包存在；若只启用部分渠道的「不下载无用 SDK」，需把渠道改为可选依赖 + 动态 `import()`（引发布局/构建调整，单独排期）。
+### 待办（当时的清单，附现状对照）
+- **阶段一 配置简化**：统一 `channels` 命名空间、收敛重复键、最小示例。→ **已完成**（`channels` + `channelDefaults` + 各渠道块，见 `docs/config-reference.md`）。
+- **阶段三 Web 设置页**：客户端 `settings.section` + 宿主 RPC + 凭据库 + 渠道 Tab/机器人卡片；需 `dsh web` 联调。→ **已完成**（0.9.0：宿主 RPC + `$DSH_HOME/settings.yaml` 命名空间 + 凭据库 + 渠道 Tab 条与可折叠卡片，见本页顶部截图与 `CHANGELOG.md` 0.9.0）。
+- **阶段四 多机器人 + 独立绑定**。→ **仍未实现**：当前每个渠道仍按 channel+chatKey 绑定单机器人。
+- **单插件按需加载**：目前 `connect-all` 静态引入 4 个渠道，SDK 会随包存在；若只启用部分渠道的「不下载无用 SDK」，需把渠道改为可选依赖 + 动态 `import()`（引发布局/构建调整，单独排期）。→ **仍未实现**：单包化后渠道仍为静态引入（`packages/connect/src/channels/`）。
 
 
 ### 已完成：宿主 RPC 基座（Web 设置页的通信层，单测通过）

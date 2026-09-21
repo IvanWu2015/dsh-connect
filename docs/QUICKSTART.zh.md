@@ -12,7 +12,7 @@
 ## 1. 构建插件包
 
 ```powershell
-cd D:\ACOINFO\code\dsh_feishu
+cd C:\path\to\dsh-connect      # 你克隆本仓库的位置
 pnpm install
 pnpm build
 ```
@@ -24,7 +24,7 @@ pnpm build
 `dsh plugin` 会把参数转发给 profile 目录内的 pnpm，因此**本地路径必须是绝对路径**。安装**唯一的多合一插件**（一个插件、一份配置，拉进核心 + 全部通道适配器 + Web 设置栈）：
 
 ```powershell
-dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect
+dsh plugin --profile web add C:\path\to\dsh-connect\packages\connect
 ```
 
 > npm 包会在每次创建 GitHub Release 时由 `.github/workflows/publish.yml` 自动发布，因此正式发布后可直接用包名安装：`dsh plugin --profile web add dsh-connect`。本地开发时请使用上面的绝对路径安装方式。
@@ -51,7 +51,7 @@ dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect
       # language: en            # user-facing message language: zh (default) / en
 ```
 
-> 也可以不把凭据写进文件，改用环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，并在配置中省略 `appId`/`appSecret`——或从 Web 设置面板把它们存进 DSH 凭据库（见 [config-reference.md](config-reference.md)）。
+> 也可以不把凭据写进文件，改用环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，并在配置中省略 `appId`/`appSecret`——或直接在 Web 设置页（设置 → 通道）里配置全部内容（见 [config-reference.md](config-reference.md)）。面板把**非密钥**设置写进 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段，热重载生效（无需重启）；**密钥只进 DSH 凭据库**，永远不写进 `settings.yaml`。`cordis.patch.yml` 里的值不会作废：取值顺序为 schema 默认值 → 插件配置 → `$DSH_HOME/settings.yaml`。
 
 ## 4. 重启 dsh web
 

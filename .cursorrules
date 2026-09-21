@@ -73,7 +73,8 @@ When the user asks to "update version", "bump version", or "release":
 ### File Naming
 
 - Source files: `*.ts` (PascalCase for classes, camelCase for modules)
-- Test files: `*.test.ts` or `*.spec.ts`
+- Test files: `*.test.mjs` under `test/` — plain ESM, no build step, run via `node test/run-all.mjs`
+- Browser-side modules: `*.mjs` under `client/` — pure ESM, zero deps, so they are unit-testable in Node without React (`locale.mjs`, `panel-state.mjs`)
 - Configuration: lowercase with hyphens (e.g., `tsconfig.json`)
 
 ### Imports
@@ -92,10 +93,12 @@ When the user asks to "update version", "bump version", or "release":
 
 ## i18n Policy
 
-- All user-facing strings MUST be in `packages/*/src/i18n.ts`
+- Chat-facing (host-side) strings MUST be in `packages/connect/src/i18n.ts`, or `packages/connect/src/channels/<channel>/i18n.ts` for one channel's strings.
+- Web-settings-pane strings MUST be in `packages/connect/client/locale.mjs` (pure ESM, zero deps). The host resolves a *missing* key by silently falling back to `en`, which is how a Chinese page ends up half-English with no error anywhere — `packages/connect/test/locale.test.mjs` therefore asserts both languages carry the same key set.
+- Pane layout rules that are not strings — which channel cards start open, which fields sit behind the 高级 fold — MUST live in `packages/connect/client/panel-state.mjs`, likewise pure and pinned by `packages/connect/test/panel-state.test.mjs`.
 - Support both `zh` (Chinese) and `en` (English)
 - Default language: `zh`
-- Public documentation/comments: English only
+- Source comments: English only. User-facing docs are a bilingual pair — `README.md` + `README.zh.md` — carrying equal authority; after editing either side, bring the other along and re-record the pair in `README.i18n.yaml`.
 - Error messages: Include technical details for debugging + friendly hint for users
 
 ---

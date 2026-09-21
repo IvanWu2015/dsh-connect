@@ -277,7 +277,7 @@ Feishu and Web **both read this file**, so they see exactly the same history.
 ## 📝 Best Practices
 
 1. **Use absolute paths**: avoid inconsistencies caused by relative paths
-2. **Unified config source**: all channels read configuration from `dsh.shared.config.json`
+2. **Know which file holds what**: `dsh.shared.config.json` (looked up in the current directory and its parent) only supplies the shared workspace / state dir / `language` / `autoMirror` defaults — and it **wins over** the plugin config for those keys. Channel settings live in the plugin's `cordis.patch.yml` block and, since 0.9.0, in the `dsh-connect` section of `$DSH_HOME/settings.yaml` (written by the Web settings pane, hot-reloaded). Secrets go only to the DSH credential store, never into any of these files.
 3. **Check regularly**: use the `/status` command to verify the working directory is correct
 4. **Back up configs**: regularly back up `dsh.shared.config.json` and `bindings.json`
 5. **Version control**: add `dsh.shared.config.json` to Git (but not `.dsh-connect/` or `.dsh/`)
@@ -292,5 +292,5 @@ Feishu and Web **both read this file**, so they see exactly the same history.
 
 ---
 
-**Updated**: 2026-08-20  
-**Version**: v0.6.2
+**Updated**: 2026-09-21  
+**Version**: v0.9.0

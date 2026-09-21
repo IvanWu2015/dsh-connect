@@ -23,7 +23,7 @@ Mirror each Feishu chat's DSH session into the DSH Web GUI so the conversation h
 
 > 💡 **No manual configuration needed**: as long as the Feishu connect and DSH Web run in the same DSH process (loaded via `cordis.patch.yml`), the workspace and sessions stay consistent automatically. See [Shared Workspace Setup](./SHARED_WORKSPACE_SETUP.md).
 
-### 🔑 Commands (v0.6.2)
+### 🔑 Commands (v0.9.0)
 
 | Command | Purpose |
 |---|---|

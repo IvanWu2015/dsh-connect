@@ -3,6 +3,8 @@
 English | [中文](ENHANCEMENTS_SUMMARY.zh.md)
 
 > **历史说明**：本文档记录 **v0.6.2** 这一轮的修复。此后本仓库已合并为**唯一的 `dsh-connect` 包**——下文提到的各分包（`dsh-connect-feishu`、`dsh-connect-telegram`、`dsh-connect-dingtalk`、`dsh-connect-web`）与 `packages/connect-*/test/` 拆分目录已不存在；这些通道现在是 `dsh-connect` 单个插件的子键（`feishu:` / `telegram:` / `dingtalk:` / `web:`）。
+>
+> 下文中另有两点已被 0.9.0 **取代**，不可当作当前行为：`feishu-credentials.json`（权限 `0600`）不再是开通流程保存凭据的地方——**DSH 凭据库**才是唯一事实来源，该 JSON 文件仅作为尽力而为的旧版镜像保留；私有 JSON 状态文件也不再是 Web 面板的存储（0.9.0 改为 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段，密钥仍只进凭据库）。当前版本为 **0.9.0**——见根 `CHANGELOG.md`。下文其余内容仍是 0.6.2 那一轮的准确记录。
 
 ## 📋 概述
 
@@ -40,7 +42,7 @@ English | [中文](ENHANCEMENTS_SUMMARY.zh.md)
 - **安全下载**：单文件 20 MB 上限、60 秒超时、异步写入临时目录（`dsh-connect-images` / `dsh-connect-files`），超过 24 小时自动清理。
 - **Webhook 传输真正实现**：适配器自带 `node:http` 服务（`webhookPort` 默认 9000、`webhookPath` 默认 "/"），经 SDK 的 `adaptDefault` + `autoChallenge` 自动应答 `url_verification` 挑战——不再需要外部 express 宿主。
 - **reject 日志去 PII**：入站 `reject` 处理器只记录精简原因，不打印完整事件 JSON。
-- **凭据文件权限收紧**：onboarding 保存的 `feishu-credentials.json` 权限为 `0600`。
+- **凭据文件权限收紧**：onboarding 保存的 `feishu-credentials.json` 权限为 `0600`。*（已被取代——开通流程现在写入 DSH 凭据库，见上方历史说明。）*
 - **`stop()` 清理资源**：webhook 服务器、选项定时器、过期提示定时器全部拆除。
 - 纯函数（`padLabels`、`buildButtonGrid` 等）导出并有测试覆盖。
 

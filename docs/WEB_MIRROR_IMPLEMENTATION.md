@@ -58,5 +58,5 @@ Covered behaviors:
 
 ---
 
-**Version**: v0.6.2  
-**Updated**: 2026-08-20
+**Version**: v0.9.0  
+**Updated**: 2026-09-21

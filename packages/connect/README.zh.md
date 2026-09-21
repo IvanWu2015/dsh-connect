@@ -11,7 +11,7 @@
 `dsh-connect` 将聊天会话绑定到 DSH 智能体会话并端到端驱动它：
 
 - **会话绑定与路由** —— 一个聊天 ⇄ 一个智能体会话，持久化保存在 `bindings.json` 路由存储中；会话可以创建、恢复、切换、清除，并镜像到 DSH Web GUI。
-- **流式回复** —— DSH 的 `assistant/chunk` 事件被桥接到渠道的原生流式能力（飞书打字机卡片）：思考提示开启推理阶段，推理内容带可读的段落分隔实时流出，工具调用显示为 `🔧` 进度行，心跳保活机制即使在长时间静默时（首个 token 等待过长、密集工具运行）也会让卡片保持更新，绝不会一直卡在「思考中…」。
+- **流式回复** —— 模型的实时增量被桥接到渠道的原生流式能力（飞书打字机卡片）：思考提示开启推理阶段，推理内容带可读的段落分隔实时流出，工具调用显示为 `🔧` 进度行，心跳保活机制即使在长时间静默时（首个 token 等待过长、密集工具运行）也会让卡片保持更新，绝不会一直卡在「思考中…」。runner 保持两路订阅，因为 `0.1.5-rc.2` 把原本合二为一的东西拆开了：持久的 `session/event` 流承载回合、工具与结算，瞬时的 `agent/assistant-stream` 帧承载模型增量 —— 过去同时承载两者的 `assistant/chunk` 会话事件已被删除。
 - **通知级别** —— 按聊天控制过程流式的详细程度：`尽量输出过程`（完整过程）/ `输出重要节点`（关键节点）/ `只输出结果`（仅结果）。可随时通过设置菜单或 `/notify` 切换；选择按聊天持久化并立即生效。
 - **任务结束统计** —— 每个任务结束后，一张紧凑卡片报告所用模型、输入/输出 token、耗时与上下文窗口占用，并在上下文接近占满时建议 `/compact`。
 - **交互式菜单** —— 状态、任务、历史、目标、日程、模型/努力度切换、工作区选择、语言等按钮卡片（参见聊天内的 `/` 命令）。
@@ -69,7 +69,7 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 ## 快速开始
 
 1. **安装插件**（见上文）。
-2. **添加最小配置**到 `~/.dsh/profiles/<profile>/cordis.patch.yml`（另见 [`examples/profile-cordis.patch.yml`](../../examples/profile-cordis.patch.yml)）。该插件会通过其 bundle 清单自动注册，因此这里只需要**覆盖（override）**它的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）：
+2. **添加最小配置**到 `~/.dsh/profiles/<profile>/cordis.patch.yml` —— 配置形状见 [`examples/minimal.config.json`](examples/minimal.config.json)，带完整注释的版本是仓库里的 [`examples/profile-cordis.patch.yml`](https://github.com/IvanWu2015/dsh-connect/blob/main/examples/profile-cordis.patch.yml)（该路径不在发布产物内，故用绝对链接）。该插件会通过其 bundle 清单自动注册，因此这里只需要**覆盖（override）**它的配置——**不要**再用 `insert` 重新插入（重复的 `id` 会让 dsh 启动失败）：
 
    ```yaml
    - id: connect
@@ -89,7 +89,7 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 3. **启动宿主** —— `dsh web`（或 `dsh run`）。未配置凭据时，`feishu` 通道会进入**一键开通**流程：扫描日志中的二维码 / 打开链接以授权机器人。
 4. **在飞书中给机器人发一条消息**。机器人以流式卡片回复；`/help` 列出所有命令；会话也会自动出现在 DSH Web GUI 中（自动镜像）。
 
-一个完全可复现的示例是 `examples/` 文件夹加上 `docs/feishu-setup.zh.md`（飞书应用创建、事件订阅、发布）。
+一个完全可复现的示例是 [`examples/`](examples/) 文件夹加上仓库里的[飞书配置手册](https://github.com/IvanWu2015/dsh-connect/blob/main/docs/feishu-setup.zh.md)（飞书应用创建、事件订阅、发布）。
 
 ## 配置
 
@@ -99,7 +99,7 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `agentPreset` | roster default | 组合进每个绑定会话的智能体预设 id |
+| `agentPreset` | roster default | 组合进每个绑定会话的智能体预设 id。解析是尽力而为的：先试配置的 id，再试 `standard`（或 roster 中第一个可挂载项）；两者都组合不出来时，智能体不带预设构建，回合照常运行。因此一个过期的 id 只会降级并留下日志，而不会让每条消息都失败。 |
 | `workDir` | process cwd | 每个绑定智能体的绝对工作目录 |
 | `workspaces` | `[]` | `/dir` 选择器提供的额外工作区 |
 | `visionModel` | auto-detected | 当主模型无法查看图片时，用于描述图片的 `{ provider, model }` |
@@ -109,7 +109,7 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 | `stateDir` | `.dsh-connect` | 保存 `bindings.json` 路由存储的目录（环境变量 `DSH_CONNECT_STATE_DIR` 可覆盖） |
 | `autoMirror` | `true` | 为每个新会话自动创建 Web GUI 镜像 |
 | `streamHeartbeatMs` | `60000` | 流式卡片的心跳保活间隔（毫秒）；`0` 表示禁用 |
-| `notifyLevel` | `important` | 默认通知级别：`full`（全部流式输出）/ `important`（关键节点）/ `result`（仅结果）；可通过设置菜单或 `/notify` 按聊天覆盖 |
+| `notifyLevel` | `result` | 默认通知级别：`full`（全部流式输出）/ `important`（关键节点）/ `result`（仅结果，默认）；可通过设置菜单或 `/notify` 按聊天覆盖 |
 | `progressTimeoutMs` | `300000` | 主动进度通知间隔（毫秒）：当一轮对话在此时间内没有发送独立卡片/文本时，状态卡片会报告最新节点；`0` 表示禁用；可通过设置菜单或 `/progress` 按聊天覆盖 |
 
 ### 公共（所有通道）
@@ -180,13 +180,34 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
   - `<stateDir>/bindings.json`（默认 `.dsh-connect/`）—— 聊天 ⇄ 会话路由存储（聊天键、会话 id、镜像与锁状态）。
   - `<stateDir>/dsh-connect-settings.json`（默认 `.dsh-connect/`）—— 非密钥配置的兼容镜像，见 `settingsStatePath`。
   - `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段 —— 经由 DSH 第一方设置机制写入，原子、加锁、保留注释。
-  - `~/.dsh/.dsh-connect/feishu-credentials.json` —— 一键开通时保存的飞书凭据（同时也会写入 DSH 凭据库）。
+  - `~/.dsh/.dsh-connect/feishu-credentials.json` —— **旧版、只读**。一键开通过去把飞书凭据存在这里而不是凭据库，导致刚扫码授权完的用户永远看到「未配置凭据」。现在开通流程写入凭据库，已有安装会在启动时从这个文件回填一次；此后不再读写它。
   - `<workDir>/.dsh-connect-images/` —— 为用户图片/附件暂存，供智能体工具使用。
   - DSH 自身在 `~/.dsh/` 下的会话日志与设置（sessions、settings 等）。
 - **网络**
   - 飞书开放平台：WebSocket 长连接（或通过公网 HTTPS 的 webhook），以及 HTTPS API 调用（媒体下载、卡片）。
   - DSH 为智能体模型调用的 LLM 提供商 API（如 DeepSeek），以及可选的视觉模型。
 - **用户数据** —— 消息文本与附件经由机器人流向智能体会话；它们与任何 DSH 会话一样保存在 DSH 会话日志中。白名单（`allowUsers` / `allowChats`）限制了可以驱动机器人的人。
+
+## 设置面板
+
+`dsh-connect` 在 **设置 → dsh-connect** 下有自己的页面。它是一条渠道页签条 + 若干可折叠卡片：
+每张卡片由一个按钮做标题行，低频字段收在第二级的**高级选项**折叠里，保存/状态固定在滚动区底部。
+
+| 渠道与凭据 | 展开高级选项 |
+|---|---|
+| ![dsh-connect 设置面板：渠道页签条、展开的飞书卡片及其凭据字段，以及三张收起后仍显示凭据徽标的渠道卡片](docs/images/settings-overview-zh.png) | ![同一面板展开某渠道的「高级选项」折叠，露出回调端口与回调路径字段](docs/images/settings-advanced-zh.png) |
+
+![面板底部的公共默认卡片与固定保存条](docs/images/settings-defaults-zh.png)
+
+英文截图：[概览](docs/images/settings-overview-en.png) · [高级](docs/images/settings-advanced-en.png) · [公共默认](docs/images/settings-defaults-en.png)。
+
+> 截图取自一个凭据全是占位符的一次性 profile。上面没有任何真实密钥 —— 也不可能有：宿主会在
+> 值到达浏览器之前完成打码（见下文[面板回显与脱敏](#面板回显与脱敏)）。
+
+卡片默认展开你已启用的渠道（一个都没启用时展开第一个）。点击页签会展开对应卡片并滚进视野，
+**不会**收起其他卡片 —— 多张同时展开是合法状态。收起是**卸载**卡片主体而不是隐藏它，这之所
+以安全，是因为你刚输入但尚未保存的密钥存在面板自身的 state 里，而不在卡片里。勾选某渠道的
+启用框同样会展开它。
 
 ## 用户设置
 
@@ -202,10 +223,35 @@ Web 设置面板（**设置** 下的 `dsh-connect`）编辑的是 `$DSH_HOME/set
 
 **密钥永远不会写入 `settings.yaml`。** 那是一份普通的、鼓励用户贴进 issue 的文档；凭据
 一律保存在 DSH 凭据库（`ctx.credentials`）——一键开通流程与 `FEISHU_*` 这类环境变量也
-正是写在那里。面板对密钥字段只显示「已配置 / 未配置」，不显示值。
+正是写在那里。
 
 旧版 `/dsh-connect` HTTP RPC 为面板兼容而保留；它现在读写同一个 namespace，并把非密钥配置
 镜像到 `settingsStatePath`（见[公共（所有通道）](#公共所有通道)），以兼容旧面板。
+
+### 面板回显与脱敏
+
+每个已保存的密钥字段下方都有一行**只读**的「当前值：…」（没有值时显示「未配置」），这样你
+不用重新输入就能确认自己填了什么。**打码在宿主侧完成**，只有一张共用的策略表
+（`src/settings/secret-disclosure.ts`）——宿主按它打码，面板按它决定输入框渲染成
+`password` 还是 `text`，两边因此不可能各说各话。
+
+| 字段 | 显示方式 |
+|---|---|
+| `appId`、`clientId` | **完整显示**。它们是标识符而不是口令：每次出站 API 调用都会带上，厂家控制台也明文可见，遮住并不能保护什么。 |
+| `appSecret`、`clientSecret`、`botToken`、`secret` | 只留头尾，例如 `a1b2…z9y8`。太短、露头露尾就等于全露的值，改为固定长度的 `••••••`。 |
+| `webhookUrl`（钉钉） | **URL 感知**。保留域名、路径与参数名，只对令牌的中段打码——钉钉把令牌放在查询串里，整串打码（`https…bcde`）等于什么也确认不了。 |
+| 其他 / 未列出的键 | 一律按最保守的方式打码。 |
+
+有两条性质无论如何都成立：
+
+- **可用密钥不会跨线。** 值在离开宿主前就已打码，所以浏览器标签页（以及它的截图）永远拿不到
+  一个可用的密钥。
+- **掩码不可能被写回。** 预览是输入框**旁边**的文本，不是输入框的 `value`。输入框始终为空，
+  而「空」的含义是「不动已保存的值」——因此只保存配置时，一个凭据都不会被写入。
+
+面板自身的全部文案（通道名、字段标签、选项文字、状态）都来自 `client/locale.mjs`，其中同时
+提供 `zh` 与 `en`。有测试断言两种语言的键集合完全一致——宿主在缺键时会静默回退到另一种语言，
+所以漏译不会报错，只会让页面变成中英混杂。
 
 ### 凭据分组
 
@@ -234,11 +280,12 @@ Web 设置面板（**设置** 下的 `dsh-connect`）编辑的是 `$DSH_HOME/set
 |---|---|
 | `connect-feishu: adapter init failed` / `start failed` | 凭据错误、应用未发布或网络被阻断。检查 `appId`/`appSecret`，重新运行开通流程，确认机器人在飞书开放平台后台处于在线状态。 |
 | `connect: resume of <id> failed, creating fresh session` | 持久化会话无法恢复（工作目录缺失、持久化问题）。检查 `workDir` 和 `~/.dsh/sessions`。 |
+| 机器人对每条消息都回一行原始的 `agent-presets: preset "…" not found`，内容到不了智能体 | `$DSH_HOME/settings.yaml` 里的 `agent-presets.default` 指向了任何已安装版本都不提供的 id。**0.9.0** 已修复：改为重试 `standard` 并记录决策，而不是让这一轮失败；在更旧的版本上，请把该键改成一个确实存在的 id（`standard`）。 |
 | 会话锁定提示 | 另一个客户端（飞书或 Web）持有写锁。使用 `/unlock` 或等待锁超时。 |
-| Web GUI 中的模型切换似乎被忽略 | 已在当前 main 中修复：插件不再用静态默认模型覆盖 Web GUI 的会话选择。重启 `dsh web` 以加载重建后的插件。 |
+| Web GUI 中的模型切换似乎被忽略 | 已在 **0.9.0** 修复：插件不再用静态默认模型覆盖 Web GUI 的会话选择。升级后重启 `dsh web`。 |
 | `[用户发送了图片，但下载失败…]` | 应用缺少飞书 `im:resource` 权限；授予该权限并重新授权。 |
-| 流式回复是一整块没有分段 | 已在当前 main 中修复：块边界与推理/回答分隔现在会插入空行（推理软换行已针对飞书卡片扩展）。重启 `dsh web`。 |
-| 长时间任务中卡片卡在「思考中…」没有进展 | 已在当前 main 中修复：推理现在实时流出，工具调用显示为 `🔧` 进度行，静默期间心跳保活会更新卡片。重启 `dsh web`。 |
+| 流式回复是一整块没有分段 | 已在 **0.9.0** 修复：块边界与推理/回答分隔现在会插入空行（推理软换行已针对飞书卡片扩展）。升级后重启 `dsh web`。 |
+| 长时间任务中卡片卡在「思考中…」没有进展 | 已在 **0.9.0** 修复：推理现在实时流出，工具调用显示为 `🔧` 进度行，静默期间心跳保活会更新卡片。升级后重启 `dsh web`。 |
 | 菜单卡片不更新 / 过期 | 设计如此：卡片空闲 60 秒后自动关闭；重新打开菜单即可。 |
 
 **回滚** —— 重新安装之前的版本（先移除当前版本，再执行 `dsh plugin --profile web add dsh-connect@<version>`），或在源码安装中 `git checkout` 到固定的提交。
@@ -250,11 +297,13 @@ Web 设置面板（**设置** 下的 `dsh-connect`）编辑的是 `$DSH_HOME/set
 ```
 packages/
   connect/          # 本包 — 多合一插件
-    src/            # 核心：runner、service、binding、commands、i18n、menus …
+    src/            # 核心：runner、service、binding、commands、menus、chat key …
     src/channels/   # 通道适配器：feishu / telegram / dingtalk / web
-    src/settings/   # Web 设置栈：宿主 RPC、凭据库、设置服务/面板
+    src/settings/   # Web 设置栈：宿主 RPC、凭据库、脱敏策略
+    client/         # Web 设置前端插件 + 其纯函数模块（locale、panel-state）
     test/           # node:test 套件（run-all.mjs 导入每个套件）
-    client/         # Web 设置前端插件
+    docs/images/    # 本 README 引用的截图
+    examples/       # minimal.config.json
 ```
 
 ```sh
@@ -270,9 +319,11 @@ pnpm test
 node packages/connect/test/unit.test.mjs
 ```
 
-**结构** —— `src/runner.ts` 负责每个聊天的智能体驱动与流式桥接（`applyStreamChunk` 是纯函数、有单元测试的块组装器）；`src/service.ts` 负责适配器注册表与路由；`src/channels/` 存放 feishu / telegram / dingtalk / web 通道适配器；`src/settings/` 存放 Web 设置栈（宿主 RPC、凭据库、设置服务）；`src/i18n.ts` 存放 `zh`/`en` 词典（两种语言的关键字需保持同步）；`src/binding.ts` 是路由存储。
+**结构** —— `src/runner.ts` 负责每个聊天的智能体驱动与流式桥接（`applyStreamChunk` 是纯函数、有单元测试的块组装器）；`src/service.ts` 负责适配器注册表与路由；`src/channels/` 存放 feishu / telegram / dingtalk / web 通道适配器；`src/settings/` 存放 Web 设置栈（宿主 RPC、凭据库、脱敏策略）；`src/binding.ts` 是路由存储。
 
-**贡献** —— 欢迎在 [github.com/IvanWu2015/dsh-connect](https://github.com/IvanWu2015/dsh-connect) 提交 PR。对于面向用户的字符串，请在 `src/i18n.ts` 中同时为 `zh` 和 `en` 添加关键字。发布说明在 `CHANGELOG.md` 中；发布流程参见 `docs/PUBLISHING.zh.md`。
+有两样东西原来是放在 `src/` 的，现在移到了 `client/`，为的是能在不引入 React 的情况下单测：**`client/locale.mjs`** 存放设置面板的全部用户可见文案（`zh` 与 `en`，两边键集合必须一致 —— 宿主在缺键时会静默渲染**另一种**语言，所以漏译表现为中英混杂，而不是报错），**`client/panel-state.mjs`** 存放卡片的展开/高级折叠规则。两者都是零依赖的纯 ESM，分别由 `test/locale.test.mjs` 与 `test/panel-state.test.mjs` 直接断言。
+
+**贡献** —— 欢迎在 [github.com/IvanWu2015/dsh-connect](https://github.com/IvanWu2015/dsh-connect) 提交 PR。对于面向用户的面板文案，请在 `client/locale.mjs` 中同时为 `zh` 和 `en` 添加键，然后重建产物（`node scripts/build-client.mjs`）—— `test/client-bundle.test.mjs` 跑的是**构建产物**，产物过期会直接失败。发布说明在 `CHANGELOG.md` 中；发布流程参见 [`docs/PUBLISHING.zh.md`](https://github.com/IvanWu2015/dsh-connect/blob/main/docs/PUBLISHING.zh.md)。
 
 ## 许可与安全
 

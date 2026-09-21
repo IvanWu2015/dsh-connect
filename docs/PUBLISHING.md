@@ -16,7 +16,7 @@ This document answers two questions: **what is it called**, and **how do DSH use
 
 - The `dsh-` prefix aligns with the DSH ecosystem (`@deepseek-ai/dsh-*`), so users searching for `dsh` on npm/GitHub will hit it.
 - `connect` says plainly what the product does: connect DSH to chat channels for bidirectional message sync and work arrangement.
-- The `-feishu` suffix makes searches like "feishu + dsh" hit too.
+- There is deliberately **no per-channel suffix** any more (no `dsh-connect-feishu`, no `dsh-connect-all`): one package carries every channel behind `channels: [...]`. Channel-level discoverability for searches like "feishu + dsh" now has to come from the `description`, the `keywords` array, the repo topics and the README text — see §2.2, §2.3 and §3.
 
 > For publishing, avoid taking the official `@deepseek-ai` scope (that belongs to DeepSeek). Use the unscoped name `dsh-connect` (most discoverable); if it is taken, use your own scope, e.g. `@your-org/dsh-connect`.
 
@@ -49,6 +49,26 @@ The first paragraph must naturally include searchable terms — see the opening 
 
 - Add build/license badges at the top (builds credibility, indirectly helps ranking).
 - Add a screenshot of "chatting in Feishu with streaming replies" (demo screenshots noticeably lift click-through).
+
+**Screenshot path convention.** All screenshots committed today live in `packages/connect/docs/images/` and are referenced by *relative* path — never an absolute path or a GitHub blob URL:
+
+| Writing in… | Reference screenshots as… |
+|---|---|
+| a file under `docs/` (this file included) | `../packages/connect/docs/images/settings-overview-zh.png` |
+| `packages/connect/README.md` / `README.zh.md` | `docs/images/settings-overview-zh.png` |
+| `packages/connect/README.i18n.yaml` | same as the READMEs (the i18n file mirrors the English README) |
+
+The settings-pane set is six PNGs, all 1600×1600 — `settings-overview`, `settings-advanced`, `settings-defaults`, each in a `-zh` and an `-en` variant:
+
+- `settings-overview-{zh,en}.png` — channel tab strip over collapsible cards.
+- `settings-advanced-{zh,en}.png` — the second-level 高级 / Advanced fold.
+- `settings-defaults-{zh,en}.png` — how defaults are shown for a channel that has none set.
+
+**Pick the variant that matches the document's language**: Chinese docs and `README.zh.md` use `-zh`, English docs and `README.md` use `-en`. Do not mix them within one file. Because the images are 1600px wide, embed them as raw HTML with an explicit width so they don't blow up the page — e.g.
+
+```html
+<img src="../packages/connect/docs/images/settings-overview-en.png" alt="dsh-connect web settings: channel tabs + collapsible cards" width="760">
+```
 
 ## 3. npm publishing (so `dsh plugin add` works)
 

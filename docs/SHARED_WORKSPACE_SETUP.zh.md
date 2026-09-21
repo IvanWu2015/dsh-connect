@@ -277,7 +277,7 @@ D:\ACOINFO\code\dsh_feishu\
 ## 📝 最佳实践
 
 1. **使用绝对路径**：避免相对路径导致的不一致
-2. **统一配置源**：所有通道都从 `dsh.shared.config.json` 读取配置
+2. **分清各文件的职责**：`dsh.shared.config.json`（在当前目录及其上级目录中查找）只提供共享的工作区 / 状态目录 / `language` / `autoMirror` 默认值——且对这几个键它**优先于**插件配置。渠道设置则在插件的 `cordis.patch.yml` 配置块中，以及（0.9.0 起）`$DSH_HOME/settings.yaml` 的 `dsh-connect` 段（由 Web 设置页写入，热重载）。密钥只进 DSH 凭据库，不写进上述任何文件。
 3. **定期检查**：使用 `/status` 命令验证工作目录是否正确
 4. **备份配置**：定期备份 `dsh.shared.config.json` 和 `bindings.json`
 5. **版本控制**：将 `dsh.shared.config.json` 加入 Git（但不包括 `.dsh-connect/` 和 `.dsh/`）
@@ -292,5 +292,5 @@ D:\ACOINFO\code\dsh_feishu\
 
 ---
 
-**更新日期**：2026-08-20  
-**版本**：v0.6.2
+**更新日期**：2026-09-21  
+**版本**：v0.9.0

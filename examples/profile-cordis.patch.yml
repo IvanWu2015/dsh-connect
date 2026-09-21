@@ -70,5 +70,17 @@
     # web:
     #   pollIntervalMs: 1000            # mirror-session polling interval (default 1000)
 
-    # --- web-settings persistence (non-secret config) ---
-    # settingsStatePath: .dsh-connect/settings.json
+    # --- web settings pane ---
+    # The pane's *authoritative* store is NOT a file here: it is the `dsh-connect`
+    # section of $DSH_HOME/settings.yaml, written through DSH's first-party
+    # settings seam (hot-reloaded, atomic, file-locked, comment-preserving), so
+    # hand-editing that document works too and takes effect without a restart.
+    # Every key above is also a settings.yaml key, since this config entry is
+    # registered as the namespace's *base* layer: values resolve schema defaults
+    # -> this entry -> settings.yaml, most specific last. Secrets are never
+    # written to settings.yaml — they stay in the DSH credential store.
+    #
+    # `settingsStatePath` is deliberately not shown: it is the JSON mirror the
+    # pane falls back to only on a host with no settings service, so setting it
+    # in a normal profile changes nothing. It defaults to
+    # `<stateDir>/dsh-connect-settings.json`; see the README if you need it.

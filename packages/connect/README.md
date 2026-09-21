@@ -11,7 +11,7 @@ The **all-in-one plugin** for connecting [DeepSeek Harness](https://github.com/d
 `dsh-connect` binds a chat conversation to a DSH agent session and drives it end to end:
 
 - **Session binding & routing** — one chat ⇄ one agent session, persisted in a `bindings.json` route store; sessions can be created, resumed, switched, cleared and mirrored to the DSH Web GUI.
-- **Streaming replies** — DSH `assistant/chunk` events are bridged into the channel's native streaming (Feishu typewriter cards): the thinking hint opens the reasoning phase, reasoning streams live with readable paragraph breaks, tool calls appear as `🔧` progress lines, and a liveness heartbeat keeps the card moving even through long silent stretches (long first-token waits, heavy tool runs) so it never sits frozen on "Thinking…".
+- **Streaming replies** — the model's live deltas are bridged into the channel's native streaming (Feishu typewriter cards): the thinking hint opens the reasoning phase, reasoning streams live with readable paragraph breaks, tool calls appear as `🔧` progress lines, and a liveness heartbeat keeps the card moving even through long silent stretches (long first-token waits, heavy tool runs) so it never sits frozen on "Thinking…". The runner keeps two subscriptions, because `0.1.5-rc.2` split what used to be one: the durable `session/event` stream carries turns, tools and settlement, while the transient `agent/assistant-stream` frames carry the deltas — the `assistant/chunk` session event that used to carry both is gone.
 - **Notification levels** — per-chat control over how much of the process is streamed: `尽量输出过程` (full process) / `输出重要节点` (key milestones) / `只输出结果` (result only). Switch any time via the settings menu or `/notify`; the choice is persisted per chat and applies immediately.
 - **Task-end stats** — after every task a compact card reports the model used, input/output tokens, elapsed time and context-window usage, and suggests `/compact` when the context is getting full.
 - **Interactive menus** — button cards for status, tasks, history, goals, schedule, model/effort switching, workspace picking, language, and more (see the in-chat `/` commands).
@@ -76,7 +76,7 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 ## Quick start
 
 1. **Install the plugins** (see above).
-2. **Add the minimal config** to `~/.dsh/profiles/<profile>/cordis.patch.yml` (also see [`examples/profile-cordis.patch.yml`](../../examples/profile-cordis.patch.yml)). The plugin registers itself via its bundle manifest, so only override its config — do **not** `insert` it again (a duplicate id crashes dsh at boot):
+2. **Add the minimal config** to `~/.dsh/profiles/<profile>/cordis.patch.yml` — the shape is also in [`examples/minimal.config.json`](examples/minimal.config.json), and the fully commented version is [`examples/profile-cordis.patch.yml`](https://github.com/IvanWu2015/dsh-connect/blob/main/examples/profile-cordis.patch.yml) in the repository (that path is outside the published tarball, hence the absolute link). The plugin registers itself via its bundle manifest, so only override its config — do **not** `insert` it again (a duplicate id crashes dsh at boot):
 
    ```yaml
    - id: connect
@@ -96,7 +96,7 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 3. **Start the host** — `dsh web` (or `dsh run`). With no credentials configured, the `feishu` channel enters **one-click onboarding**: scan the QR / open the link from the log to authorize the bot.
 4. **Send a message** to the bot in Feishu. The bot replies with a streaming card; `/help` lists all commands; the conversation also appears in the DSH Web GUI automatically (auto-mirror).
 
-A fully reproducible example is the `examples/` folder plus `docs/feishu-setup.md` (Feishu app creation, event subscriptions, publishing).
+A fully reproducible example is the [`examples/`](examples/) folder plus the repository's [Feishu setup manual](https://github.com/IvanWu2015/dsh-connect/blob/main/docs/feishu-setup.md) (Feishu app creation, event subscriptions, publishing).
 
 ## Configuration
 
@@ -106,7 +106,7 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under the plug
 
 | Key | Default | Description |
 |---|---|---|
-| `agentPreset` | roster default | Agent preset id composed into each bound session |
+| `agentPreset` | roster default | Agent preset id composed into each bound session. Resolution is best-effort: the configured id is tried, then `standard` (or the roster's first mountable row), and if neither composes the agent is built without a preset so the turn still runs. A stale id therefore degrades instead of failing every message — it is logged, not thrown. |
 | `workDir` | process cwd | Absolute working directory for each bound agent |
 | `workspaces` | `[]` | Extra workspaces offered by the `/dir` picker |
 | `visionModel` | auto-detected | `{ provider, model }` used to describe images when the main model can't see them |
@@ -116,7 +116,7 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under the plug
 | `stateDir` | `.dsh-connect` | Directory holding the `bindings.json` route store (env `DSH_CONNECT_STATE_DIR` overrides) |
 | `autoMirror` | `true` | Automatically create a Web GUI mirror for every new session |
 | `streamHeartbeatMs` | `60000` | Liveness heartbeat interval (ms) for the streaming card; `0` disables it |
-| `notifyLevel` | `important` | Default notification level: `full` (stream everything) / `important` (key milestones) / `result` (answer only); per-chat override via settings menu or `/notify` |
+| `notifyLevel` | `result` | Default notification level: `full` (stream everything) / `important` (key milestones) / `result` (answer only, the default); per-chat override via settings menu or `/notify` |
 | `progressTimeoutMs` | `300000` | Proactive progress-notice interval (ms): when a turn has sent no standalone card/text for this long, a status card reports the latest milestone; `0` disables; per-chat override via settings menu or `/progress` |
 
 ### Shared (all channels)
@@ -187,13 +187,39 @@ Environment variables (`FEISHU_*`, `TELEGRAM_*`, `DINGTALK_*`, `DSH_CONNECT_STAT
   - `<stateDir>/bindings.json` (default `.dsh-connect/`) — the chat ⇄ session route store (chat keys, session ids, mirror and lock state).
   - `<stateDir>/dsh-connect-settings.json` (default `.dsh-connect/`) — the non-secret compatibility mirror, see `settingsStatePath`.
   - the `dsh-connect` section of `$DSH_HOME/settings.yaml` — written through DSH's first-party settings seam (atomic, file-locked, comment-preserving).
-  - `~/.dsh/.dsh-connect/feishu-credentials.json` — Feishu credentials saved by one-click onboarding (also written to the DSH credential store).
+  - `~/.dsh/.dsh-connect/feishu-credentials.json` — **legacy**, read-only. One-click onboarding used to save Feishu credentials here instead of the credential store, so a user who had just scanned the QR code still saw `未配置凭据` forever. Onboarding now writes to the credential store, and an existing install is backfilled from this file once on boot; after that it is never read or written again.
   - `<workDir>/.dsh-connect-images/` — user images/attachments staged for the agent's tools.
   - DSH's own session logs and settings under `~/.dsh/` (sessions, settings, etc.).
 - **Network**
   - Feishu Open Platform: WebSocket long connection (or webhook over public HTTPS), plus HTTPS API calls (media download, cards).
   - LLM provider APIs used by DSH for the agent's model (e.g. DeepSeek), plus the optional vision model.
 - **User data** — message text and attachments flow through the bot to the agent session; they are stored in the DSH session log like any DSH conversation. The allowlists (`allowUsers` / `allowChats`) limit who can drive the bot.
+
+## The settings pane
+
+`dsh-connect` adds its own page under **Settings → dsh-connect**. It is a channel
+tab strip over collapsible cards: each card is headed by a button, its
+low-frequency fields sit behind a second-level **Advanced** fold, and
+Save/status stay pinned to the bottom of the scroll region.
+
+| Channels & credentials | Advanced fields opened |
+|---|---|
+| ![dsh-connect settings pane: the channel tab strip, the Feishu card expanded with its credential fields, and three folded channel cards each showing a credentials badge](docs/images/settings-overview-zh.png) | ![the same pane with a channel's Advanced fold opened, revealing the callback port and path fields](docs/images/settings-advanced-zh.png) |
+
+![the common-defaults card and the pinned save bar at the bottom of the pane](docs/images/settings-defaults-zh.png)
+
+English captures: [overview](docs/images/settings-overview-en.png) · [advanced](docs/images/settings-advanced-en.png) · [defaults](docs/images/settings-defaults-en.png).
+
+> Captured from a throwaway profile whose credentials are all placeholders. Nothing
+> above contains a real secret — and it could not, because the host masks every
+> stored value before it reaches the browser (see [below](#seeing-and-masking-stored-values)).
+
+Cards default to the channels you have enabled (the first one, if none are), and
+clicking a tab opens that card and scrolls it into view *without* closing the
+others — several open at once is a legitimate state. Collapsing a card unmounts
+its body rather than hiding it, which is safe because an unsaved secret you typed
+lives in the pane's own state, not in the card. Ticking a channel's enable box
+opens it too.
 
 ## User settings
 
@@ -213,12 +239,41 @@ Values resolve in three layers, most specific last:
 **Secrets are never written to `settings.yaml`.** It is a plain document users
 are invited to paste into bug reports, so credentials stay in the DSH
 credential store (`ctx.credentials`) — which is also where one-click onboarding
-and the `FEISHU_*`-style environment variables put them. The pane shows secret
-fields as *configured / not configured*, never as values.
+and the `FEISHU_*`-style environment variables put them.
 
 The legacy `/dsh-connect` HTTP RPC is retained for panel compatibility; it now
 reads and writes the same namespace, and mirrors non-secret config to
 `settingsStatePath` (see [Shared](#shared-all-channels)) for older panels.
+
+### Seeing and masking stored values
+
+The pane shows each stored credential as a read-only *current value* line under
+its input (`not configured` when nothing is stored), so you can confirm what you
+configured without retyping it. **The masking happens on the host**, in one shared table
+(`src/settings/secret-disclosure.ts`) that both the host and the pane read — the
+pane only decides whether to render the input as a `password` or a `text` field,
+so the display and the policy cannot drift apart.
+
+| Field | How it is shown |
+|---|---|
+| `appId`, `clientId` | **In full.** These are identifiers, not authenticators: they appear in every outbound API call and in the vendor console, so hiding them protects nothing. |
+| `appSecret`, `clientSecret`, `botToken`, `secret` | Head and tail only — `a1b2…z9y8`. Values too short to survive partial disclosure show a fixed `••••••` instead. |
+| `webhookUrl` (DingTalk) | URL-aware. Origin, path and parameter *names* are kept and only the token's middle is masked, because DingTalk puts the token in the query string — masking the whole URL (`https…bcde`) would confirm nothing. |
+| any other key | Masked by default. |
+
+Two properties hold regardless:
+
+- **No usable secret crosses the wire.** The value is masked before it leaves the
+  host, so a browser tab — or a screenshot of one — never holds one.
+- **A mask can never be written back.** The preview is text *beside* the input,
+  never the input's value. Inputs always start blank; blank means "leave the
+  stored value alone", so saving the config alone writes no credential at all.
+
+The pane's own strings (channel names, field labels, option text, status) all
+come from `client/locale.mjs`, which ships `zh` and `en`. A test asserts both
+languages cover exactly the same key set — the host resolves a missing key by
+silently falling back to the other language, so an untranslated string shows up
+as mixed-language text rather than as an error.
 
 ### Credential groups
 
@@ -249,11 +304,12 @@ Logs come from the DSH host logger (run `dsh web` in a terminal); plugin message
 |---|---|
 | `connect-feishu: adapter init failed` / `start failed` | Bad credentials, app not published, or network blocked. Check `appId`/`appSecret`, re-run onboarding, verify the bot is online in the Feishu console. |
 | `connect: resume of <id> failed, creating fresh session` | The persisted session could not be resumed (missing workdir, persistence issue). Check `workDir` and `~/.dsh/sessions`. |
+| The bot answers every message with a raw `agent-presets: preset "…" not found` line, and nothing reaches the agent | A stale `agent-presets.default` in `$DSH_HOME/settings.yaml` names an id no installed build ships. Fixed in **0.9.0**, which retries `standard` and logs the decision rather than failing the turn; on an older build, set the key to a shipped id (`standard`). |
 | Session-locked notices | Another client (Feishu or Web) holds the write lock. Use `/unlock` or wait for the lock timeout. |
-| Model switch in the Web GUI appears ignored | Fixed in the current main: the plugin no longer pins a static default model over the Web GUI's session selection. Restart `dsh web` so the rebuilt plugin is loaded. |
+| Model switch in the Web GUI appears ignored | Fixed in **0.9.0**: the plugin no longer pins a static default model over the Web GUI's session selection. Upgrade, then restart `dsh web`. |
 | `[用户发送了图片，但下载失败…]` | Feishu `im:resource` permission is missing on the app; grant it and re-approve. |
-| Streaming reply is one unbroken blob | Fixed in the current main: block boundaries and the reasoning/answer split now insert blank lines (and reasoning soft breaks are expanded for Feishu cards). Restart `dsh web`. |
-| Card frozen on "Thinking…" with no progress on a long task | Fixed in the current main: reasoning now streams live, tool calls show as `🔧` progress lines, and a liveness heartbeat updates the card during silent stretches. Restart `dsh web`. |
+| Streaming reply is one unbroken blob | Fixed in **0.9.0**: block boundaries and the reasoning/answer split now insert blank lines (and reasoning soft breaks are expanded for Feishu cards). Upgrade, then restart `dsh web`. |
+| Card frozen on "Thinking…" with no progress on a long task | Fixed in **0.9.0**: reasoning now streams live, tool calls show as `🔧` progress lines, and a liveness heartbeat updates the card during silent stretches. Upgrade, then restart `dsh web`. |
 | Menu cards don't update / expire | Cards auto-close after 60 s idle by design; re-open the menu. |
 
 **Rollback** — reinstall a previous release (`dsh plugin --profile web add dsh-connect@<version>` after removing the current one), or `git checkout` the pinned commit in a source install.
@@ -265,11 +321,13 @@ This is a pnpm workspace; `dsh-connect` is the single package under `packages/`:
 ```
 packages/
   connect/          # this package — the all-in-one plugin
-    src/            # core: runner, service, binding, commands, i18n, menus …
+    src/            # core: runner, service, binding, commands, menus, chat keys …
     src/channels/   # channel adapters: feishu / telegram / dingtalk / web
-    src/settings/   # web-settings stack: host RPC, credential store, settings service/pane
+    src/settings/   # web-settings stack: host RPC, credential store, disclosure policy
+    client/         # web-settings frontend plugin + its pure, testable modules
     test/           # node:test suites (run-all.mjs imports every suite)
-    client/         # web-settings frontend plugin
+    docs/images/    # screenshots used by this README
+    examples/       # minimal.config.json
 ```
 
 ```sh
@@ -285,9 +343,11 @@ pnpm test
 node packages/connect/test/unit.test.mjs
 ```
 
-**Structure** — `src/runner.ts` owns the per-chat agent driver and the streaming bridge (`applyStreamChunk` is the pure, unit-tested chunk assembler); `src/service.ts` owns the adapter registry and routing; `src/channels/` holds the feishu / telegram / dingtalk / web channel adapters; `src/settings/` holds the web-settings stack (host RPC, credential store, settings service); `src/i18n.ts` holds the `zh`/`en` dictionaries (keep keys in sync across both); `src/binding.ts` is the route store.
+**Structure** — `src/runner.ts` owns the per-chat agent driver and the streaming bridge (`applyStreamChunk` is the pure, unit-tested chunk assembler); `src/service.ts` owns the adapter registry and routing; `src/channels/` holds the feishu / telegram / dingtalk / web channel adapters; `src/settings/` holds the web-settings stack (host RPC, credential store, disclosure policy); `src/binding.ts` is the route store.
 
-**Contributing** — PRs welcome at [github.com/IvanWu2015/dsh-connect](https://github.com/IvanWu2015/dsh-connect). For user-facing strings, add the key to both `zh` and `en` in `src/i18n.ts`. Release notes live in `CHANGELOG.md`; see `docs/PUBLISHING.md` for the release flow.
+Two things that used to live in `src/` moved to `client/` so they could be unit-tested without React: **`client/locale.mjs`** holds every user-visible pane string in `zh` and `en` (keep the key sets identical — the host resolves a missing key by silently rendering the *other* language, so an untranslated string shows up as half-English text, not as an error), and **`client/panel-state.mjs`** holds the card open/advanced rules. Both are plain ESM with no dependencies and are asserted directly in `test/locale.test.mjs` / `test/panel-state.test.mjs`.
+
+**Contributing** — PRs welcome at [github.com/IvanWu2015/dsh-connect](https://github.com/IvanWu2015/dsh-connect). For user-facing pane strings, add the key to both `zh` and `en` in `client/locale.mjs`, then rebuild the bundle (`node scripts/build-client.mjs`) — `test/client-bundle.test.mjs` runs the **built** artifact and fails if it is stale. Release notes live in `CHANGELOG.md`; see [`docs/PUBLISHING.md`](https://github.com/IvanWu2015/dsh-connect/blob/main/docs/PUBLISHING.md) for the release flow.
 
 ## License & security
 

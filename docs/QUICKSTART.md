@@ -9,10 +9,10 @@ Hook `dsh-connect` up to an existing DSH installation and start chatting with th
 - DSH installed and running (`dsh` command available, `dsh web` starts).
 - A Feishu custom app created, with its **App ID** (`cli_xxx`) and **App Secret** at hand.
 
-## 1. Build the plugin packages
+## 1. Build the plugin package
 
 ```powershell
-cd D:\ACOINFO\code\dsh_feishu
+cd C:\path\to\dsh-connect      # your clone of this repository
 pnpm install
 pnpm build
 ```
@@ -24,7 +24,7 @@ Build output goes to the package's `lib/` (`packages/connect/lib`).
 `dsh plugin` forwards its arguments to the pnpm inside the profile directory, so **local paths must be absolute**. Install the **single all-in-one plugin** (one plugin, one config block, pulls in the core + every channel adapter + the web-settings stack):
 
 ```powershell
-dsh plugin --profile web add D:\ACOINFO\code\dsh_feishu\packages\connect
+dsh plugin --profile web add C:\path\to\dsh-connect\packages\connect
 ```
 
 > The npm package is published automatically by `.github/workflows/publish.yml` whenever a GitHub Release is created, so in a released setup you can install by package name instead: `dsh plugin --profile web add dsh-connect`. During local development the absolute-path install above is the way to go.
@@ -53,7 +53,7 @@ Edit `%DSH_HOME%\profiles\web\cordis.patch.yml` (usually `C:\Users\you\.dsh\prof
       # language: en            # user-facing message language: zh (default) / en
 ```
 
-> Instead of putting credentials in the file you can use the environment variables `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and omit `appId`/`appSecret` in the config — or save them to the DSH credential store from the Web settings pane (see [config-reference.md](config-reference.md)).
+> Instead of putting credentials in the file you can use the environment variables `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and omit `appId`/`appSecret` in the config — or configure everything from the Web settings pane (Settings → Channels, see [config-reference.md](config-reference.md)). The pane writes **non-secret** settings to the `dsh-connect` section of `$DSH_HOME/settings.yaml`, which is hot-reloaded (no restart needed); **secrets only ever go to the DSH credential store**, never into `settings.yaml`. Values from `cordis.patch.yml` are not discarded: the resolution order is schema defaults → plugin config → `$DSH_HOME/settings.yaml`.
 
 ## 4. Restart dsh web
 

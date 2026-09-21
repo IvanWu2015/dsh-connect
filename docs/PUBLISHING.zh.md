@@ -16,7 +16,7 @@
 
 - `dsh-` 前缀与 DSH 生态（`@deepseek-ai/dsh-*`）保持一致，在 npm/GitHub 上搜索 `dsh` 的用户能命中它。
 - `connect` 直白地说明产品的用途：把 DSH 接入聊天通道，实现双向消息同步与工作安排。
-- `-feishu` 后缀让"feishu + dsh"这类搜索也能命中。
+- 不再使用**按渠道加后缀**的包名（既没有 `dsh-connect-feishu`，也没有 `dsh-connect-all`）：一个包通过 `channels: [...]` 覆盖全部渠道。因此"feishu + dsh"这类搜索的命中要改由 `description`、`keywords` 数组、仓库 topics 与 README 正文承担——见 §2.2、§2.3 与 §3。
 
 > 发布时不要占用官方的 `@deepseek-ai` scope（那是 DeepSeek 的）。使用无 scope 的名称 `dsh-connect`（最易被发现）；若已被占用，就使用你自己的 scope，例如 `@your-org/dsh-connect`。
 
@@ -51,6 +51,26 @@ deepseek-harness  dsh  dsh-plugin  feishu  lark  dingtalk  ai-agent  chatbot  co
 
 - 顶部添加构建/许可证徽章（建立可信度，间接有助于排名）。
 - 添加一张"在飞书中聊天并流式接收回复"的截图（演示截图能显著提升点击率）。
+
+**截图路径约定。** 目前入库的截图都在 `packages/connect/docs/images/`，且一律用**相对路径**引用——不要用绝对路径或 GitHub blob URL：
+
+| 你正在写… | 截图引用写法 |
+|---|---|
+| `docs/` 下的文件（含本文） | `../packages/connect/docs/images/settings-overview-zh.png` |
+| `packages/connect/README.md` / `README.zh.md` | `docs/images/settings-overview-zh.png` |
+| `packages/connect/README.i18n.yaml` | 与 README 相同（该 i18n 文件镜像英文 README） |
+
+设置页这套截图共 6 张 PNG，均为 1600×1600——`settings-overview`、`settings-advanced`、`settings-defaults`，各有 `-zh` 与 `-en` 两个变体：
+
+- `settings-overview-{zh,en}.png`——渠道 Tab 条 + 可折叠卡片。
+- `settings-advanced-{zh,en}.png`——二级「高级」折叠。
+- `settings-defaults-{zh,en}.png`——渠道未设置任何值时的默认值展示。
+
+**变体要与文档语言一致**：中文文档与 `README.zh.md` 用 `-zh`，英文文档与 `README.md` 用 `-en`，同一文件内不要混用。由于原图宽 1600px，请用带显式宽度的原始 HTML 嵌入，避免撑破页面：
+
+```html
+<img src="../packages/connect/docs/images/settings-overview-zh.png" alt="dsh-connect Web 设置页：渠道 Tab 条 + 可折叠卡片" width="760">
+```
 
 ## 3. npm 发布（让 `dsh plugin add` 可用）
 
