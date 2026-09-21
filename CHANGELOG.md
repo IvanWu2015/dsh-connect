@@ -2,6 +2,35 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.0] - 2026-09-21
+
+Audit of the whole plugin against DSH `0.1.5-rc.2` — it had been built for the `0.1.0-rc.6` line — and the repair that came out of it. The headline is that **saving in the Web settings pane now survives a restart**: the pane's authoritative store is the `dsh-connect` section of `$DSH_HOME/settings.yaml`, written through DSH's own first-party settings seam (hot-reloaded, atomic, file-locked, comment-preserving) instead of a private JSON file nobody read back.
+
+### Changed (breaking)
+
+- **Requires DSH `0.1.5-rc.2`.** The `peerDependencies` / `devDependencies` range for `@deepseek-ai/dsh-agent`, `dsh-llm` and `dsh-session` moved from `^0.1.0-rc.6` to `^0.1.5-rc.2`. The old range no longer overlapped the host, which is exactly why the drift below stayed silent; keep the range in step with the host on every DSH upgrade.
+- **`dsh-connect` settings are user-editable.** The pane and the official Plugins page now render and write the same namespace. The plugin's existing `cordis.patch.yml` config is *not* discarded — it is registered as the base layer, and values resolve schema defaults → plugin config → `$DSH_HOME/settings.yaml`. A hand-edited `settings.yaml` takes effect without a restart.
+
+### Added
+
+- **Settings namespace `dsh-connect`** registered via `installSection` (`src/settings/namespace.ts`), so the plugin still works when the settings service is absent — it falls back to its own composition entry. A malformed user section degrades to the plugin config rather than aborting `apply()`.
+- **End-to-end bridge verification** (`test/e2e-bridge.mjs`), which had never been done: inbound message → agent turn → outbound reply, asserted offline against a scripted agent *and* against a live `dsh` host. The live leg self-gates and prints `E2E SKIP` when no launcher is present, so it can never pass by doing nothing.
+- **Bridge-core test coverage.** The parts that actually bridge a chat had almost none, while the settings stack was already well covered: `runner.js` 9.1% → 37.9%, `telegram/adapter.js` 32.4% → 91.9%, `feishu/adapter.js` 38.0% → 74.7%, `dingtalk/adapter.js` 23.6% → 79.5%. Overall 247 → 296 tests, all passing.
+
+### Fixed
+
+- **Panel saves were silently discarded.** `settingsStatePath` defaulted to `undefined` unless the profile happened to set `stateDir`, so the state file was never written — edit anything, refresh, it was gone. Superseded by the settings namespace above. The four copies of the state-dir default (three literals and a fourth variant that ignored the env var) are now one `resolveStateDir()` helper.
+- **The bridge's core turn path was broken on `0.1.5-rc.2`.** `0.1.5-rc.2` deleted the `Session.events` accessor and the `assistant/chunk` event type; the runner (session log + streaming) was migrated to the replacement event API.
+- **DingTalk stream credentials were dropped on save.** The pane offered four secret fields but the store only persisted two, and still answered `ok: true` — so `stream.clientId` / `clientSecret` never reached the credential store. Channels are now described by credential *groups* (all-of within a group, any-of across groups); DingTalk's two mutually exclusive transports (webhook push, stream mode) each form a group.
+- **A channel with no credentials was reported as unconfigured.** `web` needs no credentials at all, yet the pane showed it as `未配置凭据`. An empty group list is now satisfied by definition.
+- **One-click onboarding credentials never reached the credential store.** They were written to `~/.dsh/.dsh-connect/feishu-credentials.json`, so a user who had just scanned the QR code and was talking to the bot still saw `未配置凭据` forever. Onboarding now saves to the credential store, and existing installs are backfilled from the legacy file on boot.
+- **Missing credentials could start an interactive QR/link flow during load.** `activateChannels` defaults to *all* channels, so a headless service process with no Feishu credentials would begin a scan-to-authorize flow nobody could answer. It is now gated on `onboarding !== false` and an interactive `stdout`, and otherwise logs a pointer to the settings pane.
+- **Dead reference in `dsh.client.inject`** — `@deepseek-ai/dsh-client-runtime` is not in the `0.1.5-rc.2` bundle.
+- **Telegram: `replyRef` carried the replied-to message's id instead of the message's own.** It was set to `reply_to_message.message_id`, so ordinary messages had no `replyRef` at all and every one of them shared the core's "no id" dedup slot, while two different replies to the same bot message collapsed onto one key and the second was silently dropped. Since the outbound path echoes `replyRef` back as `reply_to_message_id`, the bot also threaded its answer under the wrong message. `replyRef` is now this message's own id, matching every other channel; the group @-mention gate is unaffected (it reads `reply_to_message` directly).
+- **DingTalk: non-text payloads ran an empty agent turn.** `normalizeBotMessage` promised `undefined` for payloads with no usable text body but never checked, so a picture, file, sticker or recall notice normalized to `text: ""` — a wasted model call and a reply to a message the user never sent. It now drops whitespace-only bodies, as the doc already claimed.
+- **Feishu: thread messages in an allowlisted chat were dropped.** With `threadIsolation`, the adapter scoped the chat key to `chatId:thread=<rootId>` while `allowChats` is documented in plain chat ids, so an allowlisted chat's threads passed the adapter's pre-download check and were then rejected by the core — with no log, which is what made it look like the bot ignoring the user. The thread-key codec now lives in one module (`src/chat-key.ts`) that both the core gate and the adapter's pre-check consume, so the two can no longer drift; `allowChats` matches on the base chat id.
+- **An inbound message dropped by the allowlist is now logged** (`connect: inbound dropped by allowlist (…)`). Behavior addition beyond the fixes above: a gate that disagrees with an adapter's own pre-check previously showed up only as silence.
+
 ## [0.8.1] - 2026-09-03
 
 ### Fixed
