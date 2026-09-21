@@ -46,20 +46,20 @@ const suites = [
   "settings-namespace.test.mjs",
 ];
 
-/** Marker `smoke.mjs` prints once every top-level assertion has passed. */
-const SMOKE_OK = "SMOKE OK";
-
 /**
- * Run `smoke.mjs` and resolve as soon as it reports success.
+ * Run a marker-reporting script and resolve as soon as it reports success.
  *
- * `smoke.mjs` builds live `ConnectService` instances; their handles survive the
- * assertions, so the script prints its marker and then hangs instead of exiting.
- * We treat the marker as the pass signal and reap the child ourselves. A child
- * that exits before printing it is a failure.
+ * These scripts build live `ConnectService` instances whose handles survive the
+ * assertions, so they print a marker and then hang rather than exiting. We treat
+ * the marker as the pass signal and reap the child ourselves. A child that exits
+ * before printing it is a failure.
+ *
+ * A marker that is only printed on the *success* path is what makes this sound:
+ * a script that dies early can never satisfy it.
  */
-function runSmoke() {
+function runMarkerScript(file, marker) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [join(here, "smoke.mjs")], { stdio: ["ignore", "pipe", "inherit"] });
+    const child = spawn(process.execPath, [join(here, file)], { stdio: ["ignore", "pipe", "inherit"] });
     let out = "";
     let settled = false;
     let passed = false;
@@ -78,13 +78,13 @@ function runSmoke() {
     child.stdout.on("data", (chunk) => {
       out += String(chunk);
       process.stdout.write(chunk);
-      if (out.includes(SMOKE_OK)) {
+      if (out.includes(marker)) {
         passed = true;
         finish(true);
       }
     });
-    child.on("error", (error) => finish(false, `smoke.mjs failed to start: ${String(error)}`));
-    child.on("exit", (code) => finish(code === 0 && passed, passed ? undefined : `smoke.mjs exited with code ${code} before printing ${JSON.stringify(SMOKE_OK)}`));
+    child.on("error", (error) => finish(false, `${file} failed to start: ${String(error)}`));
+    child.on("exit", (code) => finish(code === 0 && passed, passed ? undefined : `${file} exited with code ${code} before printing ${JSON.stringify(marker)}`));
   });
 }
 
@@ -92,6 +92,11 @@ const result = spawnSync(process.execPath, ["--test", ...suites.map((name) => jo
 if (result.error) throw result.error;
 const suitesOk = result.status === 0;
 
-const smokeOk = await runSmoke();
+const smokeOk = await runMarkerScript("smoke.mjs", "SMOKE OK");
+// The end-to-end bridge check. Its live leg self-gates on a `dsh` launcher
+// being present and prints an explicit E2E SKIP when it can't run; the offline
+// leg (a real ConnectService + AgentRunner against a scripted agent) always
+// runs, so this can never degrade into a silent no-op.
+const e2eOk = await runMarkerScript("e2e-bridge.mjs", "E2E OK");
 
-process.exit(suitesOk && smokeOk ? 0 : 1);
+process.exit(suitesOk && smokeOk && e2eOk ? 0 : 1);
