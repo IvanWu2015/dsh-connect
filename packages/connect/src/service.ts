@@ -236,6 +236,43 @@ export class ConnectService extends Service {
     });
   }
 
+  /**
+   * Tear a channel down: stop its adapter and dispose every runner it owns.
+   *
+   * Used when a settings change drops a channel from `channels[]`, so the old
+   * transport must release its connection before a replacement (a reconfigured
+   * version of the same channel) starts — two live Feishu long connections
+   * would double-deliver every event.
+   *
+   * The adapter is removed from the map *first*: a teardown that throws must
+   * still leave the channel unregistered, otherwise a partially stopped
+   * adapter keeps receiving inbound traffic.
+   *
+   * Session locks are released by the runners; chat bindings and history are
+   * left alone, so re-enabling the channel resumes the same conversations.
+   */
+  async unregisterAdapter(id: string): Promise<void> {
+    const adapter = this.adapters.get(id);
+    if (adapter === undefined) return;
+    this.adapters.delete(id);
+
+    // Reuse runnerKey for the channel prefix so the separator can't drift.
+    const prefix = runnerKey(id, "");
+    const doomed = [...this.runners].filter(([key]) => key.startsWith(prefix));
+    for (const [key] of doomed) this.runners.delete(key);
+    await Promise.all(
+      doomed.map(([, runner]) =>
+        runner.dispose().catch((error: unknown) => {
+          this.ctx.logger?.warn?.(`connect: runner teardown failed (${id}): ${String(error)}`);
+        }),
+      ),
+    );
+
+    await adapter.stop().catch((error: unknown) => {
+      this.ctx.logger?.warn?.(`connect: adapter teardown failed (${id}): ${String(error)}`);
+    });
+  }
+
   getAdapter(id: string): ChannelAdapter | undefined {
     return this.adapters.get(id);
   }

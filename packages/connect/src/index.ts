@@ -17,13 +17,15 @@ import { ConnectService } from "./service.js";
 import type { ConnectConfig } from "./runner.js";
 import { resolveStateDir } from "./state-dir.js";
 import {
-  activateChannels,
   CHANNELS,
   extractConfigSecrets,
   injectSecrets,
   type ChannelApply,
   type ChannelName,
+  type ChannelsConfig,
 } from "./settings/channels.js";
+import { ChannelRuntime } from "./settings/channel-runtime.js";
+import { installConnectSection, type SettingsProviderLike } from "./settings/namespace.js";
 import { installSettingsRpc } from "./settings/settings-rpc.js";
 import { createSettingsService } from "./settings/settings-service.js";
 import { CHANNEL_CONFIG_FIELDS } from "./settings/settings-model.js";
@@ -301,7 +303,51 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
     web: (_ctx, channelConfig) => webRegister(connect, channelConfig, _ctx),
   };
 
-  activateChannels<Context>(ctx, finalCfg, channels);
+  // Channel lifecycle is owned by a runtime, not a one-shot activation: once
+  // the channel list is user-editable, dropping a channel has to *stop* its
+  // adapter (a live Feishu long connection would otherwise outlive its config)
+  // and a reconfigured channel has to restart before the old transport is
+  // still delivering. See `settings/channel-runtime.ts`.
+  const runtime = new ChannelRuntime<Context>({
+    ctx,
+    channels,
+    teardown: (name) => connect.unregisterAdapter(name),
+    getSecrets: credentialStore ? (name) => credentialStore.get(name) : undefined,
+  });
+  await runtime.apply(finalCfg);
+
+  // Register the `dsh-connect` namespace so the channel selection and the
+  // per-channel non-secret options become user-editable and *effective*:
+  // `installSection` layers the plugin's own config (as `base`) under the
+  // user's `settings.yaml` section, and every change re-reconciles the running
+  // adapters through the runtime above. The panel's own RPC
+  // (`settings/settings-rpc.ts`) is a separate transport onto the same idea and
+  // is kept for the pane's compatibility path.
+  //
+  // Deferred through `inject` for the same reason as the RPC below: `settings`
+  // is a `dsh-base` row loaded after a user plugin's `apply` runs, so a plain
+  // optional read would see `undefined` and never register anything. If the
+  // host never provides it the callback never runs and the plugin config
+  // stands on its own — which is exactly what `installConnectSection` falls
+  // back to.
+  const installNamespace = (scopeCtx: Context): void => {
+    installConnectSection<Context>({
+      owner: scopeCtx,
+      settings: (scopeCtx as { get?: (name: string) => unknown }).get?.("settings") as
+        | SettingsProviderLike
+        | undefined,
+      entry: finalCfg,
+      onChange: (section) => {
+        void runtime.apply(section as ChannelsConfig);
+      },
+    });
+  };
+  if (typeof (ctx as { inject?: unknown }).inject === "function") {
+    (ctx as Context).inject(["settings"], installNamespace);
+  } else {
+    // Bare context (unit tests): no inject-scope API, install directly.
+    installNamespace(ctx);
+  }
 
   // Expose the web-settings RPC. The host `connection`/`webServer` services are
   // loaded as base plugins AFTER this user plugin's apply runs, so a plain

@@ -208,6 +208,8 @@ const PROGRESS_WATCHDOG_CHECK_MS = 15_000;
 export class AgentRunner implements MenuHost {
   private readonly queue: InboundMessage[] = [];
   private running = false;
+  /** Set by `dispose()`; makes the runner permanently inert. */
+  private disposed = false;
   private agent?: Agent;
   private handle?: AgentHandle;
   private turn?: ActiveTurn;
@@ -267,7 +269,31 @@ export class AgentRunner implements MenuHost {
     return first?.path ?? process.cwd();
   }
 
+  /**
+   * Tear the runner down for good — the counterpoint to `enqueue`.
+   *
+   * Called when the runner's channel adapter is deactivated (a settings change
+   * removed that channel from `channels[]`) or the service shuts down. The
+   * runner is inert afterwards: `enqueue` drops work and the drain loop stops
+   * before its next turn. `ConnectService` deletes its map entry, so a later
+   * message builds a fresh runner instead of reviving this one.
+   *
+   * `queuedMessages` is cleared rather than replayed: those messages belong to
+   * a channel that no longer has an adapter to answer on, so replaying them
+   * would run agent turns whose output has nowhere to go.
+   */
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    this.queue.length = 0;
+    await this.disposeAgent();
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    if (binding !== undefined && binding.lockOwner !== undefined) {
+      this.bindings.put({ ...lockRelease(binding), queuedMessages: [] });
+    }
+  }
+
   enqueue(msg: InboundMessage): void {
+    if (this.disposed) return;
     const command = parseCommand(msg.text);
     if (command.kind !== "message") {
       // Command handlers touch the adapter directly (no per-call catch) — a
@@ -439,10 +465,10 @@ export class AgentRunner implements MenuHost {
   }
 
   private async drain(): Promise<void> {
-    if (this.running) return;
+    if (this.running || this.disposed) return;
     this.running = true;
     try {
-      while (this.queue.length > 0) {
+      while (this.queue.length > 0 && !this.disposed) {
         const msg = this.queue.shift();
         if (msg === undefined) break;
         await this.runTurn(msg);

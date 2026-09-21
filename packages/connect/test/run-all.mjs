@@ -42,6 +42,8 @@ const suites = [
   "settings-model.test.mjs",
   "apply.test.mjs",
   "agent-scope.test.mjs",
+  "channel-runtime.test.mjs",
+  "settings-namespace.test.mjs",
 ];
 
 /** Marker `smoke.mjs` prints once every top-level assertion has passed. */
