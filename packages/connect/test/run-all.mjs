@@ -5,9 +5,10 @@
  *
  * 1. `node:test` suites, one child per file. Isolation matters because several
  *    suites construct `ConnectService` instances whose reminder loops and cordis
- *    subscriptions outlive the test, and because `feishu.register` without
- *    credentials enters the interactive onboarding flow, which leaves timers
- *    pending. A child process per file keeps each suite self-contained.
+ *    subscriptions outlive the test, and because a suite that leaves an adapter
+ *    timer running (a pending `promptChoice`, a store flush) would keep the
+ *    runner alive past its own assertions. A child process per file keeps each
+ *    suite self-contained.
  *
  * 2. `smoke.mjs`, as a plain script. It asserts at import time and never exits on
  *    its own (see below), so it cannot run under `--test` — the runner would wait
@@ -44,6 +45,7 @@ const suites = [
   "agent-scope.test.mjs",
   "channel-runtime.test.mjs",
   "settings-namespace.test.mjs",
+  "runner.test.mjs",
 ];
 
 /**

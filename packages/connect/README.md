@@ -125,7 +125,7 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under the plug
 |---|---|---|
 | `channels` | all built-in | Which channels to activate: `feishu` / `telegram` / `dingtalk` / `web`. Omit to activate all built-in channels. |
 | `channelDefaults` | `{}` | Keys applied to every channel that doesn't set its own (e.g. `{ language: "zh" }`). |
-| `settingsStatePath` | — | Optional path for the web-settings pane to persist non-secret config (e.g. `.dsh-connect/settings.json`). |
+| `settingsStatePath` | `<stateDir>/dsh-connect-settings.json` | Where the web-settings pane mirrors non-secret config. Defaults to `dsh-connect-settings.json` *inside* `stateDir`, so it lands beside `bindings.json` and can never disagree with the stores; set it to override. Since 0.9.0 the pane's authoritative store is the `dsh-connect` section of `$DSH_HOME/settings.yaml` (see [User settings](#user-settings)), and this file is only the compatibility mirror the legacy `/dsh-connect` RPC reads and writes. |
 
 ### `feishu` (Feishu / Lark channel)
 
@@ -185,13 +185,61 @@ Environment variables (`FEISHU_*`, `TELEGRAM_*`, `DINGTALK_*`, `DSH_CONNECT_STAT
 
 - **Files written**
   - `<stateDir>/bindings.json` (default `.dsh-connect/`) — the chat ⇄ session route store (chat keys, session ids, mirror and lock state).
-  - `~/.dsh/.dsh-connect/feishu-credentials.json` — Feishu credentials saved by one-click onboarding.
+  - `<stateDir>/dsh-connect-settings.json` (default `.dsh-connect/`) — the non-secret compatibility mirror, see `settingsStatePath`.
+  - the `dsh-connect` section of `$DSH_HOME/settings.yaml` — written through DSH's first-party settings seam (atomic, file-locked, comment-preserving).
+  - `~/.dsh/.dsh-connect/feishu-credentials.json` — Feishu credentials saved by one-click onboarding (also written to the DSH credential store).
   - `<workDir>/.dsh-connect-images/` — user images/attachments staged for the agent's tools.
   - DSH's own session logs and settings under `~/.dsh/` (sessions, settings, etc.).
 - **Network**
   - Feishu Open Platform: WebSocket long connection (or webhook over public HTTPS), plus HTTPS API calls (media download, cards).
   - LLM provider APIs used by DSH for the agent's model (e.g. DeepSeek), plus the optional vision model.
 - **User data** — message text and attachments flow through the bot to the agent session; they are stored in the DSH session log like any DSH conversation. The allowlists (`allowUsers` / `allowChats`) limit who can drive the bot.
+
+## User settings
+
+The web settings pane (`dsh-connect` under **Settings**) edits the `dsh-connect`
+section of `$DSH_HOME/settings.yaml`, through DSH's own first-party settings
+seam. That document is hot-reloaded, written atomically under a file lock, and
+keeps your comments — so editing it by hand works too, and a change takes
+effect without a restart.
+
+Values resolve in three layers, most specific last:
+
+1. the schema defaults shipped with the plugin;
+2. the plugin's own `cordis.patch.yml` entry (your existing config is *not*
+   discarded — it is the registered base layer);
+3. the `dsh-connect` section in `settings.yaml`.
+
+**Secrets are never written to `settings.yaml`.** It is a plain document users
+are invited to paste into bug reports, so credentials stay in the DSH
+credential store (`ctx.credentials`) — which is also where one-click onboarding
+and the `FEISHU_*`-style environment variables put them. The pane shows secret
+fields as *configured / not configured*, never as values.
+
+The legacy `/dsh-connect` HTTP RPC is retained for panel compatibility; it now
+reads and writes the same namespace, and mirrors non-secret config to
+`settingsStatePath` (see [Shared](#shared-all-channels)) for older panels.
+
+### Credential groups
+
+A channel counts as *configured* when **any one** of its credential groups is
+fully satisfied, and each group is satisfied only when **all** of its refs are
+set — all-of within a group, any-of across groups. A channel with no groups
+(`web`) is configured by definition and never shows a warning badge.
+
+The grouping exists because a channel can have more than one mutually exclusive
+way to authenticate, and requiring all of them would wrongly report a working
+bot as unconfigured:
+
+| Channel | Groups |
+|---|---|
+| `feishu` | app id + app secret |
+| `telegram` | bot token |
+| `dingtalk` | webhook URL + sign secret — *or* — stream client id + client secret |
+| `web` | none |
+
+So a DingTalk bot using only webhook push (no stream credentials) is correctly
+reported as configured, as is one using only stream mode.
 
 ## Troubleshooting
 

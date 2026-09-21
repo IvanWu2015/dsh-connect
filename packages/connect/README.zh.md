@@ -118,7 +118,7 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 |---|---|---|
 | `channels` | 全部内置 | 启用哪些通道：`feishu` / `telegram` / `dingtalk` / `web`。省略则启用全部内置通道。 |
 | `channelDefaults` | `{}` | 应用到未单独设置该键的每个通道（如 `{ language: "zh" }`）。 |
-| `settingsStatePath` | — | Web 设置面板持久化非密钥配置的路径（如 `.dsh-connect/settings.json`）。 |
+| `settingsStatePath` | `<stateDir>/dsh-connect-settings.json` | Web 设置面板镜像非密钥配置的路径。默认落在 `stateDir` **之内**的 `dsh-connect-settings.json`，与 `bindings.json` 同目录，二者不会各说各话；设置该键可覆盖。自 0.9.0 起，面板的权威数据源是 `$DSH_HOME/settings.yaml` 里的 `dsh-connect` 段（见[用户设置](#用户设置)），本文件只是旧版 `/dsh-connect` RPC 读写的兼容镜像。 |
 
 ### `feishu`（飞书 / Lark 通道）
 
@@ -178,13 +178,53 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 
 - **写入的文件**
   - `<stateDir>/bindings.json`（默认 `.dsh-connect/`）—— 聊天 ⇄ 会话路由存储（聊天键、会话 id、镜像与锁状态）。
-  - `~/.dsh/.dsh-connect/feishu-credentials.json` —— 一键开通时保存的飞书凭据。
+  - `<stateDir>/dsh-connect-settings.json`（默认 `.dsh-connect/`）—— 非密钥配置的兼容镜像，见 `settingsStatePath`。
+  - `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段 —— 经由 DSH 第一方设置机制写入，原子、加锁、保留注释。
+  - `~/.dsh/.dsh-connect/feishu-credentials.json` —— 一键开通时保存的飞书凭据（同时也会写入 DSH 凭据库）。
   - `<workDir>/.dsh-connect-images/` —— 为用户图片/附件暂存，供智能体工具使用。
   - DSH 自身在 `~/.dsh/` 下的会话日志与设置（sessions、settings 等）。
 - **网络**
   - 飞书开放平台：WebSocket 长连接（或通过公网 HTTPS 的 webhook），以及 HTTPS API 调用（媒体下载、卡片）。
   - DSH 为智能体模型调用的 LLM 提供商 API（如 DeepSeek），以及可选的视觉模型。
 - **用户数据** —— 消息文本与附件经由机器人流向智能体会话；它们与任何 DSH 会话一样保存在 DSH 会话日志中。白名单（`allowUsers` / `allowChats`）限制了可以驱动机器人的人。
+
+## 用户设置
+
+Web 设置面板（**设置** 下的 `dsh-connect`）编辑的是 `$DSH_HOME/settings.yaml` 里的
+`dsh-connect` 段，走 DSH 自带的（第一方）设置机制。该文档支持热重载、在文件锁下原子写入、
+并保留你的注释——所以手工编辑它同样有效，改动无需重启即可生效。
+
+取值分三层解析，越靠后越具体：
+
+1. 插件内置的 schema 默认值；
+2. 插件自己的 `cordis.patch.yml` 条目（你现有的配置**不会**被丢弃，它注册为基础层）；
+3. `settings.yaml` 中的 `dsh-connect` 段。
+
+**密钥永远不会写入 `settings.yaml`。** 那是一份普通的、鼓励用户贴进 issue 的文档；凭据
+一律保存在 DSH 凭据库（`ctx.credentials`）——一键开通流程与 `FEISHU_*` 这类环境变量也
+正是写在那里。面板对密钥字段只显示「已配置 / 未配置」，不显示值。
+
+旧版 `/dsh-connect` HTTP RPC 为面板兼容而保留；它现在读写同一个 namespace，并把非密钥配置
+镜像到 `settingsStatePath`（见[公共（所有通道）](#公共所有通道)），以兼容旧面板。
+
+### 凭据分组
+
+当某通道的**任意一组**凭据被完整满足时，该通道即视为「已配置」；而单组内必须**全部**满足
+——组内是 all-of，组间是 any-of。没有任何分组的通道（`web`）按定义就是已配置，永远不显示
+告警徽标。
+
+之所以要分组，是因为一个通道可能有不止一种互斥的认证方式；若要求全部满足，就会把明明能用的
+机器人误报成未配置：
+
+| 通道 | 分组 |
+|---|---|
+| `feishu` | app id + app secret |
+| `telegram` | bot token |
+| `dingtalk` | webhook URL + 签名密钥 —— *或* —— Stream 模式的 client id + client secret |
+| `web` | 无 |
+
+因此，只用 webhook 推送（没有 Stream 凭据）的钉钉机器人会被正确判定为已配置，只用 Stream
+模式的同样如此。
 
 ## 故障排查
 

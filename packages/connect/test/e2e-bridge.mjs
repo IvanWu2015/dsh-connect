@@ -38,9 +38,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Context } from "@deepseek-ai/cordis";
-
-import * as connect from "../lib/index.js";
+import { makeBridge, userMessageText, waitFor } from "./bridge-harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = resolve(here, "..");
@@ -48,230 +46,89 @@ const pkgRoot = resolve(here, "..");
 const ANSWER = "pong-from-e2e";
 const INBOUND_TEXT = "ping from the e2e bridge test";
 
-/** Poll `predicate` until it holds or `timeoutMs` elapses. Returns the verdict. */
-async function waitFor(predicate, timeoutMs, intervalMs = 25) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  return predicate();
-}
-
-/** Flatten a `createUserMessage()` result down to the text it carries. */
-function userMessageText(message) {
-  const content = message?.content ?? message?.message?.content ?? [];
-  if (typeof content === "string") return content;
-  return (Array.isArray(content) ? content : [])
-    .map((block) => (typeof block === "string" ? block : (block?.text ?? "")))
-    .join("");
-}
-
 // ---------------------------------------------------------------------------
 // Leg 1: the real bridge, in-process, with a scripted agent
 // ---------------------------------------------------------------------------
 
-/**
- * A stand-in for `dsh-agent`'s `Agent` that satisfies exactly the contract
- * `AgentRunner` consumes, and nothing more:
- *
- *   `id` / `session.id` — `onSessionEvent` drops every event whose session id
- *   doesn't match the run's agent, so these must be equal.
- *   `session.seq` — snapshot point for `firstSeq`; `summarizeTurn` ignores
- *   events below it.
- *   `session.snapshotEvents()` — the durable event log.
- *   `followup(message)` — starts the turn.
- *   `whenIdle()` — resolves when the turn settles.
- *   `ctx.on("session/event" | "agent/assistant-stream")` — the live feed.
- *
- * The emitted sequence mirrors a one-step turn that ends with `completed`,
- * which is what makes `runTurn` skip the error/summary branch and send the
- * stats card carrying the answer.
- */
-function scriptedAgent(id, answer) {
-  const ctx = new Context();
-  const events = [];
-  const session = { id, seq: 0, snapshotEvents: () => events.slice() };
-  let seq = 0;
-
-  const agent = {
-    id,
-    ctx,
-    session,
-    status: "idle",
-    options: { provider: "e2e-provider", model: "e2e-model" },
-    /** Every user message the runner handed us — assertion material. */
-    followupCalls: [],
-    async followup(message) {
-      agent.followupCalls.push(message);
-      const emit = (type, data) => {
-        const event = { seq: ++seq, time: Date.now(), type, data };
-        events.push(event);
-        session.seq = seq;
-        ctx.emit("session/event", session, event);
-      };
-      emit("turn/start", {});
-      emit("step/start", {});
-      emit("request/context", { provider: "e2e-provider", model: "e2e-model", contextWindow: 65536 });
-      // The live delta feed: this is what drives the streaming card and sets
-      // `turn.lastText`. It is a separate event from `session/event`.
-      ctx.emit("agent/assistant-stream", {
-        frame: {
-          type: "chunk",
-          attemptId: 1,
-          revision: 1,
-          index: 0,
-          time: Date.now(),
-          chunk: { type: "text-delta", index: 0, text: answer },
-        },
-      });
-      emit("assistant/message", {
-        usage: { inputTokens: 1234, outputTokens: 56, cacheReadTokens: 0 },
-        message: { content: [{ type: "text", text: answer }] },
-      });
-      emit("turn/end", { reason: { kind: "completed" } });
-    },
-    async whenIdle() {},
-  };
-  return agent;
-}
-
-/** A recording adapter — the far end of the bridge, and the assertion surface. */
-function recordingAdapter(id) {
-  const sent = [];
-  const adapter = {
-    id,
-    sent,
-    async start() {},
-    async stop() {},
-    async sendText(target, text) {
-      sent.push({ kind: "text", target, text });
-    },
-    async sendCard(target, card) {
-      sent.push({ kind: "card", target, markdown: card.markdown });
-    },
-    async streamText(target, chunks) {
-      // The real adapter drains the chunk queue into an editable card; here we
-      // only need to prove the queue is properly terminated and carries the
-      // model's output.
-      let text = "";
-      for await (const chunk of chunks) text += chunk;
-      sent.push({ kind: "stream", target, text });
-    },
-    async promptChoice() {
-      return { choice: undefined, messageId: "e2e-msg" };
-    },
-    async closeMenu() {},
-    onInbound() {},
-  };
-  return adapter;
-}
-
 async function offlineLeg() {
+  // The bridge, its scripted agent and its recording adapter all come from the
+  // shared harness. Isolation matters twice over here: the temp state dir keeps
+  // bindings from leaking between runs, and `chdir` is what makes that dir
+  // effective at all — `makeBridge` refuses to run if a `dsh.shared.config.json`
+  // is reachable from the cwd, because that file's `stateDir` silently wins.
   const stateDir = mkdtempSync(join(tmpdir(), "dsh-connect-e2e-"));
-  const ctx = new Context();
+  const previousCwd = process.cwd();
+  process.chdir(stateDir);
+  try {
+    const bridge = await makeBridge({ stateDir, language: "en", planFor: { answer: ANSWER } });
+    const adapter = bridge.addAdapter("stub");
 
-  const registry = new Map();
-  let created = 0;
-  const agentCtx = new Context();
-  const agents = {
-    get: (id) => registry.get(String(id)),
-    async create({ sessionId, setup }) {
-      created += 1;
-      // `composeSetup` degrades to a no-op when the host has no presets; call
-      // it anyway so the composed setup is exercised rather than assumed.
-      await setup?.(agentCtx);
-      const agent = scriptedAgent(String(sessionId), ANSWER);
-      registry.set(String(sessionId), agent);
-      return { agent, session: agent.session };
-    },
-    async resume() {
-      throw new Error("e2e: resume is not expected on a fresh chat");
-    },
-  };
+    const inbound = {
+      channel: "stub",
+      chatKey: "chat-e2e",
+      chatType: "p2p",
+      senderKey: "user-e2e",
+      text: INBOUND_TEXT,
+      replyRef: "om-e2e-1",
+    };
 
-  ctx.provide("agents", agents);
-  ctx.provide("sessions", { flush: async () => {} });
-  ctx.provide("agentDefaultModel", { currentSelection: () => ({ provider: "e2e-provider", model: "e2e-model" }) });
-  // The credential store is a row in the always-loaded dsh-base bundle, so the
-  // plugin requires it; an in-memory stand-in keeps this leg offline.
-  const credentials = new Map();
-  ctx.provide("credentials", {
-    async resolve(ref) { return credentials.get(ref) ?? null; },
-    async describe(ref) { return { configured: credentials.has(ref) }; },
-    async set(ref, value) { credentials.set(ref, value); },
-    async unset(ref) { credentials.delete(ref); },
-  });
+    await bridge.inbound(inbound);
 
-  // No channels: `activateChannels` defaults to ALL built-ins, and feishu with
-  // no credentials would enter the interactive onboarding flow.
-  await connect.apply(ctx, { channels: [], stateDir, language: "en" });
+    // The turn runs on a detached drain, so poll rather than sleep a fixed
+    // amount — a fixed sleep is either flaky or needlessly slow. `answerCard` is
+    // the single source of truth for "the reply arrived": the exact same
+    // predicate gates the wait and the assertion below, so a mutation that
+    // breaks delivery cannot be masked by the wait quietly timing out.
+    const answerCard = () => adapter.sent.find((m) => m.kind === "card" && m.markdown.includes(ANSWER));
+    // The run's own failure path is a `sendText` *after* the ack — independent of
+    // locale, unlike matching the advice string itself.
+    const failureText = () => adapter.sent.filter((m) => m.kind === "text")[1];
+    await waitFor(() => answerCard() !== undefined || failureText() !== undefined, 10_000);
 
-  const service = ctx.get("connect");
-  assert.ok(service, "ConnectService must be registered on the context");
+    const agent = [...bridge.registry.values()][0];
+    const dump = JSON.stringify(adapter.sent, null, 2);
 
-  const adapter = recordingAdapter("stub");
-  service.registerAdapter(adapter);
+    assert.equal(failureText(), undefined, `the turn failed instead of answering; adapter saw:
+${dump}`);
+    assert.ok(agent, "the runner must have created exactly one agent session");
+    assert.equal(bridge.counts.creates, 1, "one inbound message must create exactly one session");
 
-  const inbound = {
-    channel: "stub",
-    chatKey: "chat-e2e",
-    chatType: "p2p",
-    senderKey: "user-e2e",
-    text: INBOUND_TEXT,
-    replyRef: "om-e2e-1",
-  };
+    // 1) inbound reached the agent as a user message
+    assert.equal(agent.followupCalls.length, 1, `expected exactly one agent turn; adapter saw:
+${dump}`);
+    const promptText = userMessageText(agent.followupCalls[0]);
+    assert.ok(
+      promptText.includes(INBOUND_TEXT),
+      `the agent must receive the inbound text verbatim; got ${JSON.stringify(promptText)}`,
+    );
 
-  await service.handleInbound(inbound);
+    // 2) the agent's answer came back out through the adapter
+    const card = answerCard();
+    assert.ok(card, `the assistant's answer must reach the adapter; adapter saw:
+${dump}`);
+    assert.equal(card.target.chatKey, "chat-e2e", "the reply must go to the originating chat");
 
-  // The turn runs on a detached drain, so poll rather than sleep a fixed
-  // amount — a fixed sleep is either flaky or needlessly slow. `answerCard` is
-  // the single source of truth for "the reply arrived": the exact same
-  // predicate gates the wait and the assertion below, so a mutation that
-  // breaks delivery cannot be masked by the wait quietly timing out.
-  const answerCard = () => adapter.sent.find((m) => m.kind === "card" && m.markdown.includes(ANSWER));
-  // The run's own failure path is a `sendText` *after* the ack — independent of
-  // locale, unlike matching the advice string itself.
-  const failureText = () => adapter.sent.filter((m) => m.kind === "text")[1];
-  await waitFor(() => answerCard() !== undefined || failureText() !== undefined, 10_000);
+    // 3) the streaming card saw the same text (the live delta path, not just the
+    //    durable post-turn card)
+    const streamed = adapter.sent.find((m) => m.kind === "stream");
+    assert.ok(streamed, `the streaming card must be driven and terminated; adapter saw:
+${dump}`);
+    assert.ok(streamed.text.includes(ANSWER), `the streaming card must carry the answer; got ${JSON.stringify(streamed.text)}`);
 
-  const agent = [...registry.values()][0];
-  const dump = JSON.stringify(adapter.sent, null, 2);
+    // 4) re-delivery of the same message id is still dropped upstream of the agent
+    await bridge.inbound({ ...inbound });
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(agent.followupCalls.length, 1, "a re-delivered message id must not start a second turn");
 
-  assert.equal(failureText(), undefined, `the turn failed instead of answering; adapter saw:\n${dump}`);
-  assert.ok(agent, "the runner must have created exactly one agent session");
-  assert.equal(created, 1, "one inbound message must create exactly one session");
-
-  // 1) inbound reached the agent as a user message
-  assert.equal(agent.followupCalls.length, 1, `expected exactly one agent turn; adapter saw:\n${dump}`);
-  const promptText = userMessageText(agent.followupCalls[0]);
-  assert.ok(
-    promptText.includes(INBOUND_TEXT),
-    `the agent must receive the inbound text verbatim; got ${JSON.stringify(promptText)}`,
-  );
-
-  // 2) the agent's answer came back out through the adapter
-  const card = answerCard();
-  assert.ok(card, `the assistant's answer must reach the adapter; adapter saw:\n${dump}`);
-  assert.equal(card.target.chatKey, "chat-e2e", "the reply must go to the originating chat");
-
-  // 3) the streaming card saw the same text (the live delta path, not just the
-  //    durable post-turn card)
-  const streamed = adapter.sent.find((m) => m.kind === "stream");
-  assert.ok(streamed, `the streaming card must be driven and terminated; adapter saw:\n${dump}`);
-  assert.ok(streamed.text.includes(ANSWER), `the streaming card must carry the answer; got ${JSON.stringify(streamed.text)}`);
-
-  // 4) re-delivery of the same message id is still dropped upstream of the agent
-  await service.handleInbound({ ...inbound });
-  await new Promise((r) => setTimeout(r, 250));
-  assert.equal(agent.followupCalls.length, 1, "a re-delivered message id must not start a second turn");
-
-  // Tear the context down before returning. This is not tidiness: the binding
-  // and reminder stores flush on timers, and a live service happily rewrites
-  // `bindings.json` into the state dir minutes after the assertions pass —
-  // including after the caller has already deleted it.
-  await ctx.fiber.dispose();
-  return { stateDir };
+    // Tear the context down before returning. This is not tidiness: the binding
+    // and reminder stores flush on timers, and a live service happily rewrites
+    // `bindings.json` into the state dir minutes after the assertions pass —
+    // including after the caller has already deleted it.
+    await bridge.dispose();
+    return { stateDir };
+  } finally {
+    process.chdir(previousCwd);
+  }
 }
 
 // ---------------------------------------------------------------------------
