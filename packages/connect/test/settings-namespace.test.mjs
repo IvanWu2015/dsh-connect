@@ -26,17 +26,21 @@ import {
  * handed, and it fires `onChange` again on later edits via the `setSource`
  * thunk it was given.
  */
-function fakeSettings({ user = {}, failInstall } = {}) {
+function fakeSettings({ user = {}, failInstall, failReplace } = {}) {
   const calls = [];
   const fake = {
     /** Sections the fake service holds for our namespace, keyed by ns. */
     user,
     /** Set to a message to make `installSection` throw. */
     failInstall,
+    /** Set to a message to make `replace` reject (a schema violation on write). */
+    failReplace,
     /** Last `entry` (the base layer) passed in — asserted to hold no secrets. */
     entry: undefined,
     /** A resolved value to hand back from `get()`, mimicking an earlier fiber. */
     registered: undefined,
+    /** Every section handed to `replace()`, in call order. */
+    replaced: [],
     /** Simulate the provider pushing a change (the file watcher's debounce). */
     notify() {
       calls[calls.length - 1]();
@@ -51,7 +55,24 @@ function fakeSettings({ user = {}, failInstall } = {}) {
     get(ns) {
       return ns === CONNECT_SETTINGS_NS ? fake.registered : undefined;
     },
+    /**
+     * The provider's write path. The real one resolves after the document is
+     * committed, so a read straight afterwards already sees the new value —
+     * mirrored here by storing into `user` before the promise settles.
+     */
+    async replace(ns, section, expectedRevision) {
+      if (fake.failReplace !== undefined) throw new Error(fake.failReplace);
+      fake.replaced.push({ ns, section, expectedRevision });
+      user[ns] = section;
+    },
   };
+  return fake;
+}
+
+/** The same service, minus the write path — an older provider. */
+function readOnlySettings() {
+  const fake = fakeSettings();
+  delete fake.replace;
   return fake;
 }
 
@@ -247,6 +268,75 @@ test("a service without installSection is not used, even if get() has a value", 
   const { result } = settle({ entry: { channels: ["web"] } }, { get: () => ({ channels: ["feishu"] }) });
   assert.equal(result.live, false);
   assert.deepEqual(result.section, { channels: ["web"] });
+});
+
+// --- the write handle ----------------------------------------------------
+
+test("a live install hands back a handle that reads the registration live", () => {
+  const settings = fakeSettings({ user: { [CONNECT_SETTINGS_NS]: { channels: ["feishu"] } } });
+  const { result } = settle({ entry: { channels: ["web"] } }, settings);
+
+  assert.equal(result.live, true);
+  assert.ok(result.handle, "the live path must expose a write handle");
+  assert.deepEqual(result.handle.read().channels, ["feishu"]);
+
+  // The handle reads through `setSource` → `scope.get()`, so a later edit by
+  // any writer (the provider's watcher, the host's own Plugins page) is visible
+  // without re-installing.
+  settings.user[CONNECT_SETTINGS_NS] = { channels: ["feishu", "telegram"] };
+  settings.notify();
+  assert.deepEqual(result.handle.read().channels, ["feishu", "telegram"]);
+});
+
+test("handle.write projects secrets and undeclared keys out of the submitted section", () => {
+  // The mirror of the `sectionOf` hazard: schemastery preserves undeclared keys,
+  // so a section arriving *from the pane* would persist whatever it carried —
+  // including a secret. The projection sits inside `write`, not at the call site,
+  // so no caller can bypass it.
+  const settings = fakeSettings();
+  const { result } = settle({ entry: { channels: ["feishu"] } }, settings);
+
+  return result.handle.write({
+    channels: ["feishu"],
+    feishu: { transport: "websocket", appSecret: "smuggled" },
+    settingsStatePath: "s.json",
+    rogue: "x",
+  }).then(() => {
+    assert.equal(settings.replaced.length, 1);
+    const sent = settings.replaced[0].section;
+    assert.deepEqual(sent, { channels: ["feishu"], feishu: { transport: "websocket" } });
+    // The namespace is the only store; the file-only key stays out of the document.
+    assert.equal(sent.settingsStatePath, undefined);
+    assert.ok(!JSON.stringify(settings.replaced).includes("smuggled"));
+  });
+});
+
+test("handle.write with no channels falls back to every built-in", () => {
+  const settings = fakeSettings();
+  const { result } = settle({ entry: { channels: ["feishu"] } }, settings);
+  return result.handle.write({}).then(() => {
+    assert.deepEqual(settings.replaced[0].section, { channels: [...CHANNELS] });
+  });
+});
+
+test("a provider without replace gets a read-only install: no handle", () => {
+  const { result } = settle({ entry: { channels: ["feishu"] } }, readOnlySettings());
+  assert.equal(result.live, true);
+  assert.equal(result.handle, undefined);
+});
+
+test("a rejected write propagates instead of being swallowed", () => {
+  const settings = fakeSettings({ failReplace: "ValidationError: feishu.transport" });
+  const { result } = settle({ entry: { channels: ["feishu"] } }, settings);
+  return result.handle.write({ feishu: { transport: "pigeon" } }).then(
+    () => assert.fail("a rejected write must not resolve"),
+    (error) => assert.match(error.message, /ValidationError/),
+  );
+});
+
+test("a non-live install has no handle to write through", () => {
+  const { result } = settle({ entry: { channels: ["feishu"] } }, undefined);
+  assert.equal(result.handle, undefined);
 });
 
 test("install never throws, even with no logger on the owner", () => {

@@ -260,7 +260,11 @@ test("apply wires the host credential store into the settings service", async ()
     // The pane's badge reads `credentials`; it must now reflect the store.
     const snap = await (await rpcPost(port, "settings.get")).json();
     assert.equal(snap.result.value.credentials.feishu, true);
-    assert.deepEqual(snap.result.value.secrets.feishu, { appId: "cli_9", appSecret: "sec_9" });
+    // Presence, not values: the snapshot crosses to the browser, so the secret
+    // itself must not be in it (the save above still reached the right refs —
+    // asserted against the store below).
+    assert.deepEqual(snap.result.value.secrets.feishu, { appId: true, appSecret: true });
+    assert.ok(!JSON.stringify(snap.result.value).includes("sec_9"));
   });
 
   // Secrets went to the credential store, keyed by ref — not to the config.

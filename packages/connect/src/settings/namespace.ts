@@ -27,7 +27,13 @@
  * plain document users are invited to paste into bug reports. `sectionOf()`
  * projects secret keys *out* of the base for the same reason — schemastery
  * preserves undeclared keys verbatim, so anything left in the base rides out
- * through `describe()` and the settings RPC.
+ * through `describe()` and the settings RPC. The same projection guards the
+ * write path (`LiveConnectSection.write`), which is the mirror hazard: an
+ * undeclared key in a *submitted* section would be preserved into the document.
+ *
+ * `installSection` returns nothing, so the write handle it hands back is built
+ * here: `setSource` already wires a thunk onto `scope.get()`, which reads the
+ * registration's resolved value at call time — live in both directions.
  *
  * @module dsh-connect/settings/namespace
  */
@@ -115,10 +121,14 @@ export const ConnectSectionSchema = z.object({
  * nodes declared with `role("secret")`, and we declare none — so the projection
  * is what keeps an `appSecret` from a legacy profile out of the settings
  * document and off the RPC.
+ *
+ * The argument is typed `unknown` because this doubles as the *write* guard:
+ * a section submitted through the settings RPC is untrusted JSON, and it must
+ * go through the same projection before it can reach the document.
  */
-export function sectionOf(config: ChannelsConfig | null | undefined): ConnectSection {
-  const source = (config ?? {}) as Record<string, unknown>;
-  const section: ConnectSection = { channels: (config?.channels ?? CHANNELS) as ChannelName[] };
+export function sectionOf(config: unknown): ConnectSection {
+  const source = (config !== null && typeof config === "object" ? config : {}) as Record<string, unknown>;
+  const section: ConnectSection = { channels: (source.channels ?? CHANNELS) as ChannelName[] };
 
   const defaults: Record<string, unknown> = {};
   const rawDefaults = (source.channelDefaults ?? {}) as Record<string, unknown>;
@@ -154,6 +164,31 @@ export interface SettingsProviderLike {
   ): void;
   /** Resolved value of a registered namespace, `undefined` while unregistered. */
   get?(ns: string): unknown;
+  /**
+   * Replace a registered namespace's *user* section wholesale (validated by the
+   * provider, persisted by whichever file provider is wired up). Resolves after
+   * the new value is committed, so a read straight after it is fresh.
+   *
+   * Replace rather than merge, because the settings pane always submits its
+   * complete visible config: a merge would make a cleared field un-clearable
+   * (the stale value stays in the user layer and reappears on the next read).
+   * The declared-key set is identical for both writers of this namespace (this
+   * plugin's pane and the host's own Plugins page, which renders the same
+   * schema), so a replace cannot drop anything either surface can produce.
+   */
+  replace?(ns: string, section: unknown, expectedRevision?: number): Promise<unknown>;
+}
+
+/** A live handle onto the installed namespace: read the effective section, write a new one. */
+export interface LiveConnectSection {
+  /** The section in force right now (base layered under the user's section). */
+  read(): ConnectSection;
+  /**
+   * Replace the user's section with the declared-key projection of `config`.
+   * Rejects if the provider's schema refuses the result — the caller is
+   * expected to surface that rather than swallow it.
+   */
+  write(config: unknown): Promise<void>;
 }
 
 /** Outcome of wiring the namespace. */
@@ -162,6 +197,12 @@ export interface InstallConnectSectionResult {
   live: boolean;
   /** The section in force at install time (resolved, or the entry fallback). */
   section: ConnectSection;
+  /**
+   * Read/write onto the registration. Present only when this fiber owns a live
+   * namespace *and* the provider exposes a write method; otherwise the caller
+   * keeps its own fallback (the plugin config, or the legacy state file).
+   */
+  handle?: LiveConnectSection;
 }
 
 export interface InstallConnectSectionOptions<Ctx extends LoggerLike> {
@@ -233,7 +274,24 @@ export function installConnectSection<Ctx extends LoggerLike>(
     return { live: false, section: entrySection };
   }
 
-  return { live: true, section: source() };
+  // `source` is reassigned (not rebound) by `setSource`, so a thunk closing
+  // over the variable reads whatever the provider's `scope.get()` returns now.
+  const read = (): ConnectSection => source();
+  const replace = settings.replace?.bind(settings);
+  return {
+    live: true,
+    section: source(),
+    ...(replace === undefined
+      ? {}
+      : {
+          handle: {
+            read,
+            write: async (config: unknown): Promise<void> => {
+              await replace(CONNECT_SETTINGS_NS, sectionOf(config));
+            },
+          },
+        }),
+  };
 }
 
 /** Read a namespace an earlier fiber registered, if any. */

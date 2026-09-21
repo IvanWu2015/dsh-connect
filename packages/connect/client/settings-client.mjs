@@ -20,8 +20,8 @@ export const inject = ['slots', 'connection', 'locale'];
 export const NS = 'dsh-connect';
 
 export const locale = {
-  zh: { title: 'dsh-connect', channels: '渠道', save: '保存', saved: '已保存', error: '保存失败', loading: '加载中', defaults: '公共默认(channelDefaults)', statePath: '设置文件', secret: '密钥', config: '配置', reachable: '已连接凭据', unreachable: '未配置凭据' },
-  en: { title: 'dsh-connect', channels: 'Channels', save: 'Save', saved: 'Saved', error: 'Save failed', loading: 'Loading', defaults: 'Defaults (channelDefaults)', statePath: 'Settings file', secret: 'Secret', config: 'Config', reachable: 'Credential set', unreachable: 'Credential missing' },
+  zh: { title: 'dsh-connect', channels: '渠道', save: '保存', saved: '已保存', error: '保存失败', loading: '加载中', defaults: '公共默认(channelDefaults)', statePath: '设置文件', secret: '密钥', config: '配置', reachable: '已连接凭据', unreachable: '未配置凭据', configured: '已配置（重新填写可覆盖）', livePlane: '配置存储在 settings.yaml，保存后立即生效。', filePlane: '配置存储在本地设置文件，重启 dsh 后生效。' },
+  en: { title: 'dsh-connect', channels: 'Channels', save: 'Save', saved: 'Saved', error: 'Save failed', loading: 'Loading', defaults: 'Defaults (channelDefaults)', statePath: 'Settings file', secret: 'Secret', config: 'Config', reachable: 'Credential set', unreachable: 'Credential missing', configured: 'Configured (type to replace)', livePlane: 'Stored in settings.yaml — a save takes effect immediately.', filePlane: 'Stored in a local settings file — a save applies after dsh restarts.' },
 };
 
 const h = React.createElement;
@@ -115,8 +115,14 @@ export function ConnectSettingsTab({ rpcCall, t }) {
     if (!form) return;
     setStatus('saving');
     try {
-      await saveSettings(rpc, buildConfigSave(form));
-      for (const c of buildCredentialSaves(form)) await saveCredentials(rpc, c.channel, c.values);
+      // The last snapshot in the chain wins: it is the one that reflects every
+      // write this save performed. Re-seeding the form from it also drops the
+      // typed secret values (their inputs are write-only by design) and picks up
+      // the new presence flags.
+      let snap = await saveSettings(rpc, buildConfigSave(form));
+      for (const c of buildCredentialSaves(form)) snap = await saveCredentials(rpc, c.channel, c.values);
+      setForm(snapshotToForm(snap));
+      setCreds(snap.credentials ?? {});
       setStatus('saved');
     } catch { setStatus('error'); }
   };
@@ -153,7 +159,17 @@ export function ConnectSettingsTab({ rpcCall, t }) {
         h('div', { className: 'ds-fields' },
           ...CHANNEL_SECRET_FIELDS[ch].map((field) => h('label', { className: 'ds-field', key: `sec-${field}` },
             field,
-            h('input', { className: 'ds-input', type: isMaskedSecret(field) ? 'password' : 'text', autoComplete: 'off', placeholder: field, value: form.secrets?.[ch]?.[field] ?? '', onChange: (e) => setField(ch, field, e.target.value) }))),
+            // Write-only: the host reports whether a value is stored, never the
+            // value, so an input can only ever be filled by the user typing. The
+            // placeholder carries the "already configured" signal instead.
+            h('input', {
+              className: 'ds-input',
+              type: isMaskedSecret(field) ? 'password' : 'text',
+              autoComplete: 'off',
+              placeholder: form.secretPresence?.[ch]?.[field] ? t('configured') : field,
+              value: form.secrets?.[ch]?.[field] ?? '',
+              onChange: (e) => setField(ch, field, e.target.value),
+            }))),
           ...(CHANNEL_CONFIG_FIELDS[ch] ?? []).map((field) => renderConfigField(field, form.channelConfigs?.[ch]?.[field.key], (raw) => setChannelConfig(ch, field.key, raw))),
         ),
       )),
@@ -162,9 +178,14 @@ export function ConnectSettingsTab({ rpcCall, t }) {
       h('h4', { className: 'ds-card-title' }, t('defaults')),
       h('div', { className: 'ds-fields' },
         ...CHANNEL_DEFAULT_FIELDS.map((field) => renderConfigField(field, form.channelDefaults?.[field.key], (raw) => setDefault(field.key, raw))),
-        h('label', { className: 'ds-field' }, t('statePath'),
+        // Only meaningful on the fallback plane: it names the file the pane
+        // persists to. With the namespace live that path is not consulted (and
+        // is not part of the section), so showing an editable field for it would
+        // silently swallow edits.
+        form.live ? null : h('label', { className: 'ds-field' }, t('statePath'),
           h('input', { className: 'ds-input', value: form.settingsStatePath ?? '', onChange: (e) => setForm((f) => ({ ...f, settingsStatePath: e.target.value })) })),
       ),
+      h('div', { className: 'ds-status' }, form.live ? t('livePlane') : t('filePlane')),
       h('div', { className: 'ds-actions' },
         h('button', { className: 'ds-btn', onClick: onSave, disabled: status === 'saving' }, t('save')),
         h('span', { className: 'ds-status' }, status === 'saved' ? t('saved') : status === 'error' ? t('error') : status),

@@ -25,7 +25,7 @@ import {
   type ChannelsConfig,
 } from "./settings/channels.js";
 import { ChannelRuntime } from "./settings/channel-runtime.js";
-import { installConnectSection, type SettingsProviderLike } from "./settings/namespace.js";
+import { installConnectSection, type LiveConnectSection, type SettingsProviderLike } from "./settings/namespace.js";
 import { installSettingsRpc } from "./settings/settings-rpc.js";
 import { createSettingsService } from "./settings/settings-service.js";
 import { CHANNEL_CONFIG_FIELDS } from "./settings/settings-model.js";
@@ -330,8 +330,11 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
   // host never provides it the callback never runs and the plugin config
   // stands on its own — which is exactly what `installConnectSection` falls
   // back to.
+  // Set once the namespace is live; read lazily by the settings service below,
+  // which is built before the deferred install runs.
+  let liveSection: LiveConnectSection | undefined;
   const installNamespace = (scopeCtx: Context): void => {
-    installConnectSection<Context>({
+    const installed = installConnectSection<Context>({
       owner: scopeCtx,
       settings: (scopeCtx as { get?: (name: string) => unknown }).get?.("settings") as
         | SettingsProviderLike
@@ -341,6 +344,7 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
         void runtime.apply(section as ChannelsConfig);
       },
     });
+    liveSection = installed.handle;
   };
   if (typeof (ctx as { inject?: unknown }).inject === "function") {
     (ctx as Context).inject(["settings"], installNamespace);
@@ -364,11 +368,17 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
   // reads `connection.requestRejection` for the Host/Origin + browser-auth
   // fence.
   //
-  // Web settings pane state. The pane edits a settings-shape config persisted to
-  // a JSON file and seeded from the live plugin config so it reflects the
-  // channels actually enabled. Only NON-SECRET editable fields are seeded per
-  // channel (secrets live in the credential store, never in the state file).
-  // Default the file path under the state dir so Save persists out of the box.
+  // Web settings pane state. When the namespace above is live, that registration
+  // *is* the store: the pane reads and writes `$DSH_HOME/settings.yaml` through
+  // `liveSection`, a save reconciles the adapters immediately (via the same
+  // `onChange`) and survives a restart. The JSON file below is then only a
+  // fallback for a host with no settings service, which is why the service takes
+  // the handle as a getter rather than a value.
+  //
+  // Seeded from the live plugin config so the pane reflects the channels actually
+  // enabled; only NON-SECRET editable fields per channel (secrets live in the
+  // credential store, never in either store this file touches). The fallback path
+  // is defaulted under the state dir so a save persists out of the box.
   const settingsSeed: Record<string, unknown> = {
     channels: finalCfg.channels ?? CHANNELS,
     ...(finalCfg.channelDefaults ? { channelDefaults: finalCfg.channelDefaults } : {}),
@@ -388,7 +398,12 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
   // settings service degrade to in-memory, so a pane save silently vanished.
   const settingsStatePath = finalCfg.settingsStatePath
     ?? join(resolveStateDir(finalCfg), "dsh-connect-settings.json");
-  const settingsService = createSettingsService({ statePath: settingsStatePath, credentialStore, initialConfig: settingsSeed });
+  const settingsService = createSettingsService({
+    statePath: settingsStatePath,
+    credentialStore,
+    initialConfig: settingsSeed,
+    live: () => liveSection,
+  });
   if (typeof (ctx as { inject?: unknown }).inject === "function") {
     (ctx as Context).inject(["connection", "webServer"], (scopeCtx) => {
       installSettingsRpc(scopeCtx, { service: settingsService });

@@ -1,11 +1,19 @@
 /**
- * Persistence backend for the dsh-connect web settings pane.
+ * Backend for the dsh-connect web settings pane.
  *
  * A host-side service that reads/writes the non-secret plugin settings (the
- * `dsh-connect` config: `channels`, `channelDefaults`, per-channel fields)
- * to a small JSON state file, and reports per-channel credential presence via
- * an optional DSH credential store. Secrets (appSecret/botToken) live in the
- * DSH credentials store, never in this file.
+ * `dsh-connect` config: `channels`, `channelDefaults`, per-channel fields),
+ * and reports per-channel credential presence via an optional DSH credential
+ * store. Secrets (appSecret/botToken) live in the DSH credentials store, never
+ * in the section this service writes.
+ *
+ * **Two data planes, one interface.** When the `dsh-connect` settings namespace
+ * is installed (`namespace.ts`), that *is* the store: reads come from the
+ * provider's resolved section and writes go back through it, which is what makes
+ * a pane save land in `$DSH_HOME/settings.yaml`, take effect immediately (the
+ * namespace's `onChange` reconciles the running adapters) and survive a restart.
+ * The JSON state file is the fallback for hosts without a settings service, and
+ * is written only when no namespace is live.
  *
  * @module dsh-connect/settings/settings-service
  */
@@ -14,9 +22,10 @@ import { dirname } from "node:path";
 import { CHANNELS, type ChannelName } from "./channels.js";
 import type { SettingsService, SettingsSnapshot } from "./settings-rpc.js";
 import { CHANNEL_SECRET_KEYS, type CredentialStore } from "./credential-store.js";
+import type { LiveConnectSection } from "./namespace.js";
 
 export interface SettingsServiceOptions {
-  /** JSON file to persist non-secret settings (omit = in-memory only). */
+  /** JSON file to persist non-secret settings when no namespace is live (omit = in-memory only). */
   statePath?: string;
   /** Known channel names (default: built-in channels). */
   channelNames?: readonly ChannelName[];
@@ -31,6 +40,13 @@ export interface SettingsServiceOptions {
    * per-channel) that the pane edits.
    */
   initialConfig?: Record<string, unknown>;
+  /**
+   * The live settings namespace, if one is installed. A **getter**, not a value:
+   * this service is built during the plugin's `apply`, while the namespace is
+   * registered later (the `settings` service is a `dsh-base` row that loads
+   * after a user plugin), so the handle does not exist yet at construction time.
+   */
+  live?: () => LiveConnectSection | undefined;
 }
 
 function logError(msg: string) {
@@ -49,7 +65,31 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
   const credentialStore = options.credentialStore;
   const initialConfig = options.initialConfig ?? {};
 
+  /** The live namespace handle, or undefined when the provider isn't there yet. */
+  function liveHandle(): LiveConnectSection | undefined {
+    try {
+      return options.live?.();
+    } catch (error) {
+      log(`failed to resolve the live settings section: ${String(error)}`);
+      return undefined;
+    }
+  }
+
   function readConfig(): Record<string, unknown> {
+    const live = liveHandle();
+    if (live) {
+      // The *resolved* section (plugin config layered under the user's), which
+      // is what the host's own `describe()` reports: the pane edits the config
+      // in force, not a diff against it.
+      try {
+        return { ...live.read() };
+      } catch (error) {
+        // Do not fall through to the state file: it is stale by definition once
+        // a namespace is live, and resurrecting it would be worse than empty.
+        log(`failed to read the live settings section: ${String(error)}`);
+        return { ...initialConfig };
+      }
+    }
     if (!statePath || !existsSync(statePath)) return { ...initialConfig };
     try {
       const value = JSON.parse(readFileSync(statePath, "utf8"));
@@ -74,14 +114,21 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
     const enabled = (Array.isArray(config.channels) ? config.channels : [...channels])
       .filter((name) => channels.includes(name as ChannelName)) as string[];
     const credentials: Record<string, boolean> = {};
-    const secrets: Record<string, Record<string, string>> = {};
+    // Presence only, never the values: the secret inputs are write-only in the
+    // pane. Secret *values* leave the host exactly once — when the adapter
+    // consumes them — so a browser tab (or a screenshot of one) can never leak
+    // an appSecret. See `SettingsSnapshot.secrets` in settings-rpc.ts.
+    const secrets: Record<string, Record<string, boolean>> = {};
     for (const name of channels) {
       if (credentialStore) {
         try {
           credentials[name] = await credentialStore.configured(name);
-          // Echo store-backed secret values so the pane can prefill (e.g. an
-          // upgraded user's appId). Never sourced from the state file.
-          secrets[name] = await credentialStore.get(name);
+          const values = await credentialStore.get(name);
+          const presence: Record<string, boolean> = {};
+          for (const key of Object.keys(CHANNEL_SECRET_KEYS[name] ?? {})) {
+            presence[key] = (values[key] ?? "").length > 0;
+          }
+          secrets[name] = presence;
         } catch {
           credentials[name] = false;
           secrets[name] = {};
@@ -91,7 +138,7 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
         secrets[name] = {};
       }
     }
-    return { config, enabled, credentials, secrets };
+    return { config, enabled, credentials, secrets, live: liveHandle() !== undefined };
   }
 
   return {
@@ -117,6 +164,16 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
       return snapshot(readConfig());
     },
     async save(config: Record<string, unknown>) {
+      const live = liveHandle();
+      if (live) {
+        // The payload is browser input, so it is projected onto the namespace's
+        // declared keys inside `write` before it can reach the document. A
+        // rejection (schema violation) propagates to the pane as a failed save.
+        await live.write(config);
+        // `replace` resolves after the provider committed the new value, so this
+        // read is already fresh — no waiting on the file watcher's debounce.
+        return snapshot(readConfig());
+      }
       const next = { ...readConfig(), ...config };
       persist(next);
       return snapshot(next);

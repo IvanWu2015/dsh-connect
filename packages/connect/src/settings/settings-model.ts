@@ -87,8 +87,18 @@ export interface SettingsForm {
   channels: ChannelName[];
   channelDefaults: Record<string, unknown>;
   channelConfigs: Record<string, Record<string, unknown>>;
+  /** Secret inputs the user is *typing*: written on save, never seeded by a read. */
   secrets: Record<string, Record<string, string>>;
+  /**
+   * Whether a value is already stored for a secret key, for the placeholder.
+   * Separate from `secrets` because the two have opposite lifetimes: presence
+   * comes from the snapshot and the typed values start empty and are cleared
+   * after a save — a read must never be able to populate an input.
+   */
+  secretPresence: Record<string, Record<string, boolean>>;
   settingsStatePath?: string;
+  /** True when the section lives in the settings namespace: a save is immediate and durable. */
+  live: boolean;
 }
 
 /** Build the initial form from a snapshot. */
@@ -101,11 +111,12 @@ export function snapshotToForm(snapshot: SettingsSnapshot): SettingsForm {
     channels,
     channelDefaults: (config.channelDefaults ?? {}) as Record<string, unknown>,
     channelConfigs,
-    // Echo store-backed secret values (e.g. an upgraded user's appId) so the pane
-    // prefills them. Absent keys stay blank — the pane only learns a value if it
-    // actually exists in the credential store, never from the state file.
-    secrets: (snapshot.secrets ?? {}) as Record<string, Record<string, string>>,
+    // Deliberately empty: the host reports presence, not values, so there is
+    // nothing to prefill. The user retypes a secret to rotate it.
+    secrets: {},
+    secretPresence: (snapshot.secrets ?? {}) as Record<string, Record<string, boolean>>,
     settingsStatePath: config.settingsStatePath as string | undefined,
+    live: snapshot.live === true,
   };
 }
 

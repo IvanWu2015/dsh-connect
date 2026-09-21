@@ -10,12 +10,31 @@ test("CHANNEL_SECRET_FIELDS exposes per-channel secret field names", () => {
 });
 
 test("snapshotToForm maps enabled + config into the form", () => {
-  const snap = { config: { channels: ["feishu"], channelDefaults: { language: "zh" }, feishu: { appId: "cli_1" }, settingsStatePath: "s.json" }, enabled: ["feishu"], credentials: {} };
+  const snap = { config: { channels: ["feishu"], channelDefaults: { language: "zh" }, feishu: { transport: "websocket" }, settingsStatePath: "s.json" }, enabled: ["feishu"], credentials: {}, secrets: { feishu: { appId: true } }, live: false };
   const form = snapshotToForm(snap);
   assert.deepEqual(form.channels, ["feishu"]);
   assert.deepEqual(form.channelDefaults, { language: "zh" });
-  assert.deepEqual(form.channelConfigs.feishu, { appId: "cli_1" });
+  assert.deepEqual(form.channelConfigs.feishu, { transport: "websocket" });
   assert.equal(form.settingsStatePath, "s.json");
+  assert.equal(form.live, false);
+  assert.deepEqual(form.secretPresence, { feishu: { appId: true } });
+});
+
+test("snapshotToForm never seeds a secret value — the inputs start blank", () => {
+  // The host reports presence, not values (`SettingsSnapshot.secrets`), so a
+  // read must not be able to fill an input even if some other host did send one.
+  const snap = { config: {}, enabled: [], credentials: {}, secrets: { feishu: { appSecret: "leaked" } }, live: true };
+  const form = snapshotToForm(snap);
+  assert.deepEqual(form.secrets, {});
+  assert.deepEqual(form.secretPresence, { feishu: { appSecret: "leaked" } });
+  assert.equal(form.live, true);
+});
+
+test("snapshotToForm defaults to the file plane when the host doesn't say", () => {
+  const form = snapshotToForm({ config: {}, enabled: [], credentials: {} });
+  assert.equal(form.live, false);
+  assert.deepEqual(form.secrets, {});
+  assert.deepEqual(form.secretPresence, {});
 });
 
 test("buildConfigSave emits channels, defaults, non-empty channel configs, path", () => {

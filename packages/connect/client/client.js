@@ -168,11 +168,12 @@ function snapshotToForm(snapshot) {
     channels,
     channelDefaults: config.channelDefaults ?? {},
     channelConfigs,
-    // Echo store-backed secret values (e.g. an upgraded user's appId) so the pane
-    // prefills them. Absent keys stay blank — the pane only learns a value if it
-    // actually exists in the credential store, never from the state file.
-    secrets: snapshot.secrets ?? {},
-    settingsStatePath: config.settingsStatePath
+    // Deliberately empty: the host reports presence, not values, so there is
+    // nothing to prefill. The user retypes a secret to rotate it.
+    secrets: {},
+    secretPresence: snapshot.secrets ?? {},
+    settingsStatePath: config.settingsStatePath,
+    live: snapshot.live === true
   };
 }
 function stripEmpty(obj) {
@@ -210,8 +211,8 @@ var name = "dsh-connect-settings";
 var inject = ["slots", "connection", "locale"];
 var NS = "dsh-connect";
 var locale = {
-  zh: { title: "dsh-connect", channels: "\u6E20\u9053", save: "\u4FDD\u5B58", saved: "\u5DF2\u4FDD\u5B58", error: "\u4FDD\u5B58\u5931\u8D25", loading: "\u52A0\u8F7D\u4E2D", defaults: "\u516C\u5171\u9ED8\u8BA4(channelDefaults)", statePath: "\u8BBE\u7F6E\u6587\u4EF6", secret: "\u5BC6\u94A5", config: "\u914D\u7F6E", reachable: "\u5DF2\u8FDE\u63A5\u51ED\u636E", unreachable: "\u672A\u914D\u7F6E\u51ED\u636E" },
-  en: { title: "dsh-connect", channels: "Channels", save: "Save", saved: "Saved", error: "Save failed", loading: "Loading", defaults: "Defaults (channelDefaults)", statePath: "Settings file", secret: "Secret", config: "Config", reachable: "Credential set", unreachable: "Credential missing" }
+  zh: { title: "dsh-connect", channels: "\u6E20\u9053", save: "\u4FDD\u5B58", saved: "\u5DF2\u4FDD\u5B58", error: "\u4FDD\u5B58\u5931\u8D25", loading: "\u52A0\u8F7D\u4E2D", defaults: "\u516C\u5171\u9ED8\u8BA4(channelDefaults)", statePath: "\u8BBE\u7F6E\u6587\u4EF6", secret: "\u5BC6\u94A5", config: "\u914D\u7F6E", reachable: "\u5DF2\u8FDE\u63A5\u51ED\u636E", unreachable: "\u672A\u914D\u7F6E\u51ED\u636E", configured: "\u5DF2\u914D\u7F6E\uFF08\u91CD\u65B0\u586B\u5199\u53EF\u8986\u76D6\uFF09", livePlane: "\u914D\u7F6E\u5B58\u50A8\u5728 settings.yaml\uFF0C\u4FDD\u5B58\u540E\u7ACB\u5373\u751F\u6548\u3002", filePlane: "\u914D\u7F6E\u5B58\u50A8\u5728\u672C\u5730\u8BBE\u7F6E\u6587\u4EF6\uFF0C\u91CD\u542F dsh \u540E\u751F\u6548\u3002" },
+  en: { title: "dsh-connect", channels: "Channels", save: "Save", saved: "Saved", error: "Save failed", loading: "Loading", defaults: "Defaults (channelDefaults)", statePath: "Settings file", secret: "Secret", config: "Config", reachable: "Credential set", unreachable: "Credential missing", configured: "Configured (type to replace)", livePlane: "Stored in settings.yaml \u2014 a save takes effect immediately.", filePlane: "Stored in a local settings file \u2014 a save applies after dsh restarts." }
 };
 var h = React.createElement;
 var STYLE = `
@@ -305,8 +306,10 @@ function ConnectSettingsTab({ rpcCall, t }) {
     if (!form) return;
     setStatus("saving");
     try {
-      await saveSettings(rpc, buildConfigSave(form));
-      for (const c of buildCredentialSaves(form)) await saveCredentials(rpc, c.channel, c.values);
+      let snap = await saveSettings(rpc, buildConfigSave(form));
+      for (const c of buildCredentialSaves(form)) snap = await saveCredentials(rpc, c.channel, c.values);
+      setForm(snapshotToForm(snap));
+      setCreds(snap.credentials ?? {});
       setStatus("saved");
     } catch {
       setStatus("error");
@@ -359,7 +362,17 @@ function ConnectSettingsTab({ rpcCall, t }) {
             "label",
             { className: "ds-field", key: `sec-${field}` },
             field,
-            h("input", { className: "ds-input", type: isMaskedSecret(field) ? "password" : "text", autoComplete: "off", placeholder: field, value: form.secrets?.[ch]?.[field] ?? "", onChange: (e) => setField(ch, field, e.target.value) })
+            // Write-only: the host reports whether a value is stored, never the
+            // value, so an input can only ever be filled by the user typing. The
+            // placeholder carries the "already configured" signal instead.
+            h("input", {
+              className: "ds-input",
+              type: isMaskedSecret(field) ? "password" : "text",
+              autoComplete: "off",
+              placeholder: form.secretPresence?.[ch]?.[field] ? t("configured") : field,
+              value: form.secrets?.[ch]?.[field] ?? "",
+              onChange: (e) => setField(ch, field, e.target.value)
+            })
           )),
           ...(CHANNEL_CONFIG_FIELDS[ch] ?? []).map((field) => renderConfigField(field, form.channelConfigs?.[ch]?.[field.key], (raw) => setChannelConfig(ch, field.key, raw)))
         )
@@ -373,13 +386,18 @@ function ConnectSettingsTab({ rpcCall, t }) {
         "div",
         { className: "ds-fields" },
         ...CHANNEL_DEFAULT_FIELDS.map((field) => renderConfigField(field, form.channelDefaults?.[field.key], (raw) => setDefault(field.key, raw))),
-        h(
+        // Only meaningful on the fallback plane: it names the file the pane
+        // persists to. With the namespace live that path is not consulted (and
+        // is not part of the section), so showing an editable field for it would
+        // silently swallow edits.
+        form.live ? null : h(
           "label",
           { className: "ds-field" },
           t("statePath"),
           h("input", { className: "ds-input", value: form.settingsStatePath ?? "", onChange: (e) => setForm((f) => ({ ...f, settingsStatePath: e.target.value })) })
         )
       ),
+      h("div", { className: "ds-status" }, form.live ? t("livePlane") : t("filePlane")),
       h(
         "div",
         { className: "ds-actions" },

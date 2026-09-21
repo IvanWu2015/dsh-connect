@@ -40,12 +40,23 @@ export interface SettingsSnapshot {
   /** Per-channel credential presence (true = stored & set). */
   credentials: Record<string, boolean>;
   /**
-   * Per-channel secret values echoed back for the pane to prefill (e.g. so an
-   * upgraded user sees their appId). Sourced ONLY from the credential store — never
-   * from the settings state file, which stays secret-free. Values that aren't in
-   * the store are absent (the pane renders a blank field).
+   * Per-channel, per-config-key secret **presence** (true = a value is stored
+   * for that key) — never the values themselves. The pane's secret inputs are
+   * write-only and use this to show 「已配置」 as a placeholder; it has no way to
+   * read a stored secret back.
+   *
+   * This used to echo the values, which put an `appSecret` into browser state
+   * and every screenshot of the settings page. The values now leave the host
+   * exactly once, when the adapter consumes them (`injectSecrets`).
    */
-  secrets?: Record<string, Record<string, string>>;
+  secrets?: Record<string, Record<string, boolean>>;
+  /**
+   * True when the `dsh-connect` settings namespace is live, i.e. this config is
+   * stored in `$DSH_HOME/settings.yaml` and a save takes effect immediately.
+   * False means the legacy JSON state file is behind this pane: the settings
+   * path control still applies, and a save needs a restart.
+   */
+  live?: boolean;
 }
 
 /** The service backing the RPC; supplied by the web-settings integration. */
