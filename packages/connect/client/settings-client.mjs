@@ -20,8 +20,8 @@ export const inject = ['slots', 'connection', 'locale'];
 export const NS = 'dsh-connect';
 
 export const locale = {
-  zh: { title: '连接设置', channels: '渠道', save: '保存', saved: '已保存', error: '保存失败', loading: '加载中', defaults: '公共默认(channelDefaults)', statePath: '设置文件', secret: '密钥', config: '配置', reachable: '已连接凭据', unreachable: '未配置凭据' },
-  en: { title: 'Connection Settings', channels: 'Channels', save: 'Save', saved: 'Saved', error: 'Save failed', loading: 'Loading', defaults: 'Defaults (channelDefaults)', statePath: 'Settings file', secret: 'Secret', config: 'Config', reachable: 'Credential set', unreachable: 'Credential missing' },
+  zh: { title: 'dsh-connect', channels: '渠道', save: '保存', saved: '已保存', error: '保存失败', loading: '加载中', defaults: '公共默认(channelDefaults)', statePath: '设置文件', secret: '密钥', config: '配置', reachable: '已连接凭据', unreachable: '未配置凭据' },
+  en: { title: 'dsh-connect', channels: 'Channels', save: 'Save', saved: 'Saved', error: 'Save failed', loading: 'Loading', defaults: 'Defaults (channelDefaults)', statePath: 'Settings file', secret: 'Secret', config: 'Config', reachable: 'Credential set', unreachable: 'Credential missing' },
 };
 
 const h = React.createElement;

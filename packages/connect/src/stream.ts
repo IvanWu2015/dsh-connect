@@ -72,7 +72,7 @@ export interface StreamChunkLike {
 }
 
 /**
- * Assemble one `assistant/chunk` event into the streaming queue with visible
+ * Assemble one streamed chunk into the streaming queue with visible
  * structure. DSH streams one block per LLM content block and block boundaries
  * carry no newline of their own, so without separators every block (and the
  * reasoning phase vs the final answer) would be glued together in the chat
@@ -83,7 +83,8 @@ export interface StreamChunkLike {
  * `lastPushAt` so the liveness heartbeat knows the card is still moving.
  * @param state - the turn's mutable assembly state.
  * @param thinkingHint - localized hint text pushed at the first reasoning delta.
- * @param chunk - the assistant chunk event's `chunk` payload.
+ * @param chunk - one `agent/assistant-stream` `chunk` frame's `chunk` payload
+ *   (or an equivalent chunk replayed from a settled `assistant/message`).
  */
 /** Every line-break run becomes a paragraph break (Feishu's streaming card collapses single `\n`). */
 function expandLineBreaks(text: string): string {

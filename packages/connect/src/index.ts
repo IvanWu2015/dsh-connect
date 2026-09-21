@@ -15,6 +15,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { ConnectService } from "./service.js";
 import type { ConnectConfig } from "./runner.js";
+import { resolveStateDir } from "./state-dir.js";
 import {
   activateChannels,
   CHANNELS,
@@ -32,7 +33,7 @@ import {
   type CredentialStore,
   type CredentialsProvider,
 } from "./settings/credential-store.js";
-import { register as feishuRegister } from "./channels/feishu/index.js";
+import { register as feishuRegister, loadCredentials } from "./channels/feishu/index.js";
 import { register as telegramRegister } from "./channels/telegram/index.js";
 import { register as dingtalkRegister } from "./channels/dingtalk/index.js";
 import { register as webRegister } from "./channels/web/index.js";
@@ -98,6 +99,55 @@ export * as settings from "./settings/index.js";
  * (non-empty string, at their real flat/nested location) are migrated. Secrets
  * still never reach the settings state file — they only move into the store.
  */
+async function seedCredentialRefs(
+  provider: CredentialsProvider,
+  secretKeys: Record<string, string>,
+  secrets: Record<string, string>,
+): Promise<void> {
+  for (const [configKey, ref] of Object.entries(secretKeys)) {
+    const value = secrets[configKey];
+    if (value === undefined) continue;
+    let alreadyConfigured = false;
+    try {
+      alreadyConfigured = (await provider.describe(ref)).configured === true;
+    } catch {
+      alreadyConfigured = false;
+    }
+    if (alreadyConfigured) continue;
+    try {
+      await provider.set(ref, value);
+    } catch {
+      // Per-ref migration failure should never block activation.
+    }
+  }
+}
+
+/**
+ * Fold credentials left behind by the legacy one-click onboarding file into the
+ * store. Feishu's onboarding predates the credential store and wrote its own
+ * JSON, which nothing but the adapter read — so a user who onboarded before the
+ * store existed had a working bot that the settings pane reported as
+ * 「未配置凭据」 forever. Migration is idempotent and never overwrites a value the
+ * store already holds.
+ */
+async function migrateOnboardedSecrets(
+  provider: CredentialsProvider,
+  enabled: readonly ChannelName[],
+): Promise<void> {
+  if (!enabled.includes("feishu")) return;
+  let onboarded: { appId: string; appSecret: string } | null = null;
+  try {
+    onboarded = loadCredentials();
+  } catch {
+    return;
+  }
+  if (onboarded === null) return;
+  await seedCredentialRefs(provider, CHANNEL_SECRET_KEYS.feishu, {
+    appId: onboarded.appId,
+    appSecret: onboarded.appSecret,
+  });
+}
+
 async function migrateConfigSecrets(
   provider: CredentialsProvider,
   cfg: ConnectSettingsConfig,
@@ -109,37 +159,32 @@ async function migrateConfigSecrets(
     const raw = (cfg as Record<string, unknown>)[ch] as Record<string, unknown> | undefined;
     const secrets = extractConfigSecrets(raw, ch, secretKeys);
     if (Object.keys(secrets).length === 0) continue;
-    for (const [configKey, ref] of Object.entries(secretKeys)) {
-      const value = secrets[configKey];
-      if (value === undefined) continue;
-      let alreadyConfigured = false;
-      try {
-        alreadyConfigured = (await provider.describe(ref)).configured === true;
-      } catch {
-        alreadyConfigured = false;
-      }
-      if (!alreadyConfigured) {
-        try {
-          await provider.set(ref, value);
-        } catch {
-          // Per-ref migration failure should never block activation.
-        }
-      }
-    }
+    await seedCredentialRefs(provider, secretKeys, secrets);
   }
+  await migrateOnboardedSecrets(provider, enabled);
 }
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = "connect";
 
 /**
- * Host-plane services this plugin must wait for before `apply` runs. All three
- * are provided by the base bundle. The credential store is NOT listed here:
- * cordis v4 has no `?` optional-inject marker — `"credentials?"` would be treated
- * as a required service literally named "credentials?" and stall the plugin. The
- * store is instead fetched lazily inside `apply` via the optional `ctx.get()`.
+ * Host-plane services this plugin must wait for before `apply` runs. All four
+ * are rows in the always-loaded `@deepseek-ai/dsh-base` bundle — the shared core
+ * of every base-backed profile — so requiring them cannot stall the plugin in
+ * any profile that can load `dsh-connect` at all.
+ *
+ * `credentials` must be listed here, not read lazily inside `apply`: a
+ * `ctx.get("credentials")` at apply time returns `undefined`, because this
+ * plugin activates before the credentials row does. That silently disabled the
+ * whole credential path — `migrateConfigSecrets` never seeded the store (so an
+ * upgraded user's working channels displayed "未配置凭据"), `injectSecrets`
+ * never merged store-backed secrets into a channel config, and
+ * `settings.saveCredentials` threw `not-configured` for every pane save. Note
+ * cordis v4 has no `?` optional-inject marker, so `"credentials?"` would be read
+ * as a required service literally named `"credentials?"` — that is a syntax
+ * hazard, not a reason the service itself is unavailable.
  */
-export const inject = ["agents", "sessions", "agentDefaultModel"];
+export const inject = ["agents", "sessions", "agentDefaultModel", "credentials"];
 
 /**
  * Full plugin config: the channel-agnostic core fields plus the channel
@@ -220,9 +265,12 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
   const cfg: ConnectSettingsConfig = { ...(config ?? {}) };
   const connect = new ConnectService(ctx, cfg);
 
-  // Optional DSH credentials store: report presence + inject secrets into each
-  // channel config so store-backed secrets reach the adapter without the config
-  // file carrying them (they apply on the next plugin load).
+  // DSH credentials store: report presence + inject secrets into each channel
+  // config so store-backed secrets reach the adapter without the config file
+  // carrying them. `credentials` is a declared inject (see `inject` above), so
+  // it is guaranteed present by the time `apply` runs; the optional `ctx.get()`
+  // read is kept only so a bare context (unit tests) degrades to "no store"
+  // rather than throwing.
   const credentialsProvider = (ctx as { get?: (name: string) => unknown }).get?.("credentials") as CredentialsProvider | undefined;
   let credentialStore: CredentialStore | undefined;
   if (credentialsProvider) {
@@ -245,7 +293,9 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
 
   // Each channel's register receives the connect instance directly.
   const channels: Record<string, ChannelApply<Context>> = {
-    feishu: (_ctx, channelConfig) => feishuRegister(connect, channelConfig, _ctx),
+    // Feishu additionally gets the credential store so a completed one-click
+    // onboarding lands in the DSH store (and not only in its own legacy file).
+    feishu: (_ctx, channelConfig) => feishuRegister(connect, channelConfig, _ctx, { credentialStore }),
     telegram: (_ctx, channelConfig) => telegramRegister(connect, channelConfig, _ctx),
     dingtalk: (_ctx, channelConfig) => dingtalkRegister(connect, channelConfig, _ctx),
     web: (_ctx, channelConfig) => webRegister(connect, channelConfig, _ctx),
@@ -253,14 +303,21 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
 
   activateChannels<Context>(ctx, finalCfg, channels);
 
-  // Expose the web-settings RPC. The host `connection` service is loaded as a
-  // base plugin AFTER this user plugin's apply runs, so a plain optional inject
-  // would see `ctx.connection === undefined` (installSettingsRpc would no-op and
-  // no `/dsh-connect` channel would be mounted → the settings pane hangs on
-  // "加载中"). Instead defer the registration into a nested injection scope that
-  // waits for `connection` to be ready — the same pattern dsh-api-gateway uses
-  // for its `/api` RPC. If the host never provides `connection` (non-web
-  // runtime), the callback never runs and the RPC is simply absent.
+  // Expose the web-settings RPC. The host `connection`/`webServer` services are
+  // loaded as base plugins AFTER this user plugin's apply runs, so a plain
+  // optional inject would see `ctx.connection === undefined` and mount nothing
+  // (the settings pane then hangs on "加载中"). Instead defer the registration
+  // into a nested injection scope that waits for both to be ready — the same
+  // pattern dsh-api-gateway uses for its `/api` route. If the host never
+  // provides them (non-web runtime), the callback never runs and the RPC is
+  // simply absent.
+  //
+  // Both services are required in the injected set: `installSettingsRpc` mounts
+  // the channel as a `prefix` route on `webServer` itself (see its doc for why
+  // `connection.rpc.handle` cannot be used for a third-party channel), and it
+  // reads `connection.requestRejection` for the Host/Origin + browser-auth
+  // fence.
+  //
   // Web settings pane state. The pane edits a settings-shape config persisted to
   // a JSON file and seeded from the live plugin config so it reflects the
   // channels actually enabled. Only NON-SECRET editable fields are seeded per
@@ -278,12 +335,17 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
     }
     if (Object.keys(nonSecret).length) settingsSeed[ch] = nonSecret;
   }
+  // Resolve through the shared helper and off the *merged* config, so the state
+  // file lands beside `bindings.json` and can't disagree with the stores. This
+  // used to read the raw `cfg.stateDir`, which made the path `undefined` for
+  // every profile that never set `stateDir` — and an undefined path made the
+  // settings service degrade to in-memory, so a pane save silently vanished.
   const settingsStatePath = finalCfg.settingsStatePath
-    ?? (cfg.stateDir ? join(cfg.stateDir, "dsh-connect-settings.json") : undefined);
+    ?? join(resolveStateDir(finalCfg), "dsh-connect-settings.json");
   const settingsService = createSettingsService({ statePath: settingsStatePath, credentialStore, initialConfig: settingsSeed });
   if (typeof (ctx as { inject?: unknown }).inject === "function") {
-    (ctx as Context).inject(["connection"], (connectionCtx) => {
-      installSettingsRpc(connectionCtx, { service: settingsService });
+    (ctx as Context).inject(["connection", "webServer"], (scopeCtx) => {
+      installSettingsRpc(scopeCtx, { service: settingsService });
     });
   } else {
     // Fallback for a bare context without the inject-scope API: try directly.

@@ -10,6 +10,8 @@ export type ChannelName = "feishu" | "telegram" | "dingtalk" | "web";
 
 /** Config for the connect plugin: which channels + their per-channel config. */
 export interface ChannelsConfig {
+  /** Directory holding `bindings.json` / `reminders.json` / the settings document. */
+  stateDir?: string;
   /** Optional path to persist web-settings edits (non-secret). */
   settingsStatePath?: string;
   /** Keys applied to every channel that doesn't set its own (e.g. a shared `language`). */

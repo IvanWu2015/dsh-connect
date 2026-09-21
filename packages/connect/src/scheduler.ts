@@ -13,6 +13,8 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
+import { resolveStateDir } from "./state-dir.js";
+
 /** One pending (or fired) reminder. */
 export interface ScheduledReminder {
   id: string;
@@ -96,8 +98,7 @@ export class ReminderStore {
   private reminders: ScheduledReminder[] = [];
 
   constructor(stateDir?: string) {
-    const dir = stateDir ?? process.env.DSH_CONNECT_STATE_DIR ?? ".dsh-connect";
-    this.file = resolve(dir, "reminders.json");
+    this.file = resolve(resolveStateDir({ stateDir }), "reminders.json");
     this.load();
   }
 

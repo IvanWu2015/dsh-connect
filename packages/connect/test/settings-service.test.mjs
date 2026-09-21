@@ -60,7 +60,10 @@ test("save creates the parent directory", async () => {
 });
 
 test("credentialStore presence is surfaced in the snapshot", async () => {
-  const credentialStore = { configured: async (n) => n === "feishu", save: async () => {}, clear: async () => {} };
+  // Must expose `get` as well as `configured`: the snapshot builder reads both
+  // inside one `try`, so a store missing `get` throws there and every channel
+  // silently reports "not configured".
+  const credentialStore = { configured: async (n) => n === "feishu", get: async () => ({}), save: async () => {}, clear: async () => {} };
   const svc = createSettingsService({ statePath: tmpFile(), credentialStore });
   const snap = await svc.get();
   assert.equal(snap.credentials.feishu, true);

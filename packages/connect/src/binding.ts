@@ -8,6 +8,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
+import { resolveStateDir } from "./state-dir.js";
+
 /** One historical conversation for a chat. */
 export interface ChatSessionRecord {
   sessionId: string;
@@ -91,8 +93,7 @@ export class BindingStore {
   private readonly changeListeners = new Set<BindingChangeCallback>();
 
   constructor(stateDir?: string) {
-    const dir = stateDir ?? process.env.DSH_CONNECT_STATE_DIR ?? ".dsh-connect";
-    this.file = resolve(dir, "bindings.json");
+    this.file = resolve(resolveStateDir({ stateDir }), "bindings.json");
     this.load();
   }
 

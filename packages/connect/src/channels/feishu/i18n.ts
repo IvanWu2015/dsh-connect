@@ -19,6 +19,8 @@ export interface FeishuMessages {
   actionStale: string;
   doneHeader: string;
   onboardingEnter: string;
+  /** Non-interactive host (no TTY): say what to do instead of starting a scan. */
+  onboardingSkipped: string;
   onboardingIncomplete: string;
   onboardingSuccess(appId: string): string;
   onboardingFailed(code: string): string;
@@ -40,6 +42,7 @@ const zh: FeishuMessages = {
   actionStale: "⚠️ 此操作已失效（可能已被处理或已过期）。",
   doneHeader: "✅ 完成",
   onboardingEnter: "connect-feishu: 未配置 appId/appSecret，进入一键接入模式（扫码或点击链接自动创建飞书应用）。",
+  onboardingSkipped: "connect-feishu: 未配置飞书凭据，且当前不是交互式终端，跳过一键接入。请在设置面板 dsh-connect 中填写 appId/appSecret。",
   onboardingIncomplete: "connect-feishu: 一键接入未完成，可重启重试，或手动配置 appId/appSecret。",
   onboardingSuccess: (appId) => `connect-feishu: 一键接入成功（${appId}），正在连接…`,
   onboardingFailed: (code) => `[connect-feishu] 一键接入失败：${code}`,
@@ -61,6 +64,7 @@ const en: FeishuMessages = {
   actionStale: "⚠️ This action is no longer active (already handled or expired).",
   doneHeader: "✅ Done",
   onboardingEnter: "connect-feishu: no appId/appSecret configured — entering one-click onboarding (scan or open the link to auto-create the Feishu app).",
+  onboardingSkipped: "connect-feishu: no Feishu credentials configured and this host is not an interactive terminal — skipping one-click onboarding. Enter appId/appSecret in the dsh-connect settings pane.",
   onboardingIncomplete: "connect-feishu: onboarding not completed — restart to retry, or configure appId/appSecret manually.",
   onboardingSuccess: (appId) => `connect-feishu: onboarding succeeded (${appId}), connecting…`,
   onboardingFailed: (code) => `[connect-feishu] onboarding failed: ${code}`,

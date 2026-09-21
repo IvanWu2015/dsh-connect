@@ -25,10 +25,12 @@
 
 | 方面 | 值 |
 |---|---|
-| DSH 版本 | `^0.1.0-rc.6`（peer `@deepseek-ai/dsh-agent`、`dsh-llm`、`dsh-session`） |
+| DSH 版本 | `^0.1.5-rc.2`（peer `@deepseek-ai/dsh-agent`、`dsh-llm`、`dsh-session`） |
 | Cordis | `^4.0.1` |
 | Node.js | ≥ 20（ESM，`NodeNext`） |
-| 最后验证 | **2026-08-16**，在 Windows（飞书 WebSocket 传输）上针对 DSH `0.1.0-rc.6` 验证 |
+| 最后验证 | **2026-09-21**，在 Windows 上针对 DSH `0.1.5-rc.2` 验证（宿主加载、飞书 WebSocket 传输、Web 设置面板） |
+
+**peer 版本线必须与宿主保持同步。** 上游不提供 changelog 或迁移说明，因此过期的版本范围是插件与静默损坏之间唯一的屏障：DSH `0.1.5-rc.2` 直接删除了 `Session.events` 访问器和 `assistant/chunk` 事件类型，而所有 `dsh-*` 包共用同一条版本线。升级 DSH 时，请把 `dsh-agent`、`dsh-llm`、`dsh-session` 的 `peerDependencies`（以及 `devDependencies`）**一起**上调，重新运行 `tsc`，并重跑测试套件 —— 当版本范围与宿主版本不再有交集时，就是桥接需要再次迁移的信号。
 
 插件运行在 DSH **Host 平面**（进程级单例服务）上，而不是在智能体预设内部。
 

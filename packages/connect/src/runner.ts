@@ -1,7 +1,11 @@
 /**
  * Per-chat agent driver: serializes inbound messages, creates/resumes the bound
- * DSH agent (with preset composition + model selection), and bridges the live
- * `session/event` stream into the adapter's streaming reply.
+ * DSH agent (with preset composition + model selection), and bridges two live
+ * feeds into the adapter's streaming reply: the durable `session/event` stream
+ * (turn, tool, todo and settlement events) and the transient
+ * `agent/assistant-stream` frames that carry the model's deltas. Since
+ * 0.1.5-rc.2 the deltas are no longer session events — `assistant/chunk` is
+ * gone — so the two subscriptions are separate and both are required.
  * @module dsh-connect/runner
  */
 import { randomUUID } from "node:crypto";
@@ -9,7 +13,13 @@ import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { copyFile, readFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
-import { SessionId, SessionStore, type Session, type SessionEvent, type TodoItem } from "@deepseek-ai/dsh-session";
+import { SessionId, SessionStore, type Session, type SessionEvent } from "@deepseek-ai/dsh-session";
+// `todo/write` and its `TodoItem` payload are declared by the todo tool, not by
+// dsh-session: the base bundle merges them into `SessionEventMap` at build time,
+// so this plugin only sees the event type if the declaring package is in the
+// program. The base bundle always ships it, so this is a compile-time-only edge
+// and the entry is erased (`import type`) — no runtime import of the tool.
+import type { TodoItem } from "@deepseek-ai/dsh-tool-todo";
 import { AgentRegistry, type Agent, type AgentHandle, type ModelSelection } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, ReasoningEffortId, type ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { ChannelAdapter, ChoiceOption, InboundMessage, OutboundTarget, SummaryCard, TurnOutcome, TurnReason } from "./types.js";
@@ -30,6 +40,7 @@ import {
   type StreamState,
 } from "./stream.js";
 import { helpText, parseCommand, type Command } from "./commands.js";
+import { resolveStateDir } from "./state-dir.js";
 import { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces, PROGRESS_PRESET_MS, type MenuId, type MenuItem } from "./menus.js";
 import { MenuController, type MenuHost } from "./menu-controller.js";
 import type { BindingStore, ChatBinding, ChatSessionRecord } from "./binding.js";
@@ -300,15 +311,6 @@ export class AgentRunner implements MenuHost {
       }
     }
 
-    if (event.type === "assistant/chunk") {
-      const chunk = event.data.chunk as unknown as StreamChunkLike;
-      // First reasoning delta = the milestone the proactive progress notice reports.
-      if (chunk.type === "reasoning-delta" && turn.milestone === undefined) {
-        turn.milestone = this.t.progressThinking;
-      }
-      applyStreamChunk(turn, this.t.thinkingHint, chunk, this.notifyLevel);
-      return;
-    }
     if (event.type === "tool/call") {
       const name = event.data.name as string | undefined;
       if (typeof name !== "string" || name === "") return;
@@ -732,6 +734,26 @@ export class AgentRunner implements MenuHost {
     agent.ctx.on("session/event", (session, event) => {
       this.onSessionEvent(session, event);
     });
+    // Live model deltas. Deltas used to arrive as `assistant/chunk` session
+    // events; that type is gone, and a turn's stream is now durable only at
+    // settlement (embedded in `assistant/message` / `assistant/attempt`). The
+    // live feed is this separate agent-scoped event instead — `dsh-scope`
+    // routes it by its `agent` subject, so a listener on `agent.ctx` sees only
+    // this agent's frames, exactly like the `session/event` subscription above
+    // (no id filter needed). Frames carry real `StreamChunk`s, so
+    // `applyStreamChunk` is unchanged.
+    agent.ctx.on("agent/assistant-stream", ({ frame }) => {
+      const turn = this.turn;
+      if (turn === undefined) return;
+      // `start` / `end` only bracket the attempt; the card is driven by chunks.
+      if (frame.type !== "chunk") return;
+      const chunk = frame.chunk as StreamChunkLike;
+      // First reasoning delta = the milestone the proactive progress notice reports.
+      if (chunk.type === "reasoning-delta" && turn.milestone === undefined) {
+        turn.milestone = this.t.progressThinking;
+      }
+      applyStreamChunk(turn, this.t.thinkingHint, chunk, this.notifyLevel);
+    });
   }
 
   private async driveAgent(agent: Agent, msg: InboundMessage): Promise<TurnOutcome> {
@@ -830,7 +852,7 @@ export class AgentRunner implements MenuHost {
       });
     }
 
-    const outcome = summarizeTurn(agent.session.events, firstSeq);
+    const outcome = summarizeTurn(agent.session.snapshotEvents(), firstSeq);
     const text = outcome.text !== "" ? outcome.text : this.turn.lastText;
     this.turn = undefined;
     return { ...outcome, text };
@@ -1080,7 +1102,7 @@ export class AgentRunner implements MenuHost {
   private readTodos(): TodoItem[] {
     const agent = this.agent;
     if (agent === undefined) return [];
-    const events = agent.session.events;
+    const events = agent.session.snapshotEvents();
     for (let i = events.length - 1; i >= 0; i--) {
       const event = events[i];
       if (event.type === "todo/write") return [...event.data.todos];
@@ -1614,7 +1636,7 @@ export class AgentRunner implements MenuHost {
 
   /** Extract the most recent turn's completion info from session events. */
   private getLastTurnInfo(agent: Agent): { reason: TurnReason; completedAt: string } | undefined {
-    const events = agent.session.events;
+    const events = agent.session.snapshotEvents();
     for (let i = events.length - 1; i >= 0; i--) {
       const event = events[i];
       if (event.type === "turn/end") {
@@ -1658,7 +1680,9 @@ export class AgentRunner implements MenuHost {
     lines.push(this.t.progressSetting(this.progressTimeoutMs === 0 ? this.t.progressOff : this.t.progressMinutes(Math.round(this.progressTimeoutMs / 60_000))));
     lines.push(this.t.allowUsersField(this.config.allowUsers.length, this.config.allowUsers.length === 0));
     lines.push(this.t.allowChatsField(this.config.allowChats.length, this.config.allowChats.length === 0));
-    lines.push(this.t.stateDirField(this.config.stateDir ?? ".dsh-connect"));
+    // Show the directory the stores actually resolve to (config → env → default),
+    // not the raw config value, so the status card can't disagree with disk.
+    lines.push(this.t.stateDirField(resolveStateDir(this.config)));
     await this.adapter.sendText(target, lines.join("\n"));
   }
 
@@ -1900,7 +1924,7 @@ export class AgentRunner implements MenuHost {
       await this.adapter.sendText(target, this.t.historySessions(sessions.length, lines.join("\n")));
       return;
     }
-    const events = agent.session.events;
+    const events = agent.session.snapshotEvents();
     const rows: string[] = [];
     for (let i = events.length - 1; i >= 0 && rows.length < limit; i--) {
       const e = events[i];
@@ -1959,7 +1983,7 @@ export class AgentRunner implements MenuHost {
   async showSchedule(target: OutboundTarget): Promise<void> {
     // Agent-level reminders (session `schedule` tool) + persistent chat-level
     // reminders (`/remind`), merged into one list.
-    const agentReminders = this.agent === undefined ? [] : foldReminders(this.agent.session.events);
+    const agentReminders = this.agent === undefined ? [] : foldReminders(this.agent.session.snapshotEvents());
     const persisted = this.reminders?.listFor(this.channel, this.chatKey) ?? [];
     const now = Date.now();
     const locale = this.language === "en" ? "en-US" : "zh-CN";
@@ -2161,7 +2185,7 @@ export class AgentRunner implements MenuHost {
    * Generate Markdown representation of the conversation history.
    */
   private generateMarkdown(agent: Agent): string {
-    const events = agent.session.events;
+    const events = agent.session.snapshotEvents();
     const lines: string[] = [];
     
     // Header

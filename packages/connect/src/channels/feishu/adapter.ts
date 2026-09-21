@@ -295,6 +295,12 @@ export interface FeishuConfig {
   dmMode?: "open" | "allowlist" | "pair" | "disabled";
   /** Bind one DSH session per group thread instead of one per chat (default false). */
   threadIsolation?: boolean;
+  /**
+   * Allow the interactive one-click onboarding flow when no credentials are
+   * configured (default true). Set `false` to never start it — the adapter then
+   * just warns, which is what a supervisor-managed deployment wants.
+   */
+  onboarding?: boolean;
   /** User-facing message language: `zh` (default) or `en`. */
   language?: Language;
 }

@@ -34,7 +34,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
-// packages/connect/client/settings-client.mjs
+// client/settings-client.mjs
 var settings_client_exports = {};
 __export(settings_client_exports, {
   ConnectSettingsTab: () => ConnectSettingsTab,
@@ -47,11 +47,12 @@ __export(settings_client_exports, {
 module.exports = __toCommonJS(settings_client_exports);
 var React = __toESM(require("react"), 1);
 
-// packages/connect/lib/settings/settings-rpc.js
+// lib/settings/settings-rpc.js
 var SETTINGS_RPC_CHANNEL = "/dsh-connect";
 var SETTINGS_ENDPOINTS = Object.freeze(["settings.get", "settings.save", "credentials.save", "settings.status"]);
+var MAX_BODY_BYTES = 1024 * 1024;
 
-// packages/connect/lib/settings/rpc-client.js
+// lib/settings/rpc-client.js
 var RpcError = class extends Error {
   constructor(code, message) {
     super(message);
@@ -78,13 +79,10 @@ function saveCredentials(rpcCall, channel, values) {
   return callRpc(rpcCall, "credentials.save", { channel, values });
 }
 
-// packages/connect/lib/settings/credential-store.js
-var CREDENTIAL_REFS = Object.freeze({
-  feishu: ["DSH_CONNECT_FEISHU_APP_ID", "DSH_CONNECT_FEISHU_APP_SECRET"],
-  telegram: ["DSH_CONNECT_TELEGRAM_BOT_TOKEN"],
-  dingtalk: ["DSH_CONNECT_DINGTALK_WEBHOOK_URL", "DSH_CONNECT_DINGTALK_SECRET"],
-  web: []
-});
+// lib/settings/channels.js
+var CHANNELS = ["feishu", "telegram", "dingtalk", "web"];
+
+// lib/settings/credential-store.js
 var CHANNEL_SECRET_KEYS = Object.freeze({
   feishu: { appId: "DSH_CONNECT_FEISHU_APP_ID", appSecret: "DSH_CONNECT_FEISHU_APP_SECRET" },
   telegram: { botToken: "DSH_CONNECT_TELEGRAM_BOT_TOKEN" },
@@ -96,8 +94,26 @@ var CHANNEL_SECRET_KEYS = Object.freeze({
   },
   web: {}
 });
+var CREDENTIAL_GROUPS = Object.freeze({
+  feishu: [["DSH_CONNECT_FEISHU_APP_ID", "DSH_CONNECT_FEISHU_APP_SECRET"]],
+  telegram: [["DSH_CONNECT_TELEGRAM_BOT_TOKEN"]],
+  dingtalk: [
+    ["DSH_CONNECT_DINGTALK_WEBHOOK_URL", "DSH_CONNECT_DINGTALK_SECRET"],
+    ["DSH_CONNECT_DINGTALK_CLIENT_ID", "DSH_CONNECT_DINGTALK_CLIENT_SECRET"]
+  ],
+  web: []
+});
+var CREDENTIAL_REFS = Object.freeze(Object.fromEntries(CHANNELS.map((channel) => [channel, groupRefs(channel)])));
+function groupRefs(channel) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const group of CREDENTIAL_GROUPS[channel] ?? []) {
+    for (const ref of group)
+      seen.add(ref);
+  }
+  return Object.freeze([...seen]);
+}
 
-// packages/connect/lib/settings/settings-model.js
+// lib/settings/settings-model.js
 var CHANNEL_SECRET_FIELDS = Object.fromEntries(Object.entries(CHANNEL_SECRET_KEYS).map(([ch, map]) => [ch, Object.keys(map ?? {})]));
 var CHANNEL_CONFIG_FIELDS = {
   feishu: [
@@ -189,13 +205,13 @@ function buildCredentialSaves(form) {
   return out;
 }
 
-// packages/connect/client/settings-client.mjs
+// client/settings-client.mjs
 var name = "dsh-connect-settings";
 var inject = ["slots", "connection", "locale"];
 var NS = "dsh-connect";
 var locale = {
-  zh: { title: "\u8FDE\u63A5\u8BBE\u7F6E", channels: "\u6E20\u9053", save: "\u4FDD\u5B58", saved: "\u5DF2\u4FDD\u5B58", error: "\u4FDD\u5B58\u5931\u8D25", loading: "\u52A0\u8F7D\u4E2D", defaults: "\u516C\u5171\u9ED8\u8BA4(channelDefaults)", statePath: "\u8BBE\u7F6E\u6587\u4EF6", secret: "\u5BC6\u94A5", config: "\u914D\u7F6E", reachable: "\u5DF2\u8FDE\u63A5\u51ED\u636E", unreachable: "\u672A\u914D\u7F6E\u51ED\u636E" },
-  en: { title: "Connection Settings", channels: "Channels", save: "Save", saved: "Saved", error: "Save failed", loading: "Loading", defaults: "Defaults (channelDefaults)", statePath: "Settings file", secret: "Secret", config: "Config", reachable: "Credential set", unreachable: "Credential missing" }
+  zh: { title: "dsh-connect", channels: "\u6E20\u9053", save: "\u4FDD\u5B58", saved: "\u5DF2\u4FDD\u5B58", error: "\u4FDD\u5B58\u5931\u8D25", loading: "\u52A0\u8F7D\u4E2D", defaults: "\u516C\u5171\u9ED8\u8BA4(channelDefaults)", statePath: "\u8BBE\u7F6E\u6587\u4EF6", secret: "\u5BC6\u94A5", config: "\u914D\u7F6E", reachable: "\u5DF2\u8FDE\u63A5\u51ED\u636E", unreachable: "\u672A\u914D\u7F6E\u51ED\u636E" },
+  en: { title: "dsh-connect", channels: "Channels", save: "Save", saved: "Saved", error: "Save failed", loading: "Loading", defaults: "Defaults (channelDefaults)", statePath: "Settings file", secret: "Secret", config: "Config", reachable: "Credential set", unreachable: "Credential missing" }
 };
 var h = React.createElement;
 var STYLE = `

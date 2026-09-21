@@ -14,7 +14,9 @@ import * as feishu from "../lib/channels/feishu/index.js";
 
 // ── cordis plugin contract (compile-time exports are mirrored at runtime) ──
 assert.equal(connect.name, "connect");
-assert.deepEqual(connect.inject, ["agents", "sessions", "agentDefaultModel"]);
+// `credentials` is required, not optional: it is a row in the always-loaded
+// dsh-base bundle, and reading it lazily left the credential store unbuilt.
+assert.deepEqual(connect.inject, ["agents", "sessions", "agentDefaultModel", "credentials"]);
 assert.equal(typeof connect.apply, "function");
 assert.equal(typeof connect.ConnectService, "function");
 

@@ -25,10 +25,19 @@ The **all-in-one plugin** for connecting [DeepSeek Harness](https://github.com/d
 
 | Aspect | Value |
 |---|---|
-| DSH version | `^0.1.0-rc.6` (peer `@deepseek-ai/dsh-agent`, `dsh-llm`, `dsh-session`) |
+| DSH version | `^0.1.5-rc.2` (peer `@deepseek-ai/dsh-agent`, `dsh-llm`, `dsh-session`) |
 | Cordis | `^4.0.1` |
 | Node.js | ≥ 20 (ESM, `NodeNext`) |
-| Last verified | **2026-08-16** against DSH `0.1.0-rc.6` on Windows (Feishu WebSocket transport) |
+| Last verified | **2026-09-21** against DSH `0.1.5-rc.2` on Windows (host load, Feishu WebSocket transport, web-settings pane) |
+
+**Keep the peer range in step with the host.** Upstream ships no changelog or
+migration guide, so a stale range is the only thing standing between this plugin
+and silent breakage: DSH `0.1.5-rc.2` deleted the `Session.events` accessor and
+the `assistant/chunk` event type outright, and every `dsh-*` package is versioned
+on the same line. When you upgrade DSH, bump `peerDependencies` (and
+`devDependencies`) for `dsh-agent`, `dsh-llm` and `dsh-session` together, re-run
+`tsc`, and re-run the test suite — a range that no longer overlaps the host
+version is the signal that the bridge needs another migration.
 
 The plugin runs on the DSH **Host plane** (process-level singleton services), not inside an agent preset.
 

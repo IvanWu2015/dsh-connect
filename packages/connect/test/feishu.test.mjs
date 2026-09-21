@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { padLabels, buildButtonGrid, buildSelectMenu, buildChoiceElements, sanitizeFileName, extractErrorDetail, encodeChatKey, decodeChatKey, classifyFeishuFile } from "../lib/channels/feishu/index.js";
 
@@ -147,3 +150,61 @@ test("buildChoiceElements groups keep buttons even when large in auto mode", () 
   const grouped = buildChoiceElements({ title: "t", options: opts, sections, render: "auto" }, 2);
   assert.notEqual(grouped[0].tag, "action");
 });
+
+// --- onboarding gate -------------------------------------------------------
+// `register` used to unconditionally start the interactive one-click onboarding
+// flow when credentials were missing. In a headless host that prints a QR/link
+// nobody can scan and parks a timer for the life of the process. The gate makes
+// the non-interactive path a warning instead.
+
+/** Minimal ctx/connect doubles for `register`. */
+function registerHarness() {
+  const warnings = [];
+  const registered = [];
+  const ctx = { logger: { warn: (...args) => warnings.push(args.join(" ")) } };
+  const connect = { registerAdapter: (adapter) => registered.push(adapter) };
+  return { ctx, connect, warnings, registered };
+}
+
+/**
+ * Run `body` with no credential source visible. `register` resolves credentials
+ * from three places — its config, `FEISHU_*` env vars, and a JSON file under
+ * `$DSH_HOME` — so a developer machine with any of those set would otherwise
+ * take the "already configured" path and silently stop testing the gate.
+ */
+function withoutCredentials(body) {
+  const savedHome = process.env.DSH_HOME;
+  const savedId = process.env.FEISHU_APP_ID;
+  const savedSecret = process.env.FEISHU_APP_SECRET;
+  process.env.DSH_HOME = join(mkdtempSync(join(tmpdir(), "dsh-connect-gate-")), "home");
+  delete process.env.FEISHU_APP_ID;
+  delete process.env.FEISHU_APP_SECRET;
+  try {
+    return body();
+  } finally {
+    if (savedHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = savedHome;
+    if (savedId === undefined) delete process.env.FEISHU_APP_ID; else process.env.FEISHU_APP_ID = savedId;
+    if (savedSecret === undefined) delete process.env.FEISHU_APP_SECRET; else process.env.FEISHU_APP_SECRET = savedSecret;
+  }
+}
+
+test("register skips onboarding when the host is not interactive", () =>
+  withoutCredentials(async () => {
+    const { register } = await import("../lib/channels/feishu/index.js");
+    const { ctx, connect, warnings, registered } = registerHarness();
+    // No credentials anywhere: without the gate this would enter the scan flow.
+    register(connect, { appId: undefined, appSecret: undefined }, ctx, { interactive: false });
+    assert.equal(registered.length, 0);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /跳过一键接入/);
+    assert.doesNotMatch(warnings[0], /进入一键接入/);
+  }));
+
+test("register honors onboarding:false even on an interactive host", () =>
+  withoutCredentials(async () => {
+    const { register } = await import("../lib/channels/feishu/index.js");
+    const { ctx, connect, warnings, registered } = registerHarness();
+    register(connect, { onboarding: false }, ctx, { interactive: true });
+    assert.equal(registered.length, 0);
+    assert.match(warnings[0], /跳过一键接入/);
+  }));

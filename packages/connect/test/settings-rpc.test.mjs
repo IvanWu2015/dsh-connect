@@ -58,20 +58,27 @@ test("service throw -> settings-failed envelope", async () => {
   assert.equal(res.error.code, "settings-failed");
 });
 
-test("installSettingsRpc no-ops without a host rpc handle", () => {
+test("installSettingsRpc no-ops without a webServer", () => {
   const dispose = installSettingsRpc({}, { service: { get: async () => snapshot, save: async () => snapshot, status: async () => snapshot } });
   assert.equal(typeof dispose, "function");
 });
 
-test("installSettingsRpc registers the channel when rpc.handle exists", () => {
-  const calls = [];
-  const ctx = { connection: { rpc: { handle: (channel, handler, opts) => { calls.push({ channel, handler, opts }); return () => {}; } } } };
+// The channel is mounted on `webServer` directly, NOT through the host's
+// `connection.rpc.handle`: that helper is context-tracked and resolves
+// `webServer` against the connection service's own construction fiber, so it
+// throws `cannot get property "webServer" without inject` for a third-party
+// channel and the route is never mounted.
+test("installSettingsRpc mounts a prefix route on webServer", () => {
+  const routes = [];
+  const ctx = { webServer: { register: (route) => { routes.push(route); return () => { routes.pop(); }; } } };
   const dispose = installSettingsRpc(ctx, { service: { get: async () => snapshot, save: async () => snapshot, status: async () => snapshot } });
   assert.equal(typeof dispose, "function");
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].channel, SETTINGS_RPC_CHANNEL);
-  assert.deepEqual(calls[0].opts, { authority: "loopback" });
-  assert.equal(typeof calls[0].handler, "function");
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].kind, "prefix");
+  assert.equal(routes[0].path, SETTINGS_RPC_CHANNEL);
+  assert.equal(typeof routes[0].handler, "function");
+  dispose();
+  assert.equal(routes.length, 0);
 });
 test("credentials.save dispatches channel+values to the service", async () => {
   const calls = [];
