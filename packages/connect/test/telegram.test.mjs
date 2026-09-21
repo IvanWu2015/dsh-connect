@@ -232,23 +232,37 @@ test("telegram adapter: a p2p text message normalizes to exactly the inbound sha
   await feed(adapter, { update_id: 1, message: textMessage() });
   // deepEqual, not a field-by-field check: `normalizeMessage` builds the
   // optional keys by conditional spread, so this pins that a message with no
-  // media and no reply carries none of them (an always-present `images: []`
-  // would make the core's "has attachments" checks permanently true).
+  // media carries none of the media keys (an always-present `images: []` would
+  // make the core's "has attachments" checks permanently true). `replyRef` is
+  // unconditional — it is this message's own id, and the core dedups on it.
   assert.deepEqual(seen, [
-    { channel: "telegram", chatKey: "42", chatType: "p2p", senderKey: "7", text: "hello" },
+    { channel: "telegram", chatKey: "42", chatType: "p2p", senderKey: "7", text: "hello", replyRef: "100" },
   ]);
 });
 
-test("telegram adapter: a reply binds replyRef to the replied-to message id", async () => {
+test("telegram adapter: replyRef is the message's own id, replies included (regression: it carried the replied-to id)", async () => {
   const { adapter } = makeAdapter();
   const seen = collecting(adapter);
+  await feed(adapter, { update_id: 1, message: textMessage({ message_id: 101 }) });
   await feed(adapter, {
-    update_id: 1,
-    message: textMessage({ message_id: 101, reply_to_message: textMessage({ message_id: 99 }) }),
+    update_id: 2,
+    message: textMessage({ message_id: 102, reply_to_message: textMessage({ message_id: 99 }) }),
   });
-  // `sendText` turns `target.replyRef` straight into `reply_to_message_id`, so
-  // this value is what decides which message the bot's answer threads under.
-  assert.equal(seen[0].replyRef, "99");
+  await feed(adapter, {
+    update_id: 3,
+    message: textMessage({ message_id: 103, reply_to_message: textMessage({ message_id: 99 }) }),
+  });
+  // `replyRef` is the dedup key (`InboundDedup` keys on the channel, chat and
+  // this value) *and* the id `sendText` threads the answer under. Reporting the
+  // replied-to id made every ordinary message id-less to the dedup guard — no
+  // protection against a re-delivered update — and collapsed two different
+  // replies to the same bot message onto one key, silently dropping the second.
+  assert.deepEqual(seen.map((m) => m.replyRef), ["101", "102", "103"]);
+  assert.equal(
+    new Set(seen.map((m) => m.replyRef)).size,
+    3,
+    "two replies to the same bot message must stay distinguishable",
+  );
 });
 
 test("telegram adapter: the bot's own messages never reach the handler", async () => {

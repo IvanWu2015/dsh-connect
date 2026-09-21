@@ -4,6 +4,7 @@
  * @module dsh-connect/service
  */
 import { Service, type Context } from "@deepseek-ai/cordis";
+import { baseChatId } from "./chat-key.js";
 import { readFileSync, existsSync } from "node:fs";
 import { basename, join, dirname } from "node:path";
 import type { ChannelAdapter, InboundMessage } from "./types.js";
@@ -289,14 +290,28 @@ export class ConnectService extends Service {
    */
   isChatAllowed(channel: string, chatKey: string, senderKey: string): boolean {
     if (this.config.allowUsers.length > 0 && !this.config.allowUsers.includes(senderKey)) return false;
-    if (this.config.allowChats.length > 0 && !this.config.allowChats.includes(chatKey)) return false;
+    // Compare on the base chat id. Adapters that scope a conversation more
+    // finely (Feishu `threadIsolation` → `chatId:thread=<rootId>`) hand this
+    // method the plain chat id in their pre-download check but the encoded key
+    // in the core re-check; without the reduction the pre-check lets the
+    // message through and the core then drops every thread of an allowlisted
+    // chat. `allowChats` is documented as chat ids, so the base id is the
+    // right unit for it.
+    if (this.config.allowChats.length > 0 && !this.config.allowChats.includes(baseChatId(chatKey))) return false;
     void channel; // allowlists are global; kept for a future per-channel policy
     return true;
   }
 
   /** Entry point every adapter forwards normalized messages into. */
   async handleInbound(msg: InboundMessage): Promise<void> {
-    if (!this.isAllowed(msg)) return;
+    if (!this.isAllowed(msg)) {
+      // Logged on purpose: an allowlist that disagrees with an adapter's own
+      // pre-check otherwise shows up only as "the bot silently ignores me".
+      this.ctx.logger?.warn?.(
+        `connect: inbound dropped by allowlist (${msg.channel}/${msg.chatKey} sender=${msg.senderKey})`,
+      );
+      return;
+    }
     const adapter = this.adapters.get(msg.channel);
     if (adapter === undefined) return;
 

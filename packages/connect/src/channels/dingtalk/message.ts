@@ -44,6 +44,12 @@ export function normalizeBotMessage(raw: DingtalkBotMessage, channel = "dingtalk
   if (typeof raw.conversationId !== "string" || raw.conversationId === "") return undefined;
   if (typeof raw.senderStaffId !== "string" || raw.senderStaffId === "") return undefined;
   const text = raw.msgType === "text" ? (raw.text?.content ?? "") : "";
+  // Nothing for the agent to act on: a non-text payload (image, file, sticker,
+  // recall notice) normalizes to an empty body, and stream mode carries no
+  // attachment download. Running a turn on it would burn a model call and post
+  // a reply to a message the user never sent. Same guard the Telegram adapter
+  // applies when it has no media either.
+  if (text.trim() === "") return undefined;
   return {
     channel,
     chatKey: raw.conversationId,

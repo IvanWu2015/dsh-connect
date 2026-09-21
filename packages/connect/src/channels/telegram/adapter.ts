@@ -321,7 +321,13 @@ export class TelegramAdapter implements ChannelAdapter {
       chatType,
       senderKey,
       text,
-      ...(message.reply_to_message === undefined ? {} : { replyRef: String(message.reply_to_message.message_id) }),
+      // `replyRef` identifies THIS message — the core dedups inbound events on
+      // it (a re-delivered update must not queue twice) and the outbound path
+      // echoes it back as `reply_to_message_id` so the bot answers the message
+      // that triggered it. Reporting `reply_to_message.message_id` instead made
+      // every ordinary message id-less for dedup, and made two different
+      // replies to the same bot message collapse into one key.
+      replyRef: String(message.message_id),
       ...(images.length > 0 ? { images } : {}),
       ...(files.length > 0 ? { files } : {}),
       ...(imageError === undefined ? {} : { imageError }),

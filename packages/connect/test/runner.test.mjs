@@ -443,3 +443,47 @@ test("E2 a chat with no overrides takes the plugin config", () =>
     assert.equal(runner.notifyLevel, "result");
     assert.equal(runner.progressTimeoutMs, 5 * 60_000, "the documented 5-minute default");
   }));
+
+// ---------------------------------------------------------------------------
+// F. The allowlist gate, against thread-scoped chat keys
+// ---------------------------------------------------------------------------
+
+test("F1 a thread-scoped chat key matches the allowlist on its base chat id", () =>
+  withBridge({ config: { allowChats: ["oc_allowed"] } }, async (bridge) => {
+    const { service } = bridge;
+    // `allowChats` is documented as chat ids, and that is what an adapter
+    // holding only the pre-download chat id passes in. The core, however, sees
+    // the key the channel encoded — with Feishu threadIsolation that is
+    // `chatId:thread=<rootId>`. Comparing the raw keys made the two gates
+    // disagree: the adapter's pre-check passed and the core then dropped every
+    // thread message of an allowlisted chat, with nothing logged.
+    assert.equal(service.isChatAllowed("feishu", "oc_allowed", "u1"), true, "adapter pre-check shape");
+    assert.equal(service.isChatAllowed("feishu", "oc_allowed:thread=om_root", "u1"), true, "core re-check shape");
+    // The reduction must not turn the allowlist into "allow everything".
+    assert.equal(service.isChatAllowed("feishu", "oc_other", "u1"), false);
+    assert.equal(service.isChatAllowed("feishu", "oc_other:thread=om_root", "u1"), false);
+    // A chat id that merely *contains* the separator is not a thread key: only
+    // the suffix is stripped, never an arbitrary prefix match.
+    assert.equal(service.isChatAllowed("feishu", "oc_allowed:thread=", "u1"), true, "empty thread id → base id");
+  }));
+
+test("F2 a thread message in an allowlisted chat is routed, not silently dropped", () =>
+  withBridge({ config: { allowChats: ["oc_allowed"] } }, async (bridge) => {
+    // chatType is irrelevant to the gate; the chat *key* is what is under test.
+    // Two channel ids, because `registerAdapter` rejects a duplicate.
+    const allowed = bridge.addAdapter("allowed");
+    await bridge.inbound(inboundFor("allowed", "oc_allowed:thread=om_root"));
+    // Routing builds the runner synchronously; before the fix this chat had
+    // none and the adapter was never told the message existed.
+    assert.ok(bridge.runnerFor("allowed", "oc_allowed:thread=om_root"), "the allowed thread must get a runner");
+    await waitFor(() => texts(allowed).length > 0, 5_000);
+    assert.ok(texts(allowed)[0].text.startsWith(EN_ACK), "the allowed thread must get a real turn");
+
+    // A chat that was never allowlisted stays denied — the fix widens the key
+    // comparison, not the policy.
+    const denied = bridge.addAdapter("denied");
+    await bridge.inbound(inboundFor("denied", "oc_other:thread=om_root"));
+    await settle();
+    assert.equal(bridge.runnerFor("denied", "oc_other:thread=om_root"), undefined, "no runner for a denied chat");
+    assert.deepEqual(texts(denied), [], "a non-allowlisted chat must stay silent");
+  }));

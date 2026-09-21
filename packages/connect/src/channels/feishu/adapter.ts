@@ -19,6 +19,7 @@ import type {
   SummaryCard,
 } from "../../types.js";
 import type { Language } from "../../i18n.js";
+import { baseChatId, encodeChatKey } from "../../chat-key.js";
 import { feishuMessages, type FeishuMessages } from "./i18n.js";
 
 /** Zero-width / variation-selector chars that render at width 0. */
@@ -220,23 +221,6 @@ function collectStream(stream: NodeJS.ReadableStream, maxBytes = 20 * 1024 * 102
     stream.on("end", () => done(Buffer.concat(chunks)));
     stream.on("error", (err: Error) => failed(err));
   });
-}
-
-/**
- * Encode a chatKey with an optional thread id. With `threadIsolation` on, a
- * group message inside a thread gets `chatId:thread=<rootId>` as its chatKey,
- * so each thread binds its own DSH session while outbound sends still target
- * the base chat id (replies land in the thread via replyRef).
- */
-export function encodeChatKey(chatId: string, threadId?: string): string {
-  return threadId === undefined || threadId === "" ? chatId : `${chatId}:thread=${threadId}`;
-}
-
-/** Decode a possibly thread-scoped chatKey back to its base chat id. */
-export function decodeChatKey(chatKey: string): { chatId: string; threadId?: string } {
-  const sep = chatKey.indexOf(":thread=");
-  if (sep === -1) return { chatId: chatKey };
-  return { chatId: chatKey.slice(0, sep), threadId: chatKey.slice(sep + 8) };
 }
 
 /** Image extensions Feishu delivers as inline images; everything else is a file. */
@@ -619,7 +603,7 @@ export class FeishuAdapter implements ChannelAdapter {
 
   /** Base chat id for outbound sends (strips any `:thread=` suffix). */
   private chatIdOf(chatKey: string): string {
-    return decodeChatKey(chatKey).chatId;
+    return baseChatId(chatKey);
   }
 
   async sendText(target: OutboundTarget, text: string): Promise<void> {

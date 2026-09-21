@@ -256,10 +256,23 @@ test("normalizeBotMessage maps gateway payloads to InboundMessage", () => {
 test("normalizeBotMessage drops unroutable payloads", () => {
   assert.equal(normalizeBotMessage({}), undefined);
   assert.equal(normalizeBotMessage({ conversationId: "cid", senderStaffId: "" }), undefined);
-  // Non-text messages carry no usable text body but still route (empty text).
-  const pic = normalizeBotMessage({ senderStaffId: "s", conversationId: "c", conversationType: "1", msgType: "picture" });
-  assert.equal(pic.text, "");
-  assert.equal(pic.chatKey, "c");
+});
+
+test("normalizeBotMessage drops payloads with no usable text body (regression: they ran an empty turn)", () => {
+  const route = { senderStaffId: "s", conversationId: "c", conversationType: "1" };
+  // Non-text payloads (picture, file, sticker, recall notice) normalize to an
+  // empty body, and stream mode downloads no attachments for them — so the
+  // agent had nothing to act on while still burning a turn and posting a reply
+  // to a message the user never sent. Same guard the Telegram adapter applies
+  // when it has no media either.
+  assert.equal(normalizeBotMessage({ ...route, msgType: "picture" }), undefined);
+  assert.equal(normalizeBotMessage({ ...route, msgType: "text" }), undefined);
+  assert.equal(normalizeBotMessage({ ...route, msgType: "text", text: { content: "   \n" } }), undefined);
+  // Whitespace around a real body is the gateway's @-mention padding, not a
+  // reason to drop the message.
+  const padded = normalizeBotMessage({ ...route, msgType: "text", text: { content: " @bot 排期" } });
+  assert.equal(padded.text, " @bot 排期");
+  assert.equal(padded.chatKey, "c");
 });
 
 test("isAtMentioned gates group messages", () => {
@@ -401,6 +414,9 @@ test("dingtalk adapter: unroutable payloads are dropped before the handler", asy
     textMessage({ conversationId: "" }),
     textMessage({ senderStaffId: undefined }),
     textMessage({ senderStaffId: "" }),
+    // Routable, but with nothing to say: dropped for the same reason.
+    textMessage({ msgType: "picture" }),
+    textMessage({ msgType: "text", text: { content: "  " } }),
   ]) {
     const { adapter } = makeAdapter();
     const seen = collecting(adapter);
