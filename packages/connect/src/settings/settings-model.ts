@@ -96,6 +96,13 @@ export interface SettingsForm {
    * after a save — a read must never be able to populate an input.
    */
   secretPresence: Record<string, Record<string, boolean>>;
+  /**
+   * Host-masked previews of the stored secrets, so the user can confirm what
+   * they configured. Rendered as read-only text and **never** fed into
+   * `secrets`: a masked value is not a credential, and treating one as a value
+   * to save would overwrite a working secret with its own mask.
+   */
+  secretPreviews: Record<string, Record<string, string>>;
   settingsStatePath?: string;
   /** True when the section lives in the settings namespace: a save is immediate and durable. */
   live: boolean;
@@ -111,10 +118,14 @@ export function snapshotToForm(snapshot: SettingsSnapshot): SettingsForm {
     channels,
     channelDefaults: (config.channelDefaults ?? {}) as Record<string, unknown>,
     channelConfigs,
-    // Deliberately empty: the host reports presence, not values, so there is
-    // nothing to prefill. The user retypes a secret to rotate it.
+    // Deliberately empty even though `secretPreviews` carries something: an
+    // input is a place to *type a new* secret, and prefilling it with the mask
+    // would either overwrite the stored secret with its own preview on save, or
+    // train the user to think a masked value is the real one. The preview is
+    // rendered beside the input instead.
     secrets: {},
     secretPresence: (snapshot.secrets ?? {}) as Record<string, Record<string, boolean>>,
+    secretPreviews: (snapshot.secretPreviews ?? {}) as Record<string, Record<string, string>>,
     settingsStatePath: config.settingsStatePath as string | undefined,
     live: snapshot.live === true,
   };

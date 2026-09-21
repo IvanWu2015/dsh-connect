@@ -205,6 +205,34 @@ function sameDir(a: string, b: string): boolean {
 /** How often the proactive progress watchdog re-checks whether a status card is due (ms). */
 const PROGRESS_WATCHDOG_CHECK_MS = 15_000;
 
+/**
+ * The slice of the host `agentPresets` service this runner uses.
+ *
+ * `list` is optional because it is consulted only while recovering from an
+ * unusable configured id: a host that does not expose it still gets
+ * {@link FALLBACK_PRESET_ID} tried on its own.
+ */
+interface PresetService {
+  resolve(id?: string): Promise<{ id: string; broken?: string }>;
+  list?(): Promise<Array<{ id: string; broken?: string }>>;
+  mount(agentCtx: Context, id: string): Promise<unknown>;
+}
+
+/**
+ * Preset composed when the configured one cannot be used.
+ *
+ * `standard` is the roster's general-purpose preset and ships in every build,
+ * so it is the safest thing to fall back to. The roster still gets asked first
+ * — if it disagrees the first mountable row wins, and only a roster with no
+ * usable row at all leaves the agent uncomposted.
+ */
+const FALLBACK_PRESET_ID = "standard";
+
+/** How a preset id reads in a log line: a quoted id, or the roster's default. */
+function describePreset(id: string | undefined): string {
+  return id === undefined || id === "" ? "the roster default" : JSON.stringify(id);
+}
+
 export class AgentRunner implements MenuHost {
   private readonly queue: InboundMessage[] = [];
   private running = false;
@@ -723,14 +751,16 @@ export class AgentRunner implements MenuHost {
    * report it) while the actual LLM requests keep using the old default.
    * The default model still seeds the agent through `agentOptions` in
    * `ensureAgent`, which `buildRequest` uses as its fallback route.
+   *
+   * Preset resolution is best-effort — see {@link resolvePresetId}. This method
+   * never throws for a preset reason, so no configuration id can stop a turn
+   * from composing an agent at all.
    */
   private async composeSetup(_selection: ModelSelection): Promise<{
     agentPreset?: string;
     setup: (agentCtx: Context) => void | Promise<void>;
   }> {
-    const presets = this.ctx.get("agentPresets") as
-      | { resolve(id?: string): Promise<{ id: string }>; mount(agentCtx: Context, id: string): Promise<unknown> }
-      | undefined;
+    const presets = this.ctx.get("agentPresets") as PresetService | undefined;
 
     if (presets === undefined) {
       return {
@@ -738,13 +768,89 @@ export class AgentRunner implements MenuHost {
       };
     }
 
-    const resolved = await presets.resolve(this.config.agentPreset);
+    const id = await this.resolvePresetId(presets);
+    if (id === undefined) {
+      return {
+        setup: () => undefined,
+      };
+    }
+
     return {
-      agentPreset: resolved.id,
+      agentPreset: id,
       setup: async (agentCtx) => {
-        await presets.mount(agentCtx, resolved.id);
+        await presets.mount(agentCtx, id);
       },
     };
+  }
+
+  /**
+   * Resolve the preset to compose, degrading instead of aborting the turn.
+   *
+   * The host looks a preset up by id, so one stale id — `agentPresets.default`
+   * naming a preset this install does not ship, or a preset directory edited
+   * into an unreadable state — used to throw straight out of `composeSetup`.
+   * That happens before an agent exists, so *every* turn of every bound chat
+   * died with the raw host error and nothing in the session log to explain it.
+   * Resolution is therefore best-effort: the configured id is tried, then
+   * {@link FALLBACK_PRESET_ID}, and when neither composes the agent is built
+   * without a preset — the same shape a host with no `agentPresets` service
+   * already produced — so the turn still runs.
+   */
+  private async resolvePresetId(presets: PresetService): Promise<string | undefined> {
+    const wanted = this.config.agentPreset;
+
+    const resolved = await this.tryPreset(presets, wanted);
+    if (resolved !== undefined) return resolved;
+
+    const recovered = await this.tryPreset(presets, await this.fallbackPresetId(presets));
+    if (recovered !== undefined) {
+      this.log(`connect: falling back to agent preset ${JSON.stringify(recovered)}`);
+      return recovered;
+    }
+
+    this.log("connect: no usable agent preset; composing the agent without one");
+    return undefined;
+  }
+
+  /**
+   * Resolve `id`, reporting why it is unusable instead of throwing.
+   *
+   * A preset that resolves but reports `broken` counts as unusable: the host's
+   * mounting paths refuse those, so composing one would only move this failure
+   * to `mount`, after the log line that would have explained it.
+   *
+   * `undefined` id means "the roster default", which is what `resolve` does
+   * with it — the default is as fallible as an explicit id, so it is routed
+   * through the same recovery.
+   */
+  private async tryPreset(presets: PresetService, id: string | undefined): Promise<string | undefined> {
+    try {
+      const resolved = await presets.resolve(id);
+      if (resolved.broken !== undefined) {
+        this.log(`connect: agent preset ${describePreset(id)} failed to load: ${resolved.broken}`);
+        return undefined;
+      }
+      return resolved.id;
+    } catch (error) {
+      this.log(`connect: agent preset ${describePreset(id)} is unusable: ${String(error)}`);
+      return undefined;
+    }
+  }
+
+  /**
+   * The id to retry with: {@link FALLBACK_PRESET_ID} while the roster still
+   * offers it, otherwise the roster's first mountable row.
+   *
+   * Never throws — the caller is already handling a failure, and a roster that
+   * cannot be listed should still leave the hardcoded id to be tried.
+   */
+  private async fallbackPresetId(presets: PresetService): Promise<string> {
+    try {
+      const mountable = ((await presets.list?.()) ?? []).filter((row) => row.broken === undefined);
+      return mountable.find((row) => row.id === FALLBACK_PRESET_ID)?.id ?? mountable[0]?.id ?? FALLBACK_PRESET_ID;
+    } catch {
+      return FALLBACK_PRESET_ID;
+    }
   }
 
   /** Agents this runner has already attached a `session/event` listener to. */

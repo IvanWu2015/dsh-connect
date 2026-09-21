@@ -22,6 +22,7 @@ import { dirname } from "node:path";
 import { CHANNELS, type ChannelName } from "./channels.js";
 import type { SettingsService, SettingsSnapshot } from "./settings-rpc.js";
 import { CHANNEL_SECRET_KEYS, type CredentialStore } from "./credential-store.js";
+import { maskSecret } from "./secret-disclosure.js";
 import type { LiveConnectSection } from "./namespace.js";
 
 export interface SettingsServiceOptions {
@@ -114,31 +115,41 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
     const enabled = (Array.isArray(config.channels) ? config.channels : [...channels])
       .filter((name) => channels.includes(name as ChannelName)) as string[];
     const credentials: Record<string, boolean> = {};
-    // Presence only, never the values: the secret inputs are write-only in the
-    // pane. Secret *values* leave the host exactly once — when the adapter
-    // consumes them — so a browser tab (or a screenshot of one) can never leak
-    // an appSecret. See `SettingsSnapshot.secrets` in settings-rpc.ts.
+    // One `get()` per channel, projected two ways: presence (a boolean) and a
+    // host-masked preview (a lossy string). Neither is a usable secret — the
+    // masking happens here, before the value can cross the wire, so no browser
+    // tab (or screenshot of one) ever holds an appSecret. See
+    // `SettingsSnapshot.secretPreviews` in settings-rpc.ts.
     const secrets: Record<string, Record<string, boolean>> = {};
+    const secretPreviews: Record<string, Record<string, string>> = {};
     for (const name of channels) {
       if (credentialStore) {
         try {
           credentials[name] = await credentialStore.configured(name);
           const values = await credentialStore.get(name);
           const presence: Record<string, boolean> = {};
+          const previews: Record<string, string> = {};
           for (const key of Object.keys(CHANNEL_SECRET_KEYS[name] ?? {})) {
-            presence[key] = (values[key] ?? "").length > 0;
+            const value = values[key] ?? "";
+            presence[key] = value.length > 0;
+            // An unset key is absent from `previews` rather than present-but-
+            // empty, so "no entry" and "not configured" are the same statement.
+            if (value.length > 0) previews[key] = maskSecret(key, value);
           }
           secrets[name] = presence;
+          secretPreviews[name] = previews;
         } catch {
           credentials[name] = false;
           secrets[name] = {};
+          secretPreviews[name] = {};
         }
       } else {
         credentials[name] = false;
         secrets[name] = {};
+        secretPreviews[name] = {};
       }
     }
-    return { config, enabled, credentials, secrets, live: liveHandle() !== undefined };
+    return { config, enabled, credentials, secrets, secretPreviews, live: liveHandle() !== undefined };
   }
 
   return {

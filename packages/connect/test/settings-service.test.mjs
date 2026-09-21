@@ -102,25 +102,100 @@ test("saveCredentials without a store throws not-configured", async () => {
   await assert.rejects(svc.saveCredentials("feishu", { appId: "x" }), (e) => e.code === "not-configured");
 });
 
-test("snapshot reports secret presence but never the values, and never writes them to the state file", async () => {
+// Realistic lengths, on purpose: a 5-character secret falls into the
+// all-bullets branch of the mask, which would let a "the value never appears"
+// assertion pass without the head/tail logic ever running.
+const APP_ID = "cli_a1b2c3d4e5f6g7h8";
+const APP_SECRET = "a1b2c3d4e5f6g7h8i9j0k1l2m3n4z9y8"; // 32 chars
+const WEBHOOK = "https://oapi.dingtalk.com/robot/send?access_token=0123456789abcdef0123456789abcdef";
+
+test("snapshot reports secret presence and a host-masked preview, never a usable value", async () => {
   const provider = mapProvider();
   const store = createCredentialStore(provider);
   const file = tmpFile();
   const svc = createSettingsService({ statePath: file, credentialStore: store });
   await svc.save({ channels: ["feishu"] });
-  await svc.saveCredentials("feishu", { appId: "cli_9", appSecret: "sec_9" });
+  await svc.saveCredentials("feishu", { appId: APP_ID, appSecret: APP_SECRET });
   const snap = await svc.get();
   assert.equal(snap.credentials.feishu, true);
-  // Presence only — the whole snapshot must be safe to hand to a browser.
   assert.deepEqual(snap.secrets.feishu, { appId: true, appSecret: true });
   assert.deepEqual(snap.secrets.telegram, { botToken: false });
-  assert.ok(!JSON.stringify(snap).includes("cli_9"));
-  assert.ok(!JSON.stringify(snap).includes("sec_9"));
+
+  // The user asked to be able to *confirm* what they filled in, and an appId is
+  // an identifier rather than an authenticator — so it comes through whole.
+  assert.equal(snap.secretPreviews.feishu.appId, APP_ID);
+  // An appSecret is not: head and tail survive, the middle does not, and the
+  // full value appears nowhere in the snapshot the browser receives.
+  assert.equal(snap.secretPreviews.feishu.appSecret, "a1b2…z9y8");
+  const wire = JSON.stringify(snap);
+  assert.ok(!wire.includes(APP_SECRET));
+  assert.ok(!wire.includes(APP_SECRET.slice(12, 20)));
+  // An unset key is absent rather than present-but-empty, so "no entry" and
+  // "not configured" are the same statement.
+  assert.equal(snap.secretPreviews.feishu.appSecret.length > 0, true);
+  assert.equal("botToken" in snap.secretPreviews.telegram, false);
+
   // the on-disk state file carries no secret values (only non-secret config)
   const raw = JSON.parse(fsN.readFileSync(file, "utf8"));
   assert.deepEqual(raw.channels, ["feishu"]);
   assert.equal(raw.feishu, undefined);
-  assert.ok(!JSON.stringify(raw).includes("sec_9"));
+  const rawJson = JSON.stringify(raw);
+  assert.ok(!rawJson.includes(APP_SECRET));
+  assert.ok(!rawJson.includes(APP_SECRET.slice(0, 8)));
+});
+
+test("a preview exists exactly when the key is reported as configured", async () => {
+  // The pane renders the presence flag and the preview side by side; if the two
+  // could disagree, a configured secret would render as 「当前值：未配置」.
+  const provider = mapProvider();
+  const store = createCredentialStore(provider);
+  const svc = createSettingsService({ statePath: tmpFile(), credentialStore: store });
+  // appSecret deliberately left unset, so the channel has one of each.
+  await svc.saveCredentials("feishu", { appId: APP_ID });
+  const snap = await svc.get();
+  for (const ch of ["feishu", "telegram", "dingtalk", "web"]) {
+    for (const key of Object.keys(snap.secrets[ch] ?? {})) {
+      assert.equal(
+        (snap.secretPreviews[ch]?.[key] ?? "").length > 0,
+        snap.secrets[ch][key] === true,
+        `preview and presence disagree for ${ch}.${key}`,
+      );
+    }
+  }
+  assert.equal(snap.secrets.feishu.appSecret, false);
+  assert.equal("appSecret" in snap.secretPreviews.feishu, false);
+});
+
+test("a webhook preview keeps the robot's URL and masks only its token", async () => {
+  const provider = mapProvider();
+  const store = createCredentialStore(provider);
+  const svc = createSettingsService({ statePath: tmpFile(), credentialStore: store });
+  await svc.saveCredentials("dingtalk", { webhookUrl: WEBHOOK });
+  const snap = await svc.get();
+  assert.ok(snap.secretPreviews.dingtalk.webhookUrl.includes("oapi.dingtalk.com/robot/send"));
+  assert.ok(!JSON.stringify(snap).includes("0123456789abcdef0123456789abcdef"));
+});
+
+test("a credential store that throws leaves no preview behind", async () => {
+  // A broken store must degrade to "not configured", not to a half-filled
+  // snapshot that contradicts itself.
+  const credentialStore = {
+    configured: async () => true,
+    get: async () => { throw new Error("vault locked"); },
+    save: async () => {},
+    clear: async () => {},
+  };
+  const svc = createSettingsService({ statePath: tmpFile(), credentialStore });
+  const snap = await svc.get();
+  assert.equal(snap.credentials.feishu, false);
+  assert.deepEqual(snap.secretPreviews.feishu, {});
+});
+
+test("without a credential store the snapshot carries empty previews, not a missing key", async () => {
+  const svc = createSettingsService({ statePath: tmpFile() });
+  const snap = await svc.get();
+  assert.deepEqual(snap.secretPreviews.feishu, {});
+  assert.deepEqual(snap.secretPreviews.web, {});
 });
 
 test("a live section is the store: reads come from it and writes go back through it", async () => {

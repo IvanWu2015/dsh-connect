@@ -21,13 +21,49 @@ test("snapshotToForm maps enabled + config into the form", () => {
 });
 
 test("snapshotToForm never seeds a secret value — the inputs start blank", () => {
-  // The host reports presence, not values (`SettingsSnapshot.secrets`), so a
-  // read must not be able to fill an input even if some other host did send one.
+  // The host reports presence and a masked preview, not values, so a read must
+  // not be able to fill an input even if some other host did send one.
   const snap = { config: {}, enabled: [], credentials: {}, secrets: { feishu: { appSecret: "leaked" } }, live: true };
   const form = snapshotToForm(snap);
   assert.deepEqual(form.secrets, {});
   assert.deepEqual(form.secretPresence, { feishu: { appSecret: "leaked" } });
   assert.equal(form.live, true);
+});
+
+test("snapshotToForm carries the masked previews through, still without seeding the inputs", () => {
+  // The two have opposite lifetimes: the preview is what the host already
+  // masked for display, the input is where the user types a *new* value. Seeding
+  // an input with the preview would let a stray save write the mask back as the
+  // credential.
+  const snap = {
+    config: {}, enabled: ["feishu"], credentials: { feishu: true },
+    secrets: { feishu: { appId: true, appSecret: true } },
+    secretPreviews: { feishu: { appId: "cli_a1b2c3d4", appSecret: "a1b2…z9y8" } },
+    live: false,
+  };
+  const form = snapshotToForm(snap);
+  assert.deepEqual(form.secretPreviews, { feishu: { appId: "cli_a1b2c3d4", appSecret: "a1b2…z9y8" } });
+  assert.deepEqual(form.secrets, {});
+});
+
+test("snapshotToForm tolerates a host that sends no previews at all", () => {
+  // Older host, new client (or the reverse): an absent field must not throw.
+  const form = snapshotToForm({ config: {}, enabled: ["feishu"], credentials: {} });
+  assert.deepEqual(form.secretPreviews, {});
+});
+
+test("a form holding only previews emits no credential saves", () => {
+  // The structural guarantee that a mask can never be written back as a secret:
+  // `buildCredentialSaves` reads `form.secrets` and nothing else.
+  const form = snapshotToForm({
+    config: {}, enabled: ["feishu"], credentials: { feishu: true },
+    secrets: { feishu: { appId: true, appSecret: true } },
+    secretPreviews: { feishu: { appId: "cli_a1b2c3d4", appSecret: "a1b2…z9y8" } },
+    live: true,
+  });
+  assert.deepEqual(buildCredentialSaves(form), []);
+  // ...and saving the config in that state touches no credential path either.
+  assert.deepEqual(buildConfigSave(form), { channels: ["feishu"] });
 });
 
 test("snapshotToForm defaults to the file plane when the host doesn't say", () => {

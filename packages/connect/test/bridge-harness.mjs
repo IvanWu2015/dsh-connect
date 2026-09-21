@@ -210,7 +210,7 @@ export function recordingAdapter(id) {
 /** The separator `runnerKey` uses in service.ts — spelled out, not embedded. */
 const NUL = String.fromCharCode(0);
 
-export async function makeBridge({ stateDir, language = "en", config = {}, planFor = {} } = {}) {
+export async function makeBridge({ stateDir, language = "en", config = {}, planFor = {}, presets } = {}) {
   const dir = stateDir ?? mkdtempSync(join(tmpdir(), "dsh-connect-harness-"));
   const ctx = new Context();
 
@@ -261,6 +261,18 @@ export async function makeBridge({ stateDir, language = "en", config = {}, planF
 
   ctx.provide("agents", agents);
   ctx.provide("sessions", { flush: async () => {} });
+  /**
+   * Everything the plugin routes through `logger.info`. Captured rather than
+   * printed so a test can assert on a diagnostic instead of a side effect —
+   * the preset-degradation path is *only* observable this way, since it
+   * deliberately fails soft.
+   */
+  const logs = [];
+  ctx.provide("logger", { info: (message) => logs.push(String(message)), warn: (message) => logs.push(String(message)) });
+  // The host's preset roster. Absent by default, which is the shallow path
+  // `composeSetup` takes on a host with no presets at all; a test that wants
+  // the resolution path supplies its own stub.
+  if (presets !== undefined) ctx.provide("agentPresets", presets);
   ctx.provide("agentDefaultModel", { currentSelection: () => ({ provider: "harness-provider", model: "harness-model" }) });
   // The credential store is a row in the always-loaded dsh-base bundle, so the
   // plugin requires it; an in-memory stand-in keeps this harness offline.
@@ -299,6 +311,8 @@ export async function makeBridge({ stateDir, language = "en", config = {}, planF
     counts,
     /** The credential store stand-in, for asserting onboarding writes land. */
     credentials,
+    /** Every `connect:` line the plugin logged, in order. */
+    logs,
     /** The state dir in effect — identical to the one asked for, or `makeBridge` threw. */
     stateDir: effective,
     /** Adapters registered through `addAdapter`, in registration order. */

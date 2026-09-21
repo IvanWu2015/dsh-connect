@@ -487,3 +487,146 @@ test("F2 a thread message in an allowlisted chat is routed, not silently dropped
     assert.equal(bridge.runnerFor("denied", "oc_other:thread=om_root"), undefined, "no runner for a denied chat");
     assert.deepEqual(texts(denied), [], "a non-allowlisted chat must stay silent");
   }));
+
+// ---------------------------------------------------------------------------
+// G. Preset resolution degrades instead of killing the turn
+// ---------------------------------------------------------------------------
+
+/**
+ * A stand-in for the host `agentPresets` service.
+ *
+ * `resolve` reproduces the host's two behaviours that matter here: an unknown
+ * id *throws*, and `resolve(undefined)` answers from the roster default rather
+ * than from the caller's id. `mount` records what actually composed an agent —
+ * the only place a fallback can be observed, since the whole point of the
+ * degradation is that it leaves no visible trace on the reply.
+ */
+function presetStub(roster, rosterDefault = "standard") {
+  const mounted = [];
+  return {
+    mounted,
+    async resolve(id) {
+      const wanted = id ?? rosterDefault;
+      const found = roster.find((row) => row.id === wanted);
+      if (found === undefined) {
+        const available = roster.map((row) => row.id);
+        throw new Error(`agent-presets: preset "${wanted}" not found (available: ${available.join(", ") || "none"})`);
+      }
+      return found;
+    },
+    async list() {
+      return roster.map((row) => ({ ...row }));
+    },
+    async mount(_agentCtx, id) {
+      mounted.push(id);
+    },
+  };
+}
+
+/**
+ * Which presets composed an agent, deduplicated.
+ *
+ * A fresh chat mounts more than once by design: the runner resumes the empty
+ * session id its binding starts with, the harness misses and falls through to
+ * `create`, and `setup` is composed on both attempts. The property under test
+ * is *which* preset was used, never how many lifecycle attempts it took, so
+ * the assertions go through here rather than reading the raw call list.
+ */
+const mountedSet = (presets) => [...new Set(presets.mounted)].sort();
+
+test("G1 a configured preset the roster does not have falls back instead of failing the turn", () => {
+  const presets = presetStub([{ id: "standard" }, { id: "ptc" }]);
+  return withBridge({ config: { agentPreset: "code" }, presets }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    const chat = "chat-stale-preset";
+    await bridge.inbound(inboundFor("stub", chat, { text: "hello" }));
+    await waitFor(() => cards(adapter).length > 0, 5_000);
+
+    // The turn ran at all, which is the whole point: `resolve` used to throw
+    // out of `composeSetup`, before any agent existed, so every message in
+    // every bound chat died with the raw host text and nothing else.
+    assert.ok(bridge.binding("stub", chat).sessionId !== "", "the turn must have composed an agent");
+    assert.deepEqual(mountedSet(presets), ["standard"], "the fallback must be what actually composes the agent");
+    // Both halves of the diagnostic: why it was refused, and what replaced it.
+    assert.ok(
+      bridge.logs.some((line) => line.includes('agent preset "code" is unusable')),
+      `the cause must be logged: ${JSON.stringify(bridge.logs)}`,
+    );
+    assert.ok(
+      bridge.logs.some((line) => line.includes('falling back to agent preset "standard"')),
+      `the substitution must be logged: ${JSON.stringify(bridge.logs)}`,
+    );
+  });
+});
+
+test("G2 a preset that resolves but reports itself broken is not mounted", () => {
+  // The host keeps a broken preset on the roster and refuses it only at mount
+  // time, so a caller that trusts `resolve` alone hands the failure straight to
+  // `mount` — after the log line that would have named the real cause.
+  const presets = presetStub([{ id: "half-baked", broken: "invalid cordis.yml" }, { id: "standard" }]);
+  return withBridge({ config: { agentPreset: "half-baked" }, presets }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    await bridge.inbound(inboundFor("stub", "chat-broken-preset", { text: "hello" }));
+    await waitFor(() => cards(adapter).length > 0, 5_000);
+
+    assert.deepEqual(mountedSet(presets), ["standard"], "a broken preset must never reach mount");
+    assert.ok(
+      bridge.logs.some((line) => line.includes("failed to load: invalid cordis.yml")),
+      `the preset's own reason must be surfaced: ${JSON.stringify(bridge.logs)}`,
+    );
+  });
+});
+
+test("G3 with no usable preset at all the agent is still composed and the turn still runs", () => {
+  const presets = presetStub([]);
+  return withBridge({ config: { agentPreset: "code" }, presets }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    const chat = "chat-no-presets";
+    await bridge.inbound(inboundFor("stub", chat, { text: "hello" }));
+    await waitFor(() => cards(adapter).length > 0, 5_000);
+
+    assert.deepEqual(mountedSet(presets), [], "an empty roster has nothing to mount");
+    assert.ok(bridge.binding("stub", chat).sessionId !== "", "a degraded turn must still record a session");
+    assert.ok(
+      bridge.logs.some((line) => line.includes("composing the agent without one")),
+      `the degraded composition must be logged: ${JSON.stringify(bridge.logs)}`,
+    );
+  });
+});
+
+test("G4 a preset that does resolve is mounted as asked, with nothing logged", () => {
+  // The guard against the obvious failure mode of this whole feature: a
+  // fallback that fires when nothing is wrong, silently overriding the user's
+  // choice of preset.
+  const presets = presetStub([{ id: "standard" }, { id: "ptc" }]);
+  return withBridge({ config: { agentPreset: "ptc" }, presets }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    await bridge.inbound(inboundFor("stub", "chat-good-preset", { text: "hello" }));
+    await waitFor(() => cards(adapter).length > 0, 5_000);
+
+    assert.deepEqual(mountedSet(presets), ["ptc"], "the configured preset must win over the fallback");
+    assert.deepEqual(
+      bridge.logs.filter((line) => line.includes("agent preset")),
+      [],
+      "a healthy resolution must not log at all",
+    );
+  });
+});
+
+test("G5 a stale roster default degrades too — the shape this actually failed in", () => {
+  // Production had no plugin-level `agentPreset`, so `resolve(undefined)` fell
+  // through to `agent-presets.default` in settings.yaml — the stale id. The
+  // plugin never sees that id, so the log has to name it as the default.
+  const presets = presetStub([{ id: "standard" }, { id: "ptc" }], "code");
+  return withBridge({ presets }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    await bridge.inbound(inboundFor("stub", "chat-stale-default", { text: "hello" }));
+    await waitFor(() => cards(adapter).length > 0, 5_000);
+
+    assert.deepEqual(mountedSet(presets), ["standard"]);
+    assert.ok(
+      bridge.logs.some((line) => line.includes("agent preset the roster default is unusable")),
+      `a stale default must be named as the default: ${JSON.stringify(bridge.logs)}`,
+    );
+  });
+});

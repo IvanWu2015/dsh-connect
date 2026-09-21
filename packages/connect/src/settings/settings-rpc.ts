@@ -41,15 +41,32 @@ export interface SettingsSnapshot {
   credentials: Record<string, boolean>;
   /**
    * Per-channel, per-config-key secret **presence** (true = a value is stored
-   * for that key) — never the values themselves. The pane's secret inputs are
-   * write-only and use this to show 「已配置」 as a placeholder; it has no way to
-   * read a stored secret back.
+   * for that key) — never the values themselves. The pane uses it to tell an
+   * untouched input («已配置») from an empty one.
    *
    * This used to echo the values, which put an `appSecret` into browser state
-   * and every screenshot of the settings page. The values now leave the host
-   * exactly once, when the adapter consumes them (`injectSecrets`).
+   * and every screenshot of the settings page. What leaves the host now is
+   * either this boolean or the masked {@link secretPreviews} below — a usable
+   * secret still leaves exactly once, when the adapter consumes it
+   * (`injectSecrets`).
    */
   secrets?: Record<string, Record<string, boolean>>;
+  /**
+   * Per-channel, per-config-key **display preview**, for the user to confirm
+   * what they configured without being able to copy it back out.
+   *
+   * Already masked on the host by `maskSecret` (`./secret-disclosure.js`), so
+   * it is lossy by construction: identifiers such as an `appId` come through
+   * whole, an `appSecret` keeps only its first and last four characters, and a
+   * `webhookUrl` keeps its origin and path with the `access_token` in the query
+   * masked. A key is present here only when a value is stored for it, which
+   * makes an empty entry the same statement as `secrets[key] === false`.
+   *
+   * **Display-only.** The pane renders it as text; it must never be written
+   * back as a credential, and `buildCredentialSaves` ignores it — the secret
+   * inputs are still write-only and still start blank.
+   */
+  secretPreviews?: Record<string, Record<string, string>>;
   /**
    * True when the `dsh-connect` settings namespace is live, i.e. this config is
    * stored in `$DSH_HOME/settings.yaml` and a save takes effect immediately.
