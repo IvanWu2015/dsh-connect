@@ -264,7 +264,7 @@ dsh plugin --profile web add dsh-connect
 - **预设挂载**：`setup` 挂载配置的智能体预设（`ctx.agentPresets.mount`），为绑定会话提供标准工具集（bash/fs/…）。挂载是尽力而为的——先试配置的 id，再试 `standard`（或 roster 中第一个可挂载项），最后是不带预设——因为预设解析发生在智能体存在**之前**，在那里抛错会让每个绑定会话的每一轮都以一条宿主原始错误告终，而不是一条回复。
 - **流式**：两路数据通过 `createAsyncQueue` 桥接到渠道的流式卡片。持久的 `session/event` 流承载回合、工具调用与结算；瞬时的 `agent/assistant-stream` 帧承载推理/文本增量。它们是两路独立订阅，因为 DSH `0.1.5-rc.2` 删除了过去同时承载两者的 `assistant/chunk` 会话事件。块之间以空行分隔，推理实时流式输出，工具调用显示状态行，可配置的心跳在长静默阶段保持卡片存活。`turn/end` 决定回合结果并发布任务统计卡片。
 - **主动进度**：每条消息立即确认；若在 `progressTimeoutMs` 内未发送任何独立卡片/文本，则推送状态卡片报告最新里程碑（思考 / 最近一次工具调用），长回合看起来不会卡死。
-- **交互式选择与审批**：插件作为宿主 api-proxy（`ctx.apiProxy`）的进程内客户端：订阅与 Web GUI 相同的 mux 流，将 connect 绑定会话的 `question/requested` / `approval/requested` 帧渲染为带按钮的飞书卡片，并通过 `apiProxy.respond` 回传用户的答案——Web GUI 保持完全可用，先到者先答。
+- **交互式选择与审批**：插件监听宿主自己的两路瀑布事件（`user-questions/request`、`approval/request`）并从聊天里作答。注册必须带 `{ prepend: true }`：宿主的 Web GUI 转发器**也是**这两个事件的监听器，且在没有浏览器标签页连接时会把瀑布停在一个永不落定的 promise 上——注册在它之后的监听器根本不会被调用。会话已绑定到某个 connect 聊天时，请求渲染为一张卡片（一个选项一个按钮；审批则是 `允许一次` / `拒绝`），点按结果作为瀑布的返回值交还宿主；此后该会话归聊天处理，其余会话的 Web GUI 不受影响。桥接没有认领的请求（会话不属于本插件、通道没有入站面、请求已被取消、卡片投递失败）一律调用 `next()` 交给宿主正常路径，Web GUI 因此始终可用。
 - **串行化**：每个 chatKey 对应一个 `AgentRunner`——消息排队串行执行；`agent.followup` 天然排队。
 
 ## 测试

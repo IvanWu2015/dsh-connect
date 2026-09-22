@@ -302,15 +302,35 @@ interface NormalizedMsg {
 
 interface PendingChoice {
   resolve: (choice: string | undefined) => void;
+  /**
+   * The expiry timer, tagged onto the entry so a timer can prove it still
+   * belongs to the live prompt before tearing the card down. Identity matters
+   * because a card id is reused across every step of a menu: without the tag,
+   * a retired step's timer would expire the step that replaced it.
+   */
   timer: NodeJS.Timeout;
 }
 
 const CHOICE_TIMEOUT_MS = 60_000;
 
+/**
+ * How long taps on a card stay swallowed after its prompt retired.
+ *
+ * Between an answer and the next render the card still shows buttons that are
+ * no longer wired: `menu-controller` awaits the selection handler (which can
+ * take a second — opening a panel, sending a message) before presenting the
+ * next menu on the same card. A second tap in that window used to be reported
+ * as "this action has expired", which is exactly wrong — the user was driving
+ * a live menu. Absorbing it makes the redraw look like what it is.
+ */
+const CHOICE_ABSORB_MS = 5_000;
+
 export class FeishuAdapter implements ChannelAdapter {
   readonly id = "feishu";
   private readonly channel: LarkChannel;
   private readonly pendingChoices = new Map<string, PendingChoice>();
+  /** Cards whose prompt just retired: their taps are mid-redraw noise, not staleness. */
+  private readonly absorbingChoices = new Map<string, NodeJS.Timeout>();
   /** Cards whose stale-button tap was already noticed (dedupe, self-clearing). */
   private readonly staleNoticed = new Set<string>();
   private readonly staleTimers = new Set<NodeJS.Timeout>();
@@ -518,16 +538,17 @@ export class FeishuAdapter implements ChannelAdapter {
     this.channel.on("cardAction", (evt: CardActionEvent) => {
       const pending = this.pendingChoices.get(evt.messageId);
       if (pending === undefined) {
-        // The card's interaction is no longer pending: it was already handled,
-        // expired, or replaced by a newer card. Tell the user instead of
-        // silently ignoring the tap — a stale authorization captions the
-        // "did my tap do anything?" confusion. Wait: the core now also updates
-        // the card in place on acceptance, so most stale taps hit cards the
-        // user can see are done; this is the fallback for anything else.
+        // A tap landing while the card is mid-redraw (answered a moment ago, or
+        // just expired) is noise, not staleness. Saying "this action has
+        // expired" about a menu the user is actively driving is the worst of
+        // the possible responses, so swallow it and let the redraw land.
+        if (this.absorbingChoices.has(evt.messageId)) return;
+        // Genuinely stale: the card's interaction is finished, cancelled, or
+        // belongs to a card this adapter never issued. Tell the user rather
+        // than silently ignoring the tap. Once per card, to avoid tap spam.
         const choice = choiceIdOf(evt);
         if (choice !== undefined && !this.staleNoticed.has(evt.messageId)) {
           this.staleNoticed.add(evt.messageId);
-          // Keep the notice once per card to avoid spam on repeated taps.
           const timer = setTimeout(() => {
             this.staleNoticed.delete(evt.messageId);
             this.staleTimers.delete(timer);
@@ -537,8 +558,6 @@ export class FeishuAdapter implements ChannelAdapter {
         }
         return;
       }
-      this.pendingChoices.delete(evt.messageId);
-      clearTimeout(pending.timer);
       pending.resolve(choiceIdOf(evt));
     });
 
@@ -595,6 +614,8 @@ export class FeishuAdapter implements ChannelAdapter {
     // that fire after disconnect.
     for (const pending of this.pendingChoices.values()) clearTimeout(pending.timer);
     this.pendingChoices.clear();
+    for (const timer of this.absorbingChoices.values()) clearTimeout(timer);
+    this.absorbingChoices.clear();
     for (const timer of this.staleTimers) clearTimeout(timer);
     this.staleTimers.clear();
     this.staleNoticed.clear();
@@ -664,7 +685,35 @@ export class FeishuAdapter implements ChannelAdapter {
     };
   }
 
-  async promptChoice(target: OutboundTarget, prompt: ChoicePrompt, updateMessageId?: string): Promise<ChoiceResult> {
+  /**
+   * Swallow taps on `messageId` for a short grace window (self-clearing).
+   * Called whenever a prompt retires while its card may still be on screen.
+   */
+  private absorbChoice(messageId: string): void {
+    const prior = this.absorbingChoices.get(messageId);
+    if (prior !== undefined) {
+      clearTimeout(prior);
+      this.staleTimers.delete(prior);
+    }
+    const timer = setTimeout(() => {
+      this.absorbingChoices.delete(messageId);
+      this.staleTimers.delete(timer);
+    }, CHOICE_ABSORB_MS);
+    this.absorbingChoices.set(messageId, timer);
+    this.staleTimers.add(timer);
+  }
+
+  async promptChoice(
+    target: OutboundTarget,
+    prompt: ChoicePrompt,
+    updateMessageId?: string,
+    signal?: AbortSignal,
+  ): Promise<ChoiceResult> {
+    if (signal?.aborted === true) {
+      // Cancelled before anything went out: nothing to present, nothing to
+      // await. The caller owns `updateMessageId` and will replace or close it.
+      return { choice: undefined, messageId: updateMessageId ?? "" };
+    }
     const columnsPerRow = prompt.columnsPerRow ?? 2;
     const card = {
       header: { title: { tag: "plain_text", content: prompt.title }, template: "indigo" },
@@ -690,36 +739,80 @@ export class FeishuAdapter implements ChannelAdapter {
       ));
     }
 
-    // Register the pending choice BEFORE the async card update. Rapid taps on
-    // the previous menu arrive while updateCard is still in flight; if the
-    // pending record only exists after the redraw, those taps hit the stale
-    // branch and the menu appears to swallow them ("can't go back"). Register
-    // first, then redraw, so every tap has a live listener.
     let resolvePending!: (r: ChoiceResult) => void;
     const pending = new Promise<ChoiceResult>((resolve) => { resolvePending = resolve; });
-    const registerPending = (id: string, timer: NodeJS.Timeout): void => {
-      this.pendingChoices.set(id, {
-        resolve: (choice) => {
-          this.pendingChoices.delete(id);
-          clearTimeout(timer);
-          resolvePending({ choice, messageId: id });
-        },
-        timer,
-      });
+
+    // The card this prompt currently listens on. It moves if the in-place
+    // update fails and the prompt has to be re-sent as a fresh card.
+    let boundId = messageId;
+
+    /** Drop the live entry for `id` WITHOUT stopping the expiry timer. */
+    const unbind = (id: string): void => {
+      if (this.pendingChoices.delete(id)) this.absorbChoice(id);
     };
 
-    const timer = setTimeout(async () => {
-      this.pendingChoices.delete(messageId);
-      // Replace the stale menu with an expired notice instead of leaving it silent.
-      await this.channel
-        .updateCard(messageId, {
-          header: { title: { tag: "plain_text", content: this.t.menuExpired }, template: "grey" },
-          elements: [{ tag: "note", elements: [{ tag: "plain_text", content: this.t.menuExpiredHint }] }],
-        })
-        .catch(() => undefined);
-      resolvePending({ choice: undefined, messageId });
+    /** Drop the live entry and stop its expiry — the prompt is over. */
+    const retire = (id: string): void => {
+      const live = this.pendingChoices.get(id);
+      if (live === undefined) return;
+      this.pendingChoices.delete(id);
+      clearTimeout(live.timer);
+      this.absorbChoice(id);
+    };
+
+    const finish = (choice: string | undefined): void => {
+      const id = boundId;
+      retire(id);
+      resolvePending({ choice, messageId: id });
+    };
+
+    const timer = setTimeout(() => {
+      // Only the prompt that is still live may expire the card. A menu reuses
+      // its card id across steps, so without this check a retired step's timer
+      // would tear down whichever prompt replaced it.
+      if (this.pendingChoices.get(boundId)?.timer !== timer) return;
+      const id = boundId;
+      retire(id);
+      void (async () => {
+        // Replace the stale menu with an expired notice instead of leaving it silent.
+        await this.channel
+          .updateCard(id, {
+            header: { title: { tag: "plain_text", content: this.t.menuExpired }, template: "grey" },
+            elements: [{ tag: "note", elements: [{ tag: "plain_text", content: this.t.menuExpiredHint }] }],
+          })
+          .catch(() => undefined);
+        resolvePending({ choice: undefined, messageId: id });
+      })();
     }, CHOICE_TIMEOUT_MS);
-    registerPending(messageId, timer);
+
+    /**
+     * Install the tap listener on `id`. Registering BEFORE the async card
+     * update is deliberate: rapid taps on the previous menu arrive while
+     * updateCard is still in flight, and a tap with no live listener reads as
+     * "this action has expired" — the menu appears to swallow it.
+     */
+    const bind = (id: string): void => {
+      boundId = id;
+      // This card is live again: cancel any absorber left over from the
+      // previous step so the very next tap is taken, not swallowed.
+      const absorbing = this.absorbingChoices.get(id);
+      if (absorbing !== undefined) {
+        clearTimeout(absorbing);
+        this.absorbingChoices.delete(id);
+        this.staleTimers.delete(absorbing);
+      }
+      this.pendingChoices.set(id, { resolve: (choice) => finish(choice), timer });
+    };
+    // Keep the entry keyed by the *current* card, not the one captured above.
+    bind(messageId);
+
+    if (signal !== undefined) {
+      // The caller cancelled the question (the agent moved on): retire the
+      // prompt, leave the card for the caller to replace or close.
+      const onAbort = (): void => finish(undefined);
+      signal.addEventListener("abort", onAbort, { once: true });
+      void pending.then(() => signal.removeEventListener("abort", onAbort));
+    }
 
     if (updateMessageId !== undefined) {
       // Reuse the existing card when possible so a menu chain stays on one card.
@@ -730,15 +823,17 @@ export class FeishuAdapter implements ChannelAdapter {
         await this.channel.updateCard(updateMessageId, card);
       } catch (error) {
         this.logger?.warn?.(`connect-feishu: menu card update failed (${String(error)}); sending a fresh card`);
-        this.pendingChoices.delete(messageId);
+        // Its buttons died the moment we gave up on updating it — and the
+        // expiry timer must survive, since the fresh card inherits it.
+        unbind(updateMessageId);
         try {
           const sent = await this.channel.send(this.chatIdOf(target.chatKey), { card }, { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) });
-          messageId = sent.messageId;
+          bind(sent.messageId);
         } catch (sendError) {
           this.logger?.warn?.(`connect-feishu: fresh menu card send failed (${String(sendError)})`);
-          messageId = updateMessageId;
+          // Nothing rendered: keep listening on the original card.
+          bind(updateMessageId);
         }
-        registerPending(messageId, timer);
       }
     }
     return pending;

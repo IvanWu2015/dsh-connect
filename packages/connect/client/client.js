@@ -34,7 +34,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
-// packages/connect/client/settings-client.mjs
+// client/settings-client.mjs
 var settings_client_exports = {};
 __export(settings_client_exports, {
   ConnectSettingsTab: () => ConnectSettingsTab,
@@ -47,12 +47,12 @@ __export(settings_client_exports, {
 module.exports = __toCommonJS(settings_client_exports);
 var React = __toESM(require("react"), 1);
 
-// packages/connect/lib/settings/settings-rpc.js
+// lib/settings/settings-rpc.js
 var SETTINGS_RPC_CHANNEL = "/dsh-connect";
 var SETTINGS_ENDPOINTS = Object.freeze(["settings.get", "settings.save", "credentials.save", "settings.status"]);
 var MAX_BODY_BYTES = 1024 * 1024;
 
-// packages/connect/lib/settings/rpc-client.js
+// lib/settings/rpc-client.js
 var RpcError = class extends Error {
   constructor(code, message) {
     super(message);
@@ -79,10 +79,10 @@ function saveCredentials(rpcCall, channel, values) {
   return callRpc(rpcCall, "credentials.save", { channel, values });
 }
 
-// packages/connect/lib/settings/channels.js
+// lib/settings/channels.js
 var CHANNELS = ["feishu", "telegram", "dingtalk", "web"];
 
-// packages/connect/lib/settings/credential-store.js
+// lib/settings/credential-store.js
 var CHANNEL_SECRET_KEYS = Object.freeze({
   feishu: { appId: "DSH_CONNECT_FEISHU_APP_ID", appSecret: "DSH_CONNECT_FEISHU_APP_SECRET" },
   telegram: { botToken: "DSH_CONNECT_TELEGRAM_BOT_TOKEN" },
@@ -113,7 +113,7 @@ function groupRefs(channel) {
   return Object.freeze([...seen]);
 }
 
-// packages/connect/lib/settings/settings-model.js
+// lib/settings/settings-model.js
 var CHANNEL_SECRET_FIELDS = Object.fromEntries(Object.entries(CHANNEL_SECRET_KEYS).map(([ch, map]) => [ch, Object.keys(map ?? {})]));
 var CHANNEL_CONFIG_FIELDS = {
   feishu: [
@@ -210,7 +210,7 @@ function buildCredentialSaves(form) {
   return out;
 }
 
-// packages/connect/lib/settings/secret-disclosure.js
+// lib/settings/secret-disclosure.js
 var SECRET_DISCLOSURE = Object.freeze({
   appId: "full",
   clientId: "full",
@@ -227,7 +227,7 @@ function isMaskedSecret(configKey) {
   return disclosureOf(configKey) !== "full";
 }
 
-// packages/connect/client/locale.mjs
+// client/locale.mjs
 var LOCALES = {
   zh: {
     title: "dsh-connect",
@@ -413,7 +413,7 @@ function optionalText(t, key) {
   return hasLocale(key) ? t(key) : void 0;
 }
 
-// packages/connect/client/panel-state.mjs
+// client/panel-state.mjs
 var ADVANCED_KEYS = {
   feishu: ["webhookPort", "webhookPath"],
   telegram: ["pollingTimeoutSeconds", "baseUrl"],
@@ -434,7 +434,7 @@ function toggleInSet(set, key) {
   return next;
 }
 
-// packages/connect/client/settings-client.mjs
+// client/settings-client.mjs
 var name = "dsh-connect-settings";
 var inject = ["slots", "connection", "locale"];
 var NS = "dsh-connect";

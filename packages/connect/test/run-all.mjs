@@ -48,6 +48,7 @@ const suites = [
   "apply.test.mjs",
   "agent-scope.test.mjs",
   "channel-runtime.test.mjs",
+  "interaction.test.mjs",
   "settings-namespace.test.mjs",
   "runner.test.mjs",
 ];

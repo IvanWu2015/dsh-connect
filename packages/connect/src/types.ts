@@ -139,6 +139,15 @@ export interface AsyncQueue<T> extends AsyncIterable<T> {
  */
 export interface ChannelAdapter {
   readonly id: string;
+  /**
+   * Whether this channel can actually present an interactive prompt. Defaults
+   * to `true` when omitted. A mirror/observer channel (`web`) has no inbound
+   * face of its own, so its `promptChoice` is a no-op that can never report a
+   * tap — it sets this to `false` so the interaction bridge leaves the request
+   * to whichever client *can* show it instead of spinning on a card nobody
+   * will ever see.
+   */
+  readonly supportsChoices?: boolean;
   /** Establish the long-connection / subscription; must be reconnect-safe. */
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -162,8 +171,17 @@ export interface ChannelAdapter {
    * reuse that card (replace its content in place) instead of sending a new one —
    * this is what lets a menu chain navigate on a single card. Resolves with the
    * picked option id (or `undefined` on dismiss/timeout) plus the card message id.
+   *
+   * When `signal` aborts, the prompt must retire immediately: resolve with
+   * `{ choice: undefined }` and stop accepting taps, leaving the card for the
+   * caller to replace or close. Adapters that cannot be cancelled ignore it.
    */
-  promptChoice(target: OutboundTarget, prompt: ChoicePrompt, updateMessageId?: string): Promise<ChoiceResult>;
+  promptChoice(
+    target: OutboundTarget,
+    prompt: ChoicePrompt,
+    updateMessageId?: string,
+    signal?: AbortSignal,
+  ): Promise<ChoiceResult>;
   /** Replace a menu card with a completion notice (closes the interaction). */
   closeMenu(messageId: string, summary: string): Promise<void>;
   /** Register the inbound handler; called for every normalized message. */

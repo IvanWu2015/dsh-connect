@@ -482,6 +482,97 @@ test("feishu cardAction on a stale card tells the user instead of swallowing the
   assert.equal(fake.sends.length, 1);
 });
 
+test("feishu swallows a tap that lands while the card is being redrawn", async (t) => {
+  const { adapter, fake } = await startedAdapter();
+  t.after(() => adapter.stop());
+  const result = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "Pick", options: [{ id: "a", label: "A" }] },
+  );
+  await waitFor(() => adapter["pendingChoices"].size === 1, "prompt registration");
+  const card = fake.sends[0];
+  const tap = () => fake.handlers.cardAction({
+    messageId: card.messageId,
+    chatId: "oc_chat",
+    action: { tag: "button", value: { choice: "a" } },
+  });
+  tap();
+  assert.deepEqual(await result, { choice: "a", messageId: card.messageId });
+  // The SDK can deliver the same button twice a second apart, and the second
+  // tap arrives while the menu chain redraws this very card. Answering a user
+  // who is actively driving the menu with "此操作已失效" is the worst possible
+  // response, so the redraw window is silent.
+  tap();
+  await tick();
+  assert.equal(fake.sends.length, 1, "no stale notice inside the redraw window");
+});
+
+test("feishu re-binding a card cancels its absorption window", async (t) => {
+  const { adapter, fake } = await startedAdapter();
+  t.after(() => adapter.stop());
+  const first = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "One", options: [{ id: "a", label: "A" }] },
+  );
+  await waitFor(() => adapter["pendingChoices"].size === 1, "prompt registration");
+  const card = fake.sends[0];
+  fake.handlers.cardAction({ messageId: card.messageId, chatId: "oc_chat", action: { tag: "button", value: { choice: "a" } } });
+  await first;
+
+  // The next step of the menu reuses the same card. Its first tap must be
+  // taken: the absorber covers the redraw gap, not the prompt that replaces it.
+  const second = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "Two", options: [{ id: "b", label: "B" }] },
+    card.messageId,
+  );
+  assert.equal(adapter["absorbingChoices"].has(card.messageId), false);
+  fake.handlers.cardAction({ messageId: card.messageId, chatId: "oc_chat", action: { tag: "button", value: { choice: "b" } } });
+  assert.deepEqual(await second, { choice: "b", messageId: card.messageId });
+});
+
+test("feishu promptChoice refuses to present a card the caller already cancelled", async (t) => {
+  const { adapter, fake } = await startedAdapter();
+  t.after(() => adapter.stop());
+  const controller = new AbortController();
+  controller.abort();
+  const result = await adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "Gone", options: [{ id: "a", label: "A" }] },
+    "om_card_1",
+    controller.signal,
+  );
+  // A card for a question the host has abandoned is a menu nobody can ever
+  // answer, so nothing goes out and nothing is registered. The id is handed
+  // back so the caller can still replace or close the card it owns.
+  assert.deepEqual(result, { choice: undefined, messageId: "om_card_1" });
+  assert.equal(fake.sends.length, 0);
+  assert.equal(fake.cardUpdates.length, 0);
+  assert.equal(adapter["pendingChoices"].size, 0);
+});
+
+test("feishu promptChoice retires the card when the caller aborts", async (t) => {
+  const { adapter, fake } = await startedAdapter();
+  t.after(() => adapter.stop());
+  const controller = new AbortController();
+  const result = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "Pick", options: [{ id: "a", label: "A" }] },
+    undefined,
+    controller.signal,
+  );
+  await waitFor(() => adapter["pendingChoices"].size === 1, "prompt registration");
+  const card = fake.sends[0];
+  controller.abort();
+  assert.deepEqual(await result, { choice: undefined, messageId: card.messageId });
+  // The entry must not outlive the abort: a leftover would route later taps
+  // into a promise nobody is waiting on, and hold its 60s timer open.
+  assert.equal(adapter["pendingChoices"].size, 0);
+  // The card itself is left alone — the caller is about to replace or close it,
+  // so painting "expired" here would fight the caller's own update.
+  assert.equal(fake.cardUpdates.length, 0);
+});
+
 test("feishu sendText strips the thread suffix and carries the reply target", async (t) => {
   const { adapter, fake } = await startedAdapter();
   t.after(() => adapter.stop());

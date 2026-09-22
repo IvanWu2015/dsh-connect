@@ -98,6 +98,18 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 
 A fully reproducible example is the [`examples/`](examples/) folder plus the repository's [Feishu setup manual](https://github.com/IvanWu2015/dsh-connect/blob/main/docs/feishu-setup.md) (Feishu app creation, event subscriptions, publishing).
 
+## Questions and approvals in a conversation
+
+When the agent needs a decision from you it stops and asks, and the asking happens in the chat — no switching to the Web GUI:
+
+- **A question with options** renders as a card with one button per option. One tap answers it and the card immediately moves on to the next question.
+- **A question without options** has no buttons to offer: the bot sends the question as a prompt and you **reply in the chat**. That message is the answer.
+- **A tool approval** (an action that needs your go-ahead) is a card too, with **Allow once** / **Reject** buttons. This one accepts **only a tap** — a plain chat message sent while an approval is waiting is not recorded as its result.
+
+One chat holds one pending card at a time. A second request is handed back to the host's own path (the Web GUI) rather than fighting the first card for the same message — and so is a card that could not be delivered, or a request cancelled before you answered; in each case the chat is **released**, because a leaked pending entry would silently swallow your next message.
+
+"This action is no longer active" means the card has expired — it auto-closes after 60 s idle, so ask again. A double tap, or a tap landing right after the previous question was answered, falls inside the card's redraw window and is ignored silently rather than misreported as expired.
+
 ## Configuration
 
 Configuration lives in the DSH profile patch (`cordis.patch.yml`) under the plugin's `config:`. `dsh.shared.config.json` in the project root (or its parent) can supply workspace/state defaults that take precedence for those keys.
@@ -310,7 +322,9 @@ Logs come from the DSH host logger (run `dsh web` in a terminal); plugin message
 | `[用户发送了图片，但下载失败…]` | Feishu `im:resource` permission is missing on the app; grant it and re-approve. |
 | Streaming reply is one unbroken blob | Fixed in **0.9.0**: block boundaries and the reasoning/answer split now insert blank lines (and reasoning soft breaks are expanded for Feishu cards). Upgrade, then restart `dsh web`. |
 | Card frozen on "Thinking…" with no progress on a long task | Fixed in **0.9.0**: reasoning now streams live, tool calls show as `🔧` progress lines, and a liveness heartbeat updates the card during silent stretches. Upgrade, then restart `dsh web`. |
-| Menu cards don't update / expire | Cards auto-close after 60 s idle by design; re-open the menu. |
+| The agent offers options / asks for tool approval and nothing appears in Feishu | Fixed in **0.9.0**: the bridge subscribed to a host service that does not exist, so every question fell silently back to the host. Upgrade, then restart `dsh web`. |
+| Tapping a card button says it is no longer active, on a card that was just posted | Fixed in **0.9.0**: a tap landing while the card was being redrawn (a double tap, or one right after the previous question was answered) was misread as a stale action. Upgrade, then restart `dsh web`. |
+| Menu cards don't update / expire | Cards auto-close after 60 s idle by design; re-open the menu. Question and approval cards behave the same — see [Questions and approvals in a conversation](#questions-and-approvals-in-a-conversation). |
 
 **Rollback** — reinstall a previous release (`dsh plugin --profile web add dsh-connect@<version>` after removing the current one), or `git checkout` the pinned commit in a source install.
 

@@ -55,12 +55,19 @@ export async function retry<T>(fn: () => Promise<T>, options: RetryOptions = {})
 export function withOutboundRetry(adapter: ChannelAdapter, options: RetryOptions = {}): ChannelAdapter {
   return {
     id: adapter.id,
+    ...(adapter.supportsChoices === undefined ? {} : { supportsChoices: adapter.supportsChoices }),
     start: () => adapter.start(),
     stop: () => adapter.stop(),
     onInbound: (handler) => adapter.onInbound(handler),
     sendText: (target, text) => retry(() => adapter.sendText(target, text), options),
     sendCard: (target, card) => retry(() => adapter.sendCard(target, card), options),
-    promptChoice: (target, prompt, updateMessageId) => retry(() => adapter.promptChoice(target, prompt, updateMessageId), options),
+    promptChoice: (target, prompt, updateMessageId, signal) =>
+      retry(() => adapter.promptChoice(target, prompt, updateMessageId, signal), {
+        ...options,
+        // A cancelled prompt is a decision, not a failure: retrying it would
+        // re-present a card the caller is actively retiring.
+        isTransient: (error) => signal?.aborted !== true && (options.isTransient?.(error) ?? true),
+      }),
     closeMenu: (messageId, summary) => retry(() => adapter.closeMenu(messageId, summary), options),
     streamText: (target, chunks) => adapter.streamText(target, chunks),
   };

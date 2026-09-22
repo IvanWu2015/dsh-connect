@@ -330,9 +330,6 @@ export class ConnectService extends Service {
       return;
     }
 
-    // Subscribe to host question/approval frames (idempotent, best-effort).
-    this.interaction.start();
-
     // Make sure the DSH workspace registry knows about our work dirs and
     // sessions before the first runner spins up. Awaiting guarantees the
     // workspace exists before a new session is created and attached to it

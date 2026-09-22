@@ -31,6 +31,8 @@ import type { BindingStore, ChatBinding } from "../../binding.js";
  */
 export class WebAdapter implements ChannelAdapter {
   readonly id = "web";
+  /** No inbound face of its own: a prompt here could never be answered. */
+  readonly supportsChoices = false;
 
   private handler?: (msg: InboundMessage) => void | Promise<void>;
   private readonly bindings: BindingStore;
@@ -175,7 +177,12 @@ export class WebAdapter implements ChannelAdapter {
    * Present interactive choice prompt.
    * No-op: the Web GUI renders choices through its own interaction system.
    */
-  async promptChoice(_target: OutboundTarget, _prompt: ChoicePrompt, updateMessageId?: string): Promise<ChoiceResult> {
+  async promptChoice(
+    _target: OutboundTarget,
+    _prompt: ChoicePrompt,
+    updateMessageId?: string,
+    _signal?: AbortSignal,
+  ): Promise<ChoiceResult> {
     return {
       choice: undefined,
       messageId: updateMessageId ?? `web-${Date.now()}`,
