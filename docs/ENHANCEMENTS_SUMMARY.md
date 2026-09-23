@@ -4,7 +4,7 @@ English | [中文](ENHANCEMENTS_SUMMARY.zh.md)
 
 > **Historical note**: this documents the **v0.6.2** round of fixes. Since then the repo consolidated into a **single `dsh-connect` package** — the per-package references below (`dsh-connect-feishu`, `dsh-connect-telegram`, `dsh-connect-dingtalk`, `dsh-connect-web`) and the split `packages/connect-*/test/` directories no longer exist; those channels are now sub-keys of the one `dsh-connect` plugin (under `feishu:` / `telegram:` / `dingtalk:` / `web:`).
 >
-> Two claims below are **superseded** by 0.9.0 and must not be read as current behaviour: the `feishu-credentials.json` file (mode `0600`) is no longer where onboarding credentials live — the **DSH credential store** is the source of truth, and that JSON file survives only as a best-effort legacy mirror — and a private JSON settings file is no longer the Web pane's store (0.9.0: the `dsh-connect` section of `$DSH_HOME/settings.yaml`, with secrets still only in the credential store). The current release is **0.9.0** — see the root `CHANGELOG.md`. Everything else below remains an accurate record of the 0.6.2 round.
+> Two claims below are **superseded** by 0.9.0 and must not be read as current behaviour: the `feishu-credentials.json` file (mode `0600`) is no longer where onboarding credentials live — the **DSH credential store** is the source of truth, and that JSON file survives only as a best-effort legacy mirror — and a private JSON settings file is no longer the Web pane's store (0.9.0: the `dsh-connect` section of `$DSH_HOME/settings.yaml`, with secrets still only in the credential store). The current release is **0.9.1** — see the root `CHANGELOG.md`. Everything else below remains an accurate record of the 0.6.2 round.
 
 ## 📋 Overview
 

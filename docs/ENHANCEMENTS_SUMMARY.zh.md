@@ -4,7 +4,7 @@ English | [中文](ENHANCEMENTS_SUMMARY.zh.md)
 
 > **历史说明**：本文档记录 **v0.6.2** 这一轮的修复。此后本仓库已合并为**唯一的 `dsh-connect` 包**——下文提到的各分包（`dsh-connect-feishu`、`dsh-connect-telegram`、`dsh-connect-dingtalk`、`dsh-connect-web`）与 `packages/connect-*/test/` 拆分目录已不存在；这些通道现在是 `dsh-connect` 单个插件的子键（`feishu:` / `telegram:` / `dingtalk:` / `web:`）。
 >
-> 下文中另有两点已被 0.9.0 **取代**，不可当作当前行为：`feishu-credentials.json`（权限 `0600`）不再是开通流程保存凭据的地方——**DSH 凭据库**才是唯一事实来源，该 JSON 文件仅作为尽力而为的旧版镜像保留；私有 JSON 状态文件也不再是 Web 面板的存储（0.9.0 改为 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段，密钥仍只进凭据库）。当前版本为 **0.9.0**——见根 `CHANGELOG.md`。下文其余内容仍是 0.6.2 那一轮的准确记录。
+> 下文中另有两点已被 0.9.0 **取代**，不可当作当前行为：`feishu-credentials.json`（权限 `0600`）不再是开通流程保存凭据的地方——**DSH 凭据库**才是唯一事实来源，该 JSON 文件仅作为尽力而为的旧版镜像保留；私有 JSON 状态文件也不再是 Web 面板的存储（0.9.0 改为 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段，密钥仍只进凭据库）。当前版本为 **0.9.1**——见根 `CHANGELOG.md`。下文其余内容仍是 0.6.2 那一轮的准确记录。
 
 ## 📋 概述
 
