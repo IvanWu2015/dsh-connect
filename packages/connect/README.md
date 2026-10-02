@@ -78,6 +78,27 @@ rm -rf .dsh-connect            # binding route store (stateDir)
 rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 ```
 
+### Installing in the Desktop app
+
+The Desktop app carries its own reserved profile (`desktop`) and installs into
+it from its own UI, not from a terminal: **`dsh plugin --profile desktop …` is
+refused** with *profile "desktop" is managed exclusively by the Electron
+application*, because only the app's own carrier is allowed to manage that
+profile. In the app, the install surface is a **sidebar panel named Plugins** —
+the first entry in the sidebar's panel list — whose header button **Add plugin**
+takes a package name. The app then tells you when it applies: *changes take
+effect on next start*.
+
+Settings is **not** where that lives. Settings has two read-only pages instead —
+**Bundled plugins** (the built-in list and their status) and **Plugin list**
+(session plugins / global plugins) — which is exactly where the Plugins page's
+own help line points: *the built-in plugin list and their status are under
+Settings → Bundled plugins*.
+
+`dsh-connect`'s own pane (**Settings → dsh-connect**) appears only once the
+plugin is actually installed and loaded, so a refused install leaves nothing to
+find there yet.
+
 ## Quick start
 
 1. **Install the plugins** (see above).
@@ -395,6 +416,7 @@ Logs come from the DSH host logger (run `dsh web` in a terminal); plugin message
 | Symptom | Likely cause / fix |
 |---|---|
 | Installing `dsh-connect@0.9.0` on DSH `0.2.0-rc.2` is refused: *"`dsh-connect@0.9.0` 与 DSH `0.2.0-rc.2` 不兼容 … 运行它可能导致崩溃或数据丢失"* | Not a bug and not a warning to click past: DSH's compatibility gate rejects any plugin whose declared peer range does not cover the running host, and `0.9.0` predates the `0.2.0` line. Install **`0.9.2`** (or newer), whose peers require `^0.2.0-rc.2`. |
+| In the Desktop app you cannot find where to install a plugin — the entry seems to have gone after a restart | The install surface is the **Plugins panel in the sidebar** (first in the panel list), not Settings; Settings only lists plugins, read-only. See [Installing in the Desktop app](#installing-in-the-desktop-app). If the panel opens but says *this deployment runs without a manageable profile*, the host did not expose its plugin manager, so the page is inert — restart the app. And **Settings → dsh-connect** can only exist once the plugin is installed and loaded, so after a refused install there is legitimately nothing to find. |
 | `connect-feishu: adapter init failed` / `start failed` | Bad credentials, app not published, or network blocked. Check `appId`/`appSecret`, re-run onboarding, verify the bot is online in the Feishu console. |
 | `connect: resume of <id> failed, creating fresh session` | The persisted session could not be resumed (missing workdir, persistence issue). Check `workDir` and `~/.dsh/sessions`. |
 | The bot answers every message with a raw `agent-presets: preset "…" not found` line, and nothing reaches the agent | A stale `agent-presets.default` in `$DSH_HOME/settings.yaml` names an id no installed build ships. Fixed in **0.9.0**, which retries `standard` and logs the decision rather than failing the turn; on an older build, set the key to a shipped id (`standard`). |
