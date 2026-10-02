@@ -42,7 +42,7 @@ version is the signal that the bridge needs another migration.
 DSH refuses to load a plugin whose range does not cover it, so a stale range is
 at least loud: installing `0.9.0` on `0.2.0-rc.2` is rejected with *"may cause
 crashes or data loss"* before anything runs. `0.9.2` is the version that covers
-`0.2.0-rc.2`; see [Upgrading from 0.9.1](#upgrading-from-091).
+`0.2.0-rc.2`; see [Upgrading from 0.9.0](#upgrading-from-090).
 
 The plugin runs on the DSH **Host plane** (process-level singleton services), not inside an agent preset.
 
@@ -142,7 +142,7 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under the plug
 |---|---|---|
 | `channels` | all built-in | Which channels to activate: `feishu` / `telegram` / `dingtalk` / `web`. Omit to activate all built-in channels. |
 | `channelDefaults` | `{}` | Keys applied to every channel that doesn't set its own (e.g. `{ language: "zh" }`). |
-| `settingsStatePath` | `<stateDir>/dsh-connect-settings.json` | Where the web-settings pane mirrors non-secret config. Defaults to `dsh-connect-settings.json` *inside* `stateDir`, so it lands beside `bindings.json` and can never disagree with the stores; set it to override. The pane's authoritative store is this plugin's entry in the active profile patch (see [User settings](#user-settings)); this file is only the compatibility mirror the legacy `/dsh-connect` RPC reads and writes, and a pre-0.2 install's copy of it is read back once by the upgrade (see [Upgrading from 0.9.1](#upgrading-from-091)). |
+| `settingsStatePath` | `<stateDir>/dsh-connect-settings.json` | Where the web-settings pane mirrors non-secret config. Defaults to `dsh-connect-settings.json` *inside* `stateDir`, so it lands beside `bindings.json` and can never disagree with the stores; set it to override. The pane's authoritative store is this plugin's entry in the active profile patch (see [User settings](#user-settings)); this file is only the compatibility mirror the legacy `/dsh-connect` RPC reads and writes, and a pre-0.2 install's copy of it is read back once by the upgrade (see [Upgrading from 0.9.0](#upgrading-from-090)). |
 
 ### `feishu` (Feishu / Lark channel)
 
@@ -330,7 +330,10 @@ bot as unconfigured:
 So a DingTalk bot using only webhook push (no stream credentials) is correctly
 reported as configured, as is one using only stream mode.
 
-## Upgrading from 0.9.1
+## Upgrading from 0.9.0
+
+Applies to the in-repo `0.9.1` as well — it was committed but never published
+to npm, so `0.9.0` is the version users are actually upgrading from.
 
 DSH 0.2 keeps per-plugin settings in the **profile patch**, not in
 `$DSH_HOME/settings.yaml`, and it does not know the old document's `dsh-connect:`
@@ -362,10 +365,22 @@ So **0.9.2 imports it once, on the first boot after the upgrade**:
   "there was nothing to import" case, so a later boot cannot re-apply the old
   values over edits you have made since.
 
-If it cannot run, it says so in one `connect: …` line and leaves both files
-alone: a document that fails to parse is retried on the next boot once you fix
-it, and a host with no settings service at all is retried as soon as one exists.
-If you never used the pane, none of this is visible.
+The retry rule is narrower than "any failure is retried", and deliberately so.
+Three outcomes are final and get the marker: a document that is not there, a
+document with no `dsh-connect:` section, and a successful import. Everything else
+— a document that will not parse, one that is **there but cannot be read**
+(a permission, or a `settings.yaml` that is really a directory), a refused write,
+a host with no settings service — imports nothing, **leaves both files alone, and
+writes no marker**, so the next boot simply tries again once you have fixed the
+cause. That last one is why "not there" and "could not be read" are told apart:
+until `0.9.2` they were the same outcome, so a single unreadable document ended
+the migration for good, silently.
+
+Each of those failures is one `connect: …` line naming the file and the reason;
+the troubleshooting table below lists them. A marker that cannot be **written** is
+reported too — without it every boot would re-run the migration and layer the
+legacy values back over your newer edits. If you never used the pane, none of
+this is visible.
 
 ## Troubleshooting
 
@@ -382,10 +397,14 @@ Logs come from the DSH host logger (run `dsh web` in a terminal); plugin message
 | `[用户发送了图片，但下载失败…]` | Feishu `im:resource` permission is missing on the app; grant it and re-approve. |
 | Streaming reply is one unbroken blob | Fixed in **0.9.0**: block boundaries and the reasoning/answer split now insert blank lines (and reasoning soft breaks are expanded for Feishu cards). Upgrade, then restart `dsh web`. |
 | Card frozen on "Thinking…" with no progress on a long task | Fixed in **0.9.0**: reasoning now streams live, tool calls show as `🔧` progress lines, and a liveness heartbeat updates the card during silent stretches. Upgrade, then restart `dsh web`. |
-| The agent offers options / asks for tool approval and nothing appears in Feishu | Fixed in **0.9.1**: the bridge subscribed to a host service that does not exist, so every question fell silently back to the host. Upgrade, then restart `dsh web`. |
-| Tapping a card button says it is no longer active, on a card that was just posted | Fixed in **0.9.1**: a tap landing while the card was being redrawn (a double tap, or one right after the previous question was answered) was misread as a stale action. Upgrade, then restart `dsh web`. |
-| `connect: the legacy settings at <path> could not be parsed …` | The pre-0.2 document has a YAML error, so the one-shot migration ([Upgrading from 0.9.1](#upgrading-from-091)) skipped it and left it in place. Fix the YAML and restart; nothing is imported until then, and no marker is written, so the retry is automatic. |
+| The agent offers options / asks for tool approval and nothing appears in Feishu | Fixed in **0.9.2** (the in-repo `0.9.1` was never published): the bridge subscribed to a host service that does not exist, so every question fell silently back to the host. Upgrade, then restart `dsh web`. |
+| Tapping a card button says it is no longer active, on a card that was just posted | Fixed in **0.9.2** (the in-repo `0.9.1` was never published): a tap landing while the card was being redrawn (a double tap, or one right after the previous question was answered) was misread as a stale action. Upgrade, then restart `dsh web`. |
+| `connect: the legacy settings at <path> could not be parsed …` | The pre-0.2 document has a YAML error, so the one-shot migration ([Upgrading from 0.9.0](#upgrading-from-090)) skipped it and left it in place. Fix the YAML and restart; nothing is imported until then, and no marker is written, so the retry is automatic. |
 | `connect: could not import the legacy dsh-connect settings from <path> …` | The migration found the section but DSH refused the write (usually a value that fails validation). The section is still in the file — fix the named field and restart. |
+| `connect: could not read the legacy settings candidate at <path> …` | The candidate is *there* but could not be read: a permission, a path that is really a directory, or a `~` in `$DSH_HOME` that was not expanded. This is the one failure that does **not** mark the migration done — nothing is imported, nothing is marked, and the next start retries on its own, so fixing the cause is all that is needed. The distinction from "not there" is the point: the two were the same outcome until 0.9.2, so **a single `EACCES` ended the entire migration silently and permanently**. |
+| `connect: could not write the one-shot import marker at <path> …` | The import itself succeeded; the marker that records it could not be written (usually a read-only home). Not harmless: with no marker every start re-runs the whole migration and layers the legacy values back over whatever you changed in the pane after upgrading — which shows up as settings reverting on their own. Fix the home's write permission, or create the marker file by hand. |
+| `connect: the import marker at <path> could not be read …` | A marker exists but cannot be read. It is treated as **already imported** and reported: better to skip an import than to re-apply old values over your newer settings. Delete the marker and restart to trigger the import again. |
+| Saving the pane fails with *`Configuration for "connect" is overridden by a home patch or command-line overlay`* | The pane writes the profile patch, but resolution layers `bundle → profile → $DSH_HOME/cordis.patch.yml → --patch`, so a value set in one of the last two wins over anything the pane saves and DSH refuses the write rather than let a save that could never take effect look successful. Edit the home patch (or drop the overlay) if you want the pane to own these settings. |
 | Menu cards don't update / expire | Cards auto-close after 60 s idle by design; re-open the menu. Question and approval cards behave the same — see [Questions and approvals in a conversation](#questions-and-approvals-in-a-conversation). |
 
 **Rollback** — reinstall a previous release (`dsh plugin --profile web add dsh-connect@<version>` after removing the current one), or `git checkout` the pinned commit in a source install.

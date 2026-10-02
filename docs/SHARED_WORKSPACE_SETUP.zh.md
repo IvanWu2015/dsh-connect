@@ -277,7 +277,7 @@ D:\ACOINFO\code\dsh_feishu\
 ## 📝 最佳实践
 
 1. **使用绝对路径**：避免相对路径导致的不一致
-2. **分清各文件的职责**：`dsh.shared.config.json`（在当前目录及其上级目录中查找）只提供共享的工作区 / 状态目录 / `language` / `autoMirror` 默认值——且对这几个键它**优先于**插件配置。渠道设置则在 profile patch（`cordis.patch.yml`）中本插件的条目里——0.9.2 起这也是 Web 设置页写入的地方，经 DSH 第一方 `settings` 服务（热重载、保留注释）。0.9.0/0.9.1 上面板的存储是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段；DSH 0.2 已不再从那个文档读取插件设置，因此 0.9.2 会把它一次性导入（见[从 0.9.1 升级](../packages/connect/README.zh.md#从-091-升级)）。密钥只进 DSH 凭据库，不写进上述任何文件。
+2. **分清各文件的职责**：`dsh.shared.config.json`（在当前目录及其上级目录中查找）只提供共享的工作区 / 状态目录 / `language` / `autoMirror` 默认值——且对这几个键它**优先于**插件配置。渠道设置则在 profile patch（`cordis.patch.yml`）中本插件的条目里——0.9.2 起这也是 Web 设置页写入的地方，经 DSH 第一方 `settings` 服务（热重载、保留注释）。0.9.0/0.9.1 上面板的存储是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段；DSH 0.2 已不再从那个文档读取插件设置，因此 0.9.2 会把它一次性导入（见[从 0.9.0 升级](../packages/connect/README.zh.md#从-090-升级)）。密钥只进 DSH 凭据库，不写进上述任何文件。
 3. **定期检查**：使用 `/status` 命令验证工作目录是否正确
 4. **备份配置**：定期备份 `dsh.shared.config.json` 和 `bindings.json`
 5. **版本控制**：将 `dsh.shared.config.json` 加入 Git（但不包括 `.dsh-connect/` 和 `.dsh/`）

@@ -71,14 +71,22 @@
     #   pollIntervalMs: 1000            # mirror-session polling interval (default 1000)
 
     # --- web settings pane ---
-    # The pane's *authoritative* store is NOT a file here: it is the `dsh-connect`
-    # section of $DSH_HOME/settings.yaml, written through DSH's first-party
-    # settings seam (hot-reloaded, atomic, file-locked, comment-preserving), so
-    # hand-editing that document works too and takes effect without a restart.
-    # Every key above is also a settings.yaml key, since this config entry is
-    # registered as the namespace's *base* layer: values resolve schema defaults
-    # -> this entry -> settings.yaml, most specific last. Secrets are never
-    # written to settings.yaml — they stay in the DSH credential store.
+    # The pane writes the `connect` entry in the *active profile's* patch
+    # ($DSH_HOME/profiles/<profile>/cordis.patch.yml) — this very block, through
+    # DSH's first-party settings seam (atomic, file-locked, comment-preserving),
+    # so a pane save and a hand edit land in the same place and a hand-edited
+    # value is picked up like any other profile change.
+    #
+    # Resolution order, most specific last: schema defaults -> this entry (the
+    # namespace's base layer) -> the profile patch's entry. A field an update
+    # *omits* is reset to its inherited value, which is why the pane round-trips
+    # every channel it knows rather than only the enabled ones.
+    #
+    # Secrets are never written there by the pane: appId/appSecret/botToken and
+    # the DingTalk keys live in the DSH credential store, and the pane's save
+    # payload drops anything undeclared. So prefer the pane (or env) for those —
+    # a secret hand-written here is left in place rather than scrubbed, but it is
+    # plaintext in your profile and it will not show up in the pane's previews.
     #
     # `settingsStatePath` is deliberately not shown: it is the JSON mirror the
     # pane falls back to only on a host with no settings service, so setting it

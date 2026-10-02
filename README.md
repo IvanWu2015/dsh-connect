@@ -114,13 +114,13 @@ one-click onboarding and `FEISHU_*`-style environment variables write.
 The legacy `/dsh-connect` HTTP RPC is kept for pane compatibility; it reads and writes the same
 namespace and mirrors non-secret config to `settingsStatePath` for older panes.
 
-> **Upgrading from 0.9.1?** DSH 0.2 keeps per-plugin settings in the profile patch and does not know
+> **Upgrading from 0.9.0 or 0.9.1?** DSH 0.2 keeps per-plugin settings in the profile patch and does not know
 > the old `dsh-connect:` section of `$DSH_HOME/settings.yaml`, so the host's own migration drops it
 > with a warning. **0.9.2** therefore imports that section (or `settings.yaml.imported`, or the
 > fallback `dsh-connect-settings.json`) once on the first boot after the upgrade, projecting it onto
 > the pane's fields and **merging** it over the current values — and it never deletes or renames
 > anything. Nothing is lost if you never used the pane. Full detail in the package
-> [README](packages/connect/README.md#upgrading-from-091) and the
+> [README](packages/connect/README.md#upgrading-from-090) and the
 > [0.9.2 changelog entry](CHANGELOG.md).
 
 ### Seeing and masking stored values

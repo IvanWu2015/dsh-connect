@@ -109,12 +109,12 @@ English screenshots: [overview](packages/connect/docs/images/settings-overview-e
 旧版 `/dsh-connect` HTTP RPC 为面板兼容而保留；它现在读写同一个 namespace，并把非密钥配置
 镜像到 `settingsStatePath`，以兼容旧面板。
 
-> **从 0.9.1 升级？** DSH 0.2 把每个插件的设置保存在 profile patch 里，并且不认识旧文档
+> **从 0.9.0 或 0.9.1 升级？** DSH 0.2 把每个插件的设置保存在 profile patch 里，并且不认识旧文档
 > `$DSH_HOME/settings.yaml` 里的 `dsh-connect:` 段，所以宿主自己的迁移会把它丢下并记一条警告。
 > **0.9.2** 会在升级后的第一次启动时把该段（或 `settings.yaml.imported`，或兜底的
 > `dsh-connect-settings.json`）导入一次，投影到面板拥有的字段上并**合并**到当前值之上——并且
 > 从不删除、不重命名任何东西。如果你从来没用过面板，不会有任何损失。完整说明见插件
-> [README](packages/connect/README.zh.md#从-091-升级) 与 [0.9.2 变更记录](CHANGELOG.md)。
+> [README](packages/connect/README.zh.md#从-090-升级) 与 [0.9.2 变更记录](CHANGELOG.md)。
 
 ### 面板回显与脱敏
 
