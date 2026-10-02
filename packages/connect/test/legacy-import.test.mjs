@@ -119,6 +119,19 @@ test("resolveHarnessHome treats a blank home as unset", () => {
   });
 });
 
+test("resolveHarnessHome expands a leading ~, which is a literal string to Node", () => {
+  // `DSH_HOME=~/.dsh` is a natural thing to write in a shell profile and a
+  // perfectly literal path to Node: left alone, the migration reads a directory
+  // named `~` under the process cwd, finds nothing there, and marks itself done
+  // — permanently, silently — against a home that does not exist.
+  withDshHome("~/.dsh", () => assert.equal(resolveHarnessHome(), join(homedir(), ".dsh")));
+  withDshHome("~", () => assert.equal(resolveHarnessHome(), homedir()));
+  assert.equal(resolveHarnessHome("~/custom"), join(homedir(), "custom"));
+  // Only the `~` forms are rewritten; everything else comes back as given, which
+  // is what keeps the host's own `profileContext.home` whole.
+  assert.equal(resolveHarnessHome("/from/profile"), "/from/profile");
+});
+
 // --- legacyCandidates ----------------------------------------------------
 
 test("legacyCandidates reads the home documents first and the state file last", () => {
@@ -446,24 +459,57 @@ test("an explicit marker path is honoured", async () => {
   assert.equal(second.skipped, "already-imported");
 });
 
-test("a document that cannot be read is the same as one that is not there", async () => {
+test("a document that cannot be read is not the same as one that is not there", async () => {
   // The load path calls this fire-and-forget (`void importLegacySection(...)`),
   // so nothing here may reject — an unhandled rejection in somebody's boot log
   // is the whole failure mode this file is written to avoid. A directory where
   // the document should be is the portable way to arrange an unreadable path.
   const home = tempDir();
-  mkdirSync(join(home, "settings.yaml"), { recursive: true });
+  const state = join(tempDir(), "settings.json");
+  const document = join(home, "settings.yaml");
+  mkdirSync(document, { recursive: true });
+  const s = spy();
 
   const result = await importLegacySection({
     home,
-    statePath: join(tempDir(), "settings.json"),
+    statePath: state,
     current: {},
     write: async () => {
       throw new Error("must not be reached");
     },
-    logger: { warn: () => {}, info: () => {} },
+    logger: s.logger,
   });
 
   assert.equal(result.imported, false);
-  assert.equal(result.skipped, "no-document");
+  // Up to 0.9.1 this was `no-document`, which made the outcome final: the file
+  // is *there*, we simply could not open it, and one EACCES would have ended the
+  // migration for good. Only one of the two cases is final, so only one of them
+  // may be recorded as done.
+  assert.equal(result.skipped, "unreadable");
+  assert.equal(s.writes.length, 0);
+  assert.equal(s.warnings.length, 1);
+  assert.ok(s.warnings[0].startsWith(`connect: could not read the legacy settings candidate at ${document}`));
+  assert.ok(!existsSync(`${state}.legacy-imported`));
+});
+
+test("a marker that cannot be written is reported rather than swallowed", async () => {
+  // Not fatal — the import itself succeeded — but it is not harmless either:
+  // without the marker the next start re-runs the migration and layers the
+  // legacy values back over whatever the user has changed since.
+  const home = tempDir();
+  const document = join(home, "settings.yaml");
+  writeFileSync(document, DOCUMENT_WITH_CHANNELS, "utf8");
+  const s = spy();
+
+  const result = await importLegacySection({
+    home,
+    markerPath: join(document, "marker"), // a regular file, used as a directory
+    current: {},
+    write: s.write,
+    logger: s.logger,
+  });
+
+  assert.equal(result.imported, true);
+  assert.equal(s.warnings.length, 1);
+  assert.ok(s.warnings[0].includes("could not write the one-shot import marker at"));
 });

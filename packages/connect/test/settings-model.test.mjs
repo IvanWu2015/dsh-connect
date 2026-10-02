@@ -105,6 +105,31 @@ test("coerceConfigValue normalizes raw inputs by kind", () => {
   assert.equal(coerceConfigValue("text", "cli_1"), "cli_1");
 });
 
+test("snapshotToForm seeds every known channel, so a save cannot wipe a disabled one", () => {
+  // A save replaces the whole declared section: a channel block the payload
+  // omits is reset to its inherited value (see namespace.ts). Seeding only the
+  // *enabled* channels meant that a channel the user had configured and then
+  // switched off lost every declared field on the next save — including a save
+  // made for an entirely unrelated reason. The card for a switched-off channel
+  // also renders whatever is still stored, rather than a blank form.
+  const snap = {
+    config: { channels: ["web"], feishu: { transport: "websocket", dmMode: "pair" } },
+    enabled: ["web"],
+    credentials: {},
+    live: true,
+  };
+  const form = snapshotToForm(snap);
+  assert.deepEqual(form.channelConfigs.feishu, { transport: "websocket", dmMode: "pair" });
+  // Channels with nothing stored are seeded empty and then dropped by the
+  // payload builder, so seeding them all costs nothing in the document.
+  assert.deepEqual(form.channelConfigs.telegram, {});
+
+  const cfg = buildConfigSave(form);
+  assert.deepEqual(cfg.channels, ["web"]);
+  assert.deepEqual(cfg.feishu, { transport: "websocket", dmMode: "pair" });
+  assert.equal("telegram" in cfg, false);
+});
+
 test("buildConfigSave round-trips full non-secret channel config", () => {
   const form = {
     channels: ["feishu"],

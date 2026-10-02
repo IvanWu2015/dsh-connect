@@ -6,6 +6,7 @@ import fsN from "node:fs";
 
 import { createSettingsService } from "../lib/settings/settings-service.js";
 import { createCredentialStore } from "../lib/settings/credential-store.js";
+import { snapshotToForm, buildConfigSave } from "../lib/settings/settings-model.js";
 
 function tmpFile() {
   const dir = fsN.mkdtempSync(path.join(os.tmpdir(), "dsh-connect-settings-"));
@@ -95,6 +96,119 @@ test("saveCredentials maps config keys to refs and writes the store", async () =
   assert.equal(snap.credentials.feishu, true);
   assert.equal(provider.store.get("DSH_CONNECT_FEISHU_APP_ID"), "cli_9");
   assert.equal(provider.store.get("DSH_CONNECT_FEISHU_APP_SECRET"), "sec_9");
+});
+
+test("a credential save re-applies the channels, after the store holds the new value", async () => {
+  // An adapter keeps the secret it was started with, and the namespace's
+  // `onChange` fires only for a *config* write — the pane saves credentials as a
+  // separate call after that one. Without this hook a rotated appSecret stayed
+  // inert until a restart while the pane said 「已保存」.
+  const provider = mapProvider();
+  const store = createCredentialStore(provider);
+  const observed = [];
+  const svc = createSettingsService({
+    statePath: tmpFile(),
+    credentialStore: store,
+    onCredentialsSaved: () => observed.push(provider.store.get("DSH_CONNECT_FEISHU_APP_SECRET")),
+  });
+  await svc.saveCredentials("feishu", { appSecret: "sec_9" });
+  assert.deepEqual(observed, ["sec_9"]);
+});
+
+test("a failing reconcile is not reported as a failed credential save", async () => {
+  // The credential *is* stored; the phrase the pane shows has to match that.
+  const provider = mapProvider();
+  const store = createCredentialStore(provider);
+  const logs = [];
+  const svc = createSettingsService({
+    statePath: tmpFile(),
+    credentialStore: store,
+    log: (m) => logs.push(m),
+    onCredentialsSaved: () => { throw new Error("adapter restart failed"); },
+  });
+  // Both refs of the group, so the channel really is reported as configured.
+  const snap = await svc.saveCredentials("feishu", { appId: "cli_9", appSecret: "sec_9" });
+  assert.equal(snap.credentials.feishu, true);
+  assert.equal(provider.store.get("DSH_CONNECT_FEISHU_APP_SECRET"), "sec_9");
+  assert.equal(logs.some((m) => m.includes("adapter restart failed")), true);
+});
+
+test("an unwritable state file fails the save instead of reporting success", async () => {
+  // The pane renders 「已保存」 from a resolved promise, so a swallowed write
+  // error shows success for a setting that is gone at the next restart. A
+  // directory in place of the file is the portable way to make the write fail
+  // (EISDIR on POSIX, EISDIR/EPERM on Windows).
+  const dir = fsN.mkdtempSync(path.join(os.tmpdir(), "dsh-connect-settings-"));
+  const svc = createSettingsService({ statePath: dir });
+  await assert.rejects(svc.save({ channels: ["feishu"] }), (e) => e.code === "save-failed");
+});
+
+test("a secret hand-edited into the fallback file never reaches the pane", async () => {
+  const file = tmpFile();
+  fsN.writeFileSync(file, JSON.stringify({
+    channels: ["feishu"],
+    language: "en",
+    settingsStatePath: file,
+    feishu: { transport: "websocket", appSecret: "leaked_secret_value" },
+  }));
+  const svc = createSettingsService({ statePath: file });
+  const snap = await svc.get();
+  assert.deepEqual(snap.config.feishu, { transport: "websocket" });
+  assert.ok(!JSON.stringify(snap).includes("leaked_secret_value"));
+  // Only the secret keys are dropped: this plane is a loose merge store rather
+  // than the declared schema, so a shared-config key like `language` and the
+  // path itself have to survive the read.
+  assert.equal(snap.config.language, "en");
+  assert.equal(snap.config.settingsStatePath, file);
+  assert.deepEqual(snap.config.channels, ["feishu"]);
+
+  // The file keeps what the user wrote: the filter is on the way out, and
+  // deleting a value out of someone's document as a side effect of an unrelated
+  // save would be a worse bug than the one being fixed here.
+  const after = await svc.save({ channels: ["feishu", "web"] });
+  assert.ok(!JSON.stringify(after).includes("leaked_secret_value"));
+  const onDisk = JSON.parse(fsN.readFileSync(file, "utf8"));
+  assert.equal(onDisk.feishu.appSecret, "leaked_secret_value");
+  assert.deepEqual(onDisk.channels, ["feishu", "web"]);
+});
+
+test("a secret hand-written into the plugin entry never reaches the pane", async () => {
+  // The realistic case for this one: the plugin entry is *allowed* to carry a
+  // secret the user wrote by hand, and the deployed profile does. The read is
+  // the resolved section, so without the same filter the value would ride out
+  // in the snapshot the browser receives — while the whole point of the masked
+  // preview is that a secret never does.
+  const section = {
+    channels: ["feishu"],
+    feishu: { transport: "websocket", appId: "cli_a1b2c3d4", appSecret: "hand_written_secret" },
+  };
+  const svc = createSettingsService({
+    statePath: tmpFile(),
+    live: () => ({ read: () => section, write: async () => {} }),
+  });
+  const snap = await svc.get();
+  // appId goes with it, and that is the honest answer rather than an
+  // over-reach: it is a credential-store ref exactly like appSecret, so the
+  // pane shows it on the credential plane (as a preview the user can read in
+  // full) and not as a config field. Exempting it here would take a guess about
+  // which keys are authenticators, and that guess is the kind that rots.
+  assert.deepEqual(snap.config.feishu, { transport: "websocket" });
+  const wire = JSON.stringify(snap);
+  assert.ok(!wire.includes("hand_written_secret"));
+  assert.ok(!wire.includes("cli_a1b2c3d4"));
+
+  // ...and the filter is load-bearing for *writes*, not just for display: the
+  // form is built from `snap.config` and the payload builder re-emits whatever
+  // keys it finds there, so an unfiltered read would hand the secret back to
+  // the server inside the next save.
+  const payload = buildConfigSave(snapshotToForm(snap));
+  assert.deepEqual(payload.feishu, { transport: "websocket" });
+  assert.ok(!JSON.stringify(payload).includes("hand_written_secret"));
+
+  // Nothing was removed from the document: the filter is on the way out, and
+  // the service never writes a read back.
+  assert.equal(section.feishu.appSecret, "hand_written_secret");
+  assert.equal(section.feishu.appId, "cli_a1b2c3d4");
 });
 
 test("saveCredentials without a store throws not-configured", async () => {

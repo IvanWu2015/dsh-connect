@@ -88,11 +88,11 @@ const STYLE = `
 .dsh-connect-settings .ds-check{flex:none;width:16px;height:16px;accent-color:var(--ds-accent)}
 .dsh-connect-settings .ds-input{height:30px;width:100%;min-width:0;padding:0 9px;border:1px solid var(--ds-border-2);border-radius:6px;background:var(--ds-bg);color:var(--ds-text);font:inherit}
 .dsh-connect-settings select.ds-input{cursor:pointer}
-.dsh-connect-settings .ds-input:focus{outline:none;border-color:var(--ds-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--ds-accent) 25%,transparent)}
+.dsh-connect-settings .ds-input:focus{outline:none;border-color:var(--ds-accent);box-shadow:0 0 0 2px rgba(59,130,246,.25);box-shadow:0 0 0 2px color-mix(in srgb,var(--ds-accent) 25%,transparent)}
 .dsh-connect-settings .ds-adv{display:flex;flex-direction:column;gap:8px}
 .dsh-connect-settings .ds-advanced-toggle{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px dashed var(--ds-border-2);border-radius:99px;background:transparent;color:var(--ds-muted);font:inherit;font-size:11px;cursor:pointer}
 .dsh-connect-settings .ds-advanced-toggle:hover{background:var(--ds-hover);color:var(--ds-text)}
-.dsh-connect-settings .ds-footer{position:sticky;bottom:0;z-index:1;display:flex;align-items:center;gap:12px;margin:0 -14px -12px;padding:10px 14px;border-top:1px solid var(--ds-border);border-radius:0 0 9px 9px;background:var(--ds-bg)}
+.dsh-connect-settings .ds-footer{position:sticky;bottom:0;z-index:1;display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg)}
 .dsh-connect-settings .ds-btn{height:32px;padding:0 18px;border:0;border-radius:6px;background:var(--dsw-alias-button-primary-fill,var(--ds-accent));color:var(--dsw-alias-label-primary-foreground,#ffffff);font:inherit;font-weight:500;cursor:pointer}
 .dsh-connect-settings .ds-btn:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--ds-accent))}
 .dsh-connect-settings .ds-btn:disabled{opacity:.55;cursor:default}
@@ -281,9 +281,16 @@ export function ConnectSettingsTab({ rpcCall, t }) {
   const setChannels = (ch, on) => {
     setForm((f) => ({ ...f, channels: on ? [...f.channels, ch] : f.channels.filter((x) => x !== ch) }));
     // Enabling a channel opens it, and only ever opens: the user just said they
-    // care about this one. Ticking it back off leaves the fold alone rather than
-    // snapping shut under the cursor.
-    if (on && !open.has(ch)) setOpenOverride(new Set(open).add(ch));
+    // care about this one.
+    //
+    // Recording the fold *either way* is what keeps the card from vanishing
+    // under the cursor. Until the user touches an enable box, the open set is
+    // derived on every render from the enabled list — so unticking Feishu drops
+    // it from `form.channels`, the derived default is recomputed without it, and
+    // the card collapses exactly as the user is looking at it. Writing the
+    // current fold into the override first freezes it, so an untick closes
+    // nothing.
+    setOpenOverride(on && !open.has(ch) ? new Set(open).add(ch) : new Set(open));
   };
   const setField = (ch, field, value) => setForm((f) => ({ ...f, secrets: { ...f.secrets, [ch]: { ...(f.secrets[ch] ?? {}), [field]: value } } }));
   const setChannelConfig = (ch, key, raw) => setForm((f) => {
@@ -366,14 +373,16 @@ export function ConnectSettingsTab({ rpcCall, t }) {
           h('p', { className: 'ds-hint' }, t('statePathHint'))),
       ),
       h('div', { className: 'ds-status' }, form.live ? t('livePlane') : t('filePlane')),
-      // Sticky to the bottom of the host's scrolling region, so Save stays in
-      // reach however far the channel list has been unfolded.
-      h('div', { className: 'ds-footer' },
-        h('button', { className: 'ds-btn', type: 'button', onClick: onSave, disabled: status === 'saving' }, t('save')),
-        // Rendering `status` directly leaks the raw state ids (`idle`, `saving`)
-        // into the UI; every state has a locale entry instead.
-        h('span', { className: 'ds-status' }, tr(t, `status.${status}`, status)),
-      ),
+    ),
+    // Last child of the root, not of a card: `position:sticky` pins to the
+    // nearest scrollport only while its containing block is the scrolled box.
+    // Nested in the defaults card it could never move outside that card, so it
+    // pinned to nothing and Save scrolled away with the channel list.
+    h('div', { className: 'ds-footer' },
+      h('button', { className: 'ds-btn', type: 'button', onClick: onSave, disabled: status === 'saving' }, t('save')),
+      // Rendering `status` directly leaks the raw state ids (`idle`, `saving`)
+      // into the UI; every state has a locale entry instead.
+      h('span', { className: 'ds-status' }, tr(t, `status.${status}`, status)),
     ),
   );
 }

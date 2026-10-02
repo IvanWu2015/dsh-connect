@@ -10,8 +10,9 @@
  * **Two data planes, one interface.** When the `dsh-connect` settings namespace
  * is installed (`namespace.ts`), that *is* the store: reads come from the
  * provider's resolved section and writes go back through it, which is what makes
- * a pane save land in `$DSH_HOME/settings.yaml`, take effect immediately (the
- * namespace's `onChange` reconciles the running adapters) and survive a restart.
+ * a pane save land in this plugin's entry in the active profile patch
+ * (`cordis.patch.yml`), take effect immediately (the namespace's `onChange`
+ * reconciles the running adapters) and survive a restart.
  * The JSON state file is the fallback for hosts without a settings service, and
  * is written only when no namespace is live.
  *
@@ -48,10 +49,62 @@ export interface SettingsServiceOptions {
    * after a user plugin), so the handle does not exist yet at construction time.
    */
   live?: () => LiveConnectSection | undefined;
+  /**
+   * Called after a credential write lands in the store, so the running adapters
+   * pick the new secret up.
+   *
+   * Writing the store is not enough on its own: an adapter holds the secret it
+   * was started with, and the only thing that re-applies one is the plugin's
+   * `reconcile` — which the settings namespace fires on a *config* write. The
+   * pane saves config and credentials as two separate calls, so without this
+   * hook a rotated `appSecret` stayed inert until the next host restart while
+   * the pane reported 「已保存」 — the user's fix for a broken bot would appear
+   * to have done nothing.
+   */
+  onCredentialsSaved?: () => void;
 }
 
 function logError(msg: string) {
   if (typeof console !== "undefined") console.error?.("[dsh-connect/settings] " + msg);
+}
+
+/**
+ * Drop per-channel secret keys before a config leaves the host.
+ *
+ * Applied in `snapshot`, which is the one boundary every read crosses, so both
+ * data planes are covered and neither has to remember: the live plane's resolved
+ * section is *allowed* to carry a secret the user wrote by hand (the documented
+ * posture for the plugin entry, and what the deployed profile does), and the
+ * fallback file is plaintext besides. It costs the pane nothing to lose them —
+ * the config plane is not where a secret is displayed; the pane renders
+ * `secrets`/`secretPreviews`, which come from the credential store and are
+ * masked there.
+ *
+ * It also keeps them out of the *write* path: `snapshotToForm` carries the
+ * config into the form and `buildConfigSave` re-emits whatever keys it finds
+ * there, so an unfiltered read could hand a hand-written secret straight back to
+ * the server inside the next save payload.
+ *
+ * Only these keys go: a plane is a loose store rather than the declared schema,
+ * and a save can carry keys the pane does not render (the shared config's
+ * `language`, a hand-written key), so everything else has to survive the read.
+ * Nothing is removed from the document — this filters on the way out, and the
+ * service never writes a read back.
+ */
+function withoutSecrets(config: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...config };
+  for (const [channel, keys] of Object.entries(CHANNEL_SECRET_KEYS)) {
+    const block = out[channel];
+    if (block === null || typeof block !== "object" || Array.isArray(block)) continue;
+    const secretKeys = Object.keys(keys ?? {});
+    if (secretKeys.length === 0) continue;
+    const kept: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(block as Record<string, unknown>)) {
+      if (!secretKeys.includes(key)) kept[key] = value;
+    }
+    out[channel] = kept;
+  }
+  return out;
 }
 
 /**
@@ -94,7 +147,9 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
     if (!statePath || !existsSync(statePath)) return { ...initialConfig };
     try {
       const value = JSON.parse(readFileSync(statePath, "utf8"));
-      return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+      return value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
     } catch (error) {
       log(`failed to read settings state: ${String(error)}`);
       return {};
@@ -102,16 +157,29 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
   }
 
   function persist(config: Record<string, unknown>) {
+    // No path is the documented in-memory mode, not a failed write.
     if (!statePath) return;
     try {
       mkdirSync(dirname(statePath), { recursive: true });
       writeFileSync(statePath, JSON.stringify(config, null, 2) + "\n");
     } catch (error) {
+      // Swallowing here was a lie with a delay on it: `save()` goes on to
+      // return a snapshot of the value it just failed to store, the pane reads
+      // that as 「已保存」, and the setting is gone at the next restart. The
+      // code is forwarded verbatim to the browser (`PUBLIC_ERRORS`), so the
+      // pane's own failure path can report it instead.
       log(`failed to write settings state: ${String(error)}`);
+      const err = new Error("save-failed") as Error & { code?: string };
+      err.code = "save-failed";
+      throw err;
     }
   }
 
-  async function snapshot(config: Record<string, unknown>): Promise<SettingsSnapshot> {
+  async function snapshot(rawConfig: Record<string, unknown>): Promise<SettingsSnapshot> {
+    // The one boundary every read crosses — `get`, `status`, both save paths —
+    // so the secret filter belongs here and not in each read (see
+    // `withoutSecrets`).
+    const config = withoutSecrets(rawConfig);
     const enabled = (Array.isArray(config.channels) ? config.channels : [...channels])
       .filter((name) => channels.includes(name as ChannelName)) as string[];
     const credentials: Record<string, boolean> = {};
@@ -172,6 +240,17 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
         throw err;
       }
       await credentialStore.save(channel as ChannelName, refValues);
+      // The adapters are holding the previous secret; hand them the new one
+      // before answering the pane (see `onCredentialsSaved`).
+      if (options.onCredentialsSaved) {
+        try {
+          options.onCredentialsSaved();
+        } catch (error) {
+          // The credential *is* stored — a failure to re-apply must not be
+          // reported as a failed save.
+          log(`credential store updated but the channel reconcile failed: ${String(error)}`);
+        }
+      }
       return snapshot(readConfig());
     },
     async save(config: Record<string, unknown>) {

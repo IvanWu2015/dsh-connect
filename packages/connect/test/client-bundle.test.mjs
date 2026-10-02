@@ -50,10 +50,23 @@ function reactStub(queued) {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
     // The component reads a loaded form, a status and a credentials map, in that
     // order. A stub cannot run effects, so the values a real render would have
-    // settled on are supplied up front instead. The setters are never called
-    // during a render, so a no-op is enough.
-    useState: () => [queued[hook++], () => {}],
+    // settled on are supplied up front instead.
+    //
+    // The setter writes back into `queued` rather than being a no-op, so a test
+    // can fire an event handler, render again, and see what the pane did. Some
+    // rules are about a *sequence* — what a click does to a fold that was
+    // derived from the form until that moment — and a single render cannot show
+    // them. Updating `queued` is the whole of React's job here: the hook order
+    // is positional and re-running the component re-reads it.
+    useState: () => {
+      const index = hook++;
+      const set = (value) => { queued[index] = typeof value === "function" ? value(queued[index]) : value; };
+      return [queued[index], set];
+    },
     useEffect: () => {},
+    // Hook positions are per *render*: without this the second draw would start
+    // at the next free slot and read `undefined` for the form.
+    resetHooks: () => { hook = 0; },
   };
 }
 
@@ -118,16 +131,14 @@ const ALL_OPEN = new Set(["feishu", "telegram", "dingtalk", "web"]);
  * the pane's contents exactly as they were before the cards could fold — those
  * tests are about what the pane renders, and folding is tested on its own.
  */
-function render(lang, opts = {}) {
+function mount(lang, queued) {
   const registered = loadBundle();
-  const queued = [
-    snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials },
-    opts.open ?? ALL_OPEN,
-    opts.advanced ?? ALL_OPEN,
-  ];
+  // One stub for the whole mount: its setters are the component's state, so a
+  // fresh one per draw would throw away everything the previous draw did.
+  const stub = reactStub(queued);
   const req = (id) => {
     assert.equal(id, "react", `the bundle required an unexpected external module: ${id}`);
-    return reactStub(queued);
+    return stub;
   };
   const mod = registered.factory(req);
 
@@ -143,9 +154,28 @@ function render(lang, opts = {}) {
   mod.apply(ctx);
   assert.ok(localeTable, "apply() never registered a locale table");
 
-  const { rpcCall, t } = slot.inject();
-  const tree = mod.ConnectSettingsTab({ rpcCall, t });
-  return { tree, localeTable, slot, text: visibleText(tree), elements: elements(tree) };
+  return {
+    queued,
+    localeTable,
+    slot,
+    /** Render the component again from the current state values. */
+    draw() {
+      stub.resetHooks();
+      const { rpcCall, t } = slot.inject();
+      const tree = mod.ConnectSettingsTab({ rpcCall, t });
+      return { tree, text: visibleText(tree), elements: elements(tree) };
+    },
+  };
+}
+
+function render(lang, opts = {}) {
+  const pane = mount(lang, [
+    snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials },
+    opts.open ?? ALL_OPEN,
+    opts.advanced ?? ALL_OPEN,
+  ]);
+  const { tree, text, elements: els } = pane.draw();
+  return { tree, text, elements: els, localeTable: pane.localeTable, slot: pane.slot };
 }
 
 test("the bundle registers as the dsh-connect settings section", () => {
@@ -358,4 +388,77 @@ test("the accordion is a div per channel, headed by a button, driven by one tab 
   const strip = els.find((el) => el.props.className === "ds-tabs");
   assert.equal(strip.type, "nav");
   assert.equal(strip.props["aria-label"], L.zh.tabsAria);
+});
+
+test("unchecking a channel does not fold its card shut under the cursor", () => {
+  // No override yet, so the open set is *derived* from the enabled list on every
+  // render — which is the state the user is in the first time they touch an
+  // enable box, and the one where a naive untick takes the card away: Feishu
+  // leaves `form.channels`, `initialOpenChannels` is recomputed without it, and
+  // the card the user is looking at disappears.
+  const pane = mount("zh", [snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials }, null, new Set()]);
+  const name = (ch) => pane.localeTable.zh[`channel.${ch}`];
+  const box = (view, ch) => view.elements.find(
+    (el) => el.type === "input" && el.props.type === "checkbox" && el.props["aria-label"] === name(ch),
+  );
+  const bodyOf = (view, ch) => view.elements.some((el) => el.props.id === `ds-ch-${ch}-body`);
+
+  let view = pane.draw();
+  // The fixture enables feishu and dingtalk, so the derived default opens both.
+  assert.ok(bodyOf(view, "feishu") && bodyOf(view, "dingtalk"), "the enabled channels did not start open");
+
+  box(view, "feishu").props.onChange({ target: { checked: false } });
+  view = pane.draw();
+  assert.ok(!pane.queued[0].channels.includes("feishu"), "the untick never reached the form");
+  assert.ok(bodyOf(view, "feishu"), "unchecking feishu folded its card shut");
+  assert.ok(bodyOf(view, "dingtalk"), "unchecking feishu folded an unrelated card");
+
+  // The other direction: ticking a channel opens it, and the fold is frozen from
+  // here on, so ticking it back off must not close it either.
+  box(view, "telegram").props.onChange({ target: { checked: true } });
+  view = pane.draw();
+  assert.ok(bodyOf(view, "telegram"), "ticking a channel did not open it");
+  box(view, "telegram").props.onChange({ target: { checked: false } });
+  view = pane.draw();
+  assert.ok(bodyOf(view, "telegram"), "unchecking telegram folded its card shut");
+});
+
+test("the save bar is the root's last child, so it can pin to the host's scroll region", () => {
+  const { tree, elements: els } = render("zh");
+  const footer = els.find((el) => el.props.className === "ds-footer");
+  assert.ok(footer, "the pane has no save bar");
+  // `position:sticky` pins to the nearest scrollport only while its containing
+  // block is the scrolled box. Nested inside the defaults card the footer could
+  // never leave that card, so it pinned to nothing and Save scrolled out of
+  // reach with the channel list.
+  assert.equal(tree.children[tree.children.length - 1], footer, "the save bar is not the root's last child");
+  for (const card of els.filter((el) => el.props.className === "ds-card")) {
+    assert.ok(!elements(card.children).includes(footer), "the save bar is nested inside a card again");
+  }
+});
+
+test("the fallback plane still names the file it writes, and only there", () => {
+  // The single branch that renders `settingsStatePath`. On the live plane the
+  // path is not consulted and is not part of the section, so an editable field
+  // for it would silently swallow edits — which is why it is hidden, and is only
+  // ever hideable if the fallback branch exists at all.
+  const live = render("zh");
+  assert.ok(!live.text.includes(live.localeTable.zh.statePath), "the live plane rendered the fallback file-path field");
+  assert.ok(live.text.includes(live.localeTable.zh.livePlane), "the live plane did not say its saves are immediate");
+
+  const statePath = ".dsh-connect/dsh-connect-settings.json";
+  const pane = mount("zh", [
+    snapshotToForm({ ...SNAPSHOT, live: false, config: { ...SNAPSHOT.config, settingsStatePath: statePath } }),
+    "idle", { ...SNAPSHOT.credentials }, ALL_OPEN, new Set(),
+  ]);
+  const view = pane.draw();
+  const L = pane.localeTable.zh;
+  assert.ok(view.text.includes(L.statePath), "the fallback plane did not name the file it writes");
+  assert.ok(view.text.includes(L.statePathHint), "the fallback plane did not explain the field");
+  assert.ok(view.text.includes(L.filePlane), "the fallback plane claimed its saves were immediate");
+  // Seeded, never blank: blank is what a save would write, clearing the path.
+  assert.ok(
+    view.elements.some((el) => el.type === "input" && el.props.value === statePath),
+    "the state-path field was not seeded with the loaded value",
+  );
 });

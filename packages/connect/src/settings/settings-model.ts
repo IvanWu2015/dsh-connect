@@ -112,8 +112,18 @@ export interface SettingsForm {
 export function snapshotToForm(snapshot: SettingsSnapshot): SettingsForm {
   const config = snapshot.config ?? {};
   const channels = (snapshot.enabled ?? []) as ChannelName[];
+  // Seeded for *every* channel the pane knows, not only the enabled ones. A
+  // save is a whole-section replace: a declared channel block the payload omits
+  // is reset to its inherited value (see `namespace.ts`). Seeding from
+  // `enabled` alone therefore meant that switching a channel off and saving —
+  // for any reason, even one unrelated to that channel — silently reset every
+  // declared field of it (`transport`, `dmMode`, `webhookPort`, …), with
+  // nothing in the UI to suggest it. Rendering a switched-off channel's stored
+  // values is also simply more honest than showing it blank.
   const channelConfigs: Record<string, Record<string, unknown>> = {};
-  for (const ch of channels) channelConfigs[ch] = (config[ch] ?? {}) as Record<string, unknown>;
+  for (const ch of Object.keys(CHANNEL_CONFIG_FIELDS) as ChannelName[]) {
+    channelConfigs[ch] = (config[ch] ?? {}) as Record<string, unknown>;
+  }
   return {
     channels,
     channelDefaults: (config.channelDefaults ?? {}) as Record<string, unknown>,

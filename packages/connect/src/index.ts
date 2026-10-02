@@ -484,11 +484,13 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
   // fence.
   //
   // Web settings pane state. When the namespace above is live, that registration
-  // *is* the store: the pane reads and writes `$DSH_HOME/settings.yaml` through
-  // `liveSection`, a save reconciles the adapters immediately (via the same
-  // `onChange`) and survives a restart. The JSON file below is then only a
-  // fallback for a host with no settings service, which is why the service takes
-  // the handle as a getter rather than a value.
+  // *is* the store: the pane reads and writes this plugin's entry in the active
+  // profile patch (`cordis.patch.yml`) through `liveSection`, a save reconciles
+  // the adapters immediately (via the same `onChange`) and survives a restart.
+  // The JSON file below is then only a fallback for a host with no settings
+  // service, which is why the service takes the handle as a getter, not a value.
+  // Credentials are a second call, and a secret is not config: `onCredentialsSaved`
+  // is the reconcile trigger for that plane, since no config write happens.
   //
   // Seeded from the live plugin config so the pane reflects the channels
   // actually enabled; only NON-SECRET *declared* fields (secrets live in the
@@ -501,6 +503,11 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
     credentialStore,
     initialConfig: settingsSeed,
     live: () => liveSection,
+    // A rotated secret is inert until the adapters are re-applied, and the
+    // namespace's `onChange` only fires for a config write — the pane saves
+    // credentials as a second, separate call. Without this the user pastes a
+    // new appSecret, is told 「已保存」, and the bot stays broken until restart.
+    onCredentialsSaved: () => reconcile(),
   });
   if (typeof (ctx as { inject?: unknown }).inject === "function") {
     (ctx as Context).inject(["connection", "webServer"], (scopeCtx) => {
