@@ -208,6 +208,22 @@ function harnessHome(ctx: Context): string | undefined {
   return typeof profile?.home === "string" ? profile.home : undefined;
 }
 
+/**
+ * The active profile's patch file — `~/.dsh/profiles/<profile>/cordis.patch.yml`.
+ *
+ * Same `profileContext` service as above (`profileContext.patchPath`), and the
+ * same reason for going through `ctx.get`: the field is the host's, not ours.
+ * The one-shot legacy import anchors its marker on this path, because the
+ * marker means "this profile entry has already consumed the legacy document" and
+ * a profile is the only unit that can move without that staying true.
+ */
+function profilePatchPath(ctx: Context): string | undefined {
+  const profile = (ctx as { get?: (name: string) => unknown }).get?.("profileContext") as
+    | { patchPath?: unknown }
+    | undefined;
+  return typeof profile?.patchPath === "string" ? profile.patchPath : undefined;
+}
+
 /** One-line error text for a warning line; `String()` for a thrown non-Error. */
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -374,10 +390,12 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
 
   // Web-settings pane state. The pane's store is the profile entry itself (see
   // the namespace block below); this path backs only the *fallback* store, used
-  // by a host that has no settings service, and it is also where the one-shot
-  // legacy import records that it ran. Resolved through the shared helper and
-  // off the *merged* config, so the state file lands beside `bindings.json` and
-  // can't disagree with the stores. This used to read the raw `cfg.stateDir`,
+  // by a host that has no settings service. (The one-shot legacy import used to
+  // record itself here too; it is anchored on the profile entry now, see
+  // `profilePatchPath` — this path is user-relocatable and deletable, which made
+  // it the wrong place to remember that a migration had run.) Resolved through
+  // the shared helper and off the *merged* config, so the state file lands beside
+  // `bindings.json` and can't disagree with the stores. This used to read the raw `cfg.stateDir`,
   // which made the path `undefined` for every profile that never set
   // `stateDir` — and an undefined path made the settings service degrade to
   // in-memory, so a pane save silently vanished.
@@ -451,6 +469,7 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
         write: (section) => handle.write(section),
         current: installed.section,
         statePath: settingsStatePath,
+        entryPath: profilePatchPath(scopeCtx),
         logger: scopeCtx.logger,
       });
     }

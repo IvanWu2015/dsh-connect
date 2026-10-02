@@ -21,7 +21,7 @@
  *   migration ends up disabling every adapter. The section handed to
  *   `replace()` is therefore always complete: what is in force now, with the
  *   legacy values layered on top.
- * - **It is one-shot.** A marker beside the pane's state file records that the
+ * - **It is one-shot.** A marker beside the profile entry records that the
  *   import ran, including the benign "there was nothing to import" case, so the
  *   legacy document is never re-applied over later user edits. Nothing is marked
  *   unless the outcome is final: a document that is missing is marked, a document
@@ -42,6 +42,17 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { LEGACY_CONNECT_SECTION, mergeSections, sectionOf, type ConnectSection } from "./namespace.js";
+
+/**
+ * Name of the one-shot marker written beside the profile entry.
+ *
+ * Namespaced and dotted rather than a plain `${patchPath}.legacy-imported`
+ * because the profile directory is shared: every plugin's entry lives in that
+ * one `cordis.patch.yml`, so a bare suffix would be a file every plugin with a
+ * migration of its own would fight over — and the first one to write it would
+ * silently cancel the others.
+ */
+export const LEGACY_IMPORT_MARKER = ".dsh-connect-legacy-imported";
 
 /** The logger surface this module uses; both members are optional. */
 export interface LegacyImportLogger {
@@ -97,7 +108,13 @@ export interface LegacyImportOptions {
   current: ConnectSection;
   /** Path of this plugin's pre-0.2 JSON state file; the last-resort source. */
   statePath?: string | undefined;
-  /** Where to record that the import ran; defaults to `${statePath}.legacy-imported`. */
+  /**
+   * Path of this plugin's entry in the active profile — the
+   * `profileContext.patchPath` the import writes to, and the anchor the
+   * one-shot marker is named after (see `legacyMarkerPath`).
+   */
+  entryPath?: string | undefined;
+  /** Where to record that the import ran; overrides the derived path. */
   markerPath?: string | undefined;
   logger?: LegacyImportLogger | undefined;
 }
@@ -177,6 +194,40 @@ export function legacyCandidates(options: Pick<LegacyImportOptions, "home" | "st
     candidates.push({ path: options.statePath, shape: "section" });
   }
   return candidates;
+}
+
+/**
+ * Where the one-shot marker goes: beside the profile entry this import writes to.
+ *
+ * The anchor matters more than it looks. The marker means "this *profile entry*
+ * has already consumed the home's legacy document", so it has to move exactly
+ * when that entry moves and not otherwise:
+ *
+ * - **Not the state file.** `${statePath}.legacy-imported` — what this did until
+ *   0.9.2 — hangs off a path the user controls (`stateDir`, the
+ *   `DSH_CONNECT_STATE_DIR` override, `settingsStatePath`) and can delete. Move
+ *   the state directory, or delete one JSON file, and the next boot believes no
+ *   import ever ran, re-reads `settings.yaml.imported` (the host's rename keeps
+ *   the `dsh-connect:` section intact) and layers the legacy values back over
+ *   everything changed in the pane since. That is the one outcome the marker
+ *   exists to prevent, reachable by tidying up a directory.
+ * - **Not the harness home.** `$DSH_HOME` is shared by every profile, so a
+ *   marker there would let a second profile skip an import it never ran. The
+ *   profile directory is per-profile; it only moves if the profile itself does,
+ *   which is the one case where re-importing is right.
+ *
+ * The state-file suffix survives as a fallback for a caller with no entry path
+ * (a host too old to hand one over), where it is still better than no marker.
+ */
+export function legacyMarkerPath(options: Pick<LegacyImportOptions, "entryPath" | "markerPath" | "statePath">): string | undefined {
+  if (typeof options.markerPath === "string" && options.markerPath.trim().length > 0) return options.markerPath;
+  if (typeof options.entryPath === "string" && options.entryPath.trim().length > 0) {
+    return join(dirname(options.entryPath), LEGACY_IMPORT_MARKER);
+  }
+  if (typeof options.statePath === "string" && options.statePath.trim().length > 0) {
+    return `${options.statePath}.legacy-imported`;
+  }
+  return undefined;
 }
 
 /** What a read attempt found: the text, nothing at all, or a failure. */
@@ -326,7 +377,7 @@ function markAndReport(marker: string, body: string, warn: (text: string) => voi
 export async function importLegacySection(options: LegacyImportOptions): Promise<LegacyImportResult> {
   const { write, current, logger } = options;
   const warn = (text: string): void => logger?.warn?.(`connect: ${text}`);
-  const marker = options.markerPath ?? (options.statePath ? `${options.statePath}.legacy-imported` : undefined);
+  const marker = legacyMarkerPath(options);
 
   if (marker !== undefined) {
     const seen = readFileOutcome(marker);

@@ -20,16 +20,23 @@
  *    Reading it with the document reader finds no section and — worse than
  *    failing — marks the migration done, silently discarding the only copy a
  *    user who never had a live settings peer ever had.
+ * 3. **The one-shot marker hangs off the profile entry**, not off the state file
+ *    it used to (`legacyMarkerPath`). The state path is the user's to move
+ *    (`stateDir`, `DSH_CONNECT_STATE_DIR`, `settingsStatePath`) and to delete;
+ *    the entry is per-profile and stable, so it is the only anchor under which
+ *    "already imported" stays true.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
+  LEGACY_IMPORT_MARKER,
   importLegacySection,
   legacyCandidates,
+  legacyMarkerPath,
   resolveHarnessHome,
   sectionFromDocument,
   sectionOfStateDocument,
@@ -39,6 +46,21 @@ import {
 
 function tempDir() {
   return mkdtempSync(join(tmpdir(), "dsh-connect-legacy-"));
+}
+
+/**
+ * A stand-in for `~/.dsh/profiles/<profile>/cordis.patch.yml` — the profile
+ * entry the import writes to, which is also the anchor the one-shot marker is
+ * named after. Its own directory, because that is what makes the anchor real:
+ * the marker has to sit beside the entry and nowhere else.
+ */
+function tempEntry() {
+  return join(tempDir(), "cordis.patch.yml");
+}
+
+/** Where the one-shot marker for that entry belongs. */
+function markerFor(entry) {
+  return join(dirname(entry), LEGACY_IMPORT_MARKER);
 }
 
 /** A `settings.yaml`-style document: sections keyed by plugin name. */
@@ -213,12 +235,14 @@ test("sectionOfStateDocument tolerates a wrapped file", () => {
 
 test("importLegacySection merges the legacy section over the one in force", async () => {
   const home = tempDir();
+  const entry = tempEntry();
   const state = join(tempDir(), "settings.json");
   writeFileSync(join(home, "settings.yaml"), DOCUMENT_WITH_CHANNELS, "utf8");
   const s = spy();
 
   const result = await importLegacySection({
     home,
+    entryPath: entry,
     statePath: state,
     current: { channels: ["telegram"] },
     write: s.write,
@@ -234,9 +258,11 @@ test("importLegacySection merges the legacy section over the one in force", asyn
   });
   assert.deepEqual(s.writes, [result.section]);
 
-  const marker = contents(`${state}.legacy-imported`);
+  // Beside the profile entry, not beside the state file (see `legacyMarkerPath`).
+  const marker = contents(markerFor(entry));
   assert.match(marker, /imported the dsh-connect section from/);
   assert.ok(marker.includes(join(home, "settings.yaml")));
+  assert.ok(!existsSync(`${state}.legacy-imported`));
   // The document is the user's, not ours: a successful import renames nothing.
   assert.ok(existsSync(join(home, "settings.yaml")));
   assert.equal(s.infos.length, 1);
@@ -270,28 +296,38 @@ test("the migration cannot switch every adapter off", async () => {
 
 test("secrets in the legacy document reach neither the write nor the marker", async () => {
   const home = tempDir();
+  const entry = tempEntry();
   const state = join(tempDir(), "settings.json");
   writeFileSync(join(home, "settings.yaml"), DOCUMENT_WITH_CHANNELS, "utf8");
   const s = spy();
 
-  await importLegacySection({ home, statePath: state, current: {}, write: s.write, logger: s.logger });
+  await importLegacySection({ home, entryPath: entry, statePath: state, current: {}, write: s.write, logger: s.logger });
 
   // `sectionOf` is the only thing standing between the file and the profile
   // entry, and a profile entry is a document users paste into bug reports.
   assert.ok(!JSON.stringify(s.writes).includes("s3cret-value"));
-  assert.ok(!contents(`${state}.legacy-imported`).includes("s3cret-value"));
+  assert.ok(!contents(markerFor(entry)).includes("s3cret-value"));
 });
 
 test("the legacy import is one-shot", async () => {
   const home = tempDir();
+  const entry = tempEntry();
   const state = join(tempDir(), "settings.json");
   writeFileSync(join(home, "settings.yaml"), DOCUMENT_WITH_CHANNELS, "utf8");
   const first = spy();
-  await importLegacySection({ home, statePath: state, current: {}, write: first.write, logger: first.logger });
+  await importLegacySection({
+    home,
+    entryPath: entry,
+    statePath: state,
+    current: {},
+    write: first.write,
+    logger: first.logger,
+  });
 
   const second = spy();
   const result = await importLegacySection({
     home,
+    entryPath: entry,
     statePath: state,
     current: {},
     write: second.write,
@@ -306,6 +342,7 @@ test("the legacy import is one-shot", async () => {
 
 test("importLegacySection reads the flat state file when no home document survives", async () => {
   const home = tempDir();
+  const entry = tempEntry();
   const stateDir = tempDir();
   const state = join(stateDir, "dsh-connect-settings.json");
   writeFileSync(
@@ -321,6 +358,7 @@ test("importLegacySection reads the flat state file when no home document surviv
 
   const result = await importLegacySection({
     home,
+    entryPath: entry,
     statePath: state,
     current: { channels: ["feishu"] },
     write: s.write,
@@ -331,7 +369,7 @@ test("importLegacySection reads the flat state file when no home document surviv
   assert.equal(result.source, state);
   assert.deepEqual(result.section, { channels: ["dingtalk"], feishu: { transport: "webhook" } });
   assert.ok(!JSON.stringify(s.writes).includes("state-secret"));
-  assert.ok(existsSync(`${state}.legacy-imported`));
+  assert.ok(existsSync(markerFor(entry)));
 });
 
 test("the .imported document is read when settings.yaml has no section", async () => {
@@ -353,11 +391,11 @@ test("the .imported document is read when settings.yaml has no section", async (
 
 test("a legacy document with no section is marked, once", async () => {
   const home = tempDir();
-  const state = join(tempDir(), "settings.json");
+  const entry = tempEntry();
   writeFileSync(join(home, "settings.yaml"), "ui-settings-general:\n  locale: en\n", "utf8");
   const s = spy();
 
-  const result = await importLegacySection({ home, statePath: state, current: {}, write: s.write, logger: s.logger });
+  const result = await importLegacySection({ home, entryPath: entry, current: {}, write: s.write, logger: s.logger });
 
   assert.equal(result.imported, false);
   assert.equal(result.skipped, "no-section");
@@ -366,23 +404,23 @@ test("a legacy document with no section is marked, once", async () => {
   // Marked even though nothing happened: this is the outcome every already-
   // migrated user gets on every boot, and without the marker each boot would
   // re-read and re-parse the document for nothing.
-  assert.match(contents(`${state}.legacy-imported`), /no dsh-connect section to import/);
+  assert.match(contents(markerFor(entry)), /no dsh-connect section to import/);
 });
 
 test("no legacy document at all is marked too", async () => {
-  const state = join(tempDir(), "settings.json");
+  const entry = tempEntry();
   const s = spy();
 
   const result = await importLegacySection({
     home: join(tempDir(), "absent"),
-    statePath: state,
+    entryPath: entry,
     current: {},
     write: s.write,
     logger: s.logger,
   });
 
   assert.equal(result.skipped, "no-document");
-  assert.match(contents(`${state}.legacy-imported`), /no legacy settings document found/);
+  assert.match(contents(markerFor(entry)), /no legacy settings document found/);
 });
 
 test("an unparseable document is left in place for a retry", async () => {
@@ -390,18 +428,18 @@ test("an unparseable document is left in place for a retry", async () => {
   // document stays put (a rename would hide the typo), and no marker is written
   // so the next boot tries again once the YAML is fixed.
   const home = tempDir();
-  const state = join(tempDir(), "settings.json");
+  const entry = tempEntry();
   const document = join(home, "settings.yaml");
   writeFileSync(document, "dsh-connect:\n  channels: [1\n", "utf8");
   const s = spy();
 
-  const result = await importLegacySection({ home, statePath: state, current: {}, write: s.write, logger: s.logger });
+  const result = await importLegacySection({ home, entryPath: entry, current: {}, write: s.write, logger: s.logger });
 
   assert.equal(result.imported, false);
   assert.equal(result.skipped, "unparseable");
   assert.equal(s.warnings.length, 1);
   assert.ok(s.warnings[0].startsWith(`connect: the legacy settings at ${document} could not be parsed`));
-  assert.ok(!existsSync(`${state}.legacy-imported`));
+  assert.ok(!existsSync(markerFor(entry)));
   assert.equal(contents(document), "dsh-connect:\n  channels: [1\n");
 });
 
@@ -410,25 +448,25 @@ test("with no write path nothing is marked, so a later boot retries", async () =
   // still in the document, so the migration has to stay pending rather than
   // record itself as done.
   const home = tempDir();
-  const state = join(tempDir(), "settings.json");
+  const entry = tempEntry();
   writeFileSync(join(home, "settings.yaml"), DOCUMENT_WITH_CHANNELS, "utf8");
 
-  const result = await importLegacySection({ home, statePath: state, current: {} });
+  const result = await importLegacySection({ home, entryPath: entry, current: {} });
 
   assert.deepEqual(result, { imported: false, skipped: "not-live" });
-  assert.ok(!existsSync(`${state}.legacy-imported`));
+  assert.ok(!existsSync(markerFor(entry)));
 });
 
 test("a refused write names the source and leaves the marker unwritten", async () => {
   const home = tempDir();
-  const state = join(tempDir(), "settings.json");
+  const entry = tempEntry();
   const document = join(home, "settings.yaml");
   writeFileSync(document, DOCUMENT_WITH_CHANNELS, "utf8");
   const s = spy();
 
   const result = await importLegacySection({
     home,
-    statePath: state,
+    entryPath: entry,
     current: {},
     write: async () => {
       throw new Error("ValidationError: feishu.transport");
@@ -443,7 +481,114 @@ test("a refused write names the source and leaves the marker unwritten", async (
   assert.ok(s.warnings[0].includes("ValidationError: feishu.transport"));
   assert.ok(s.warnings[0].includes(document));
   // Retried next boot, when the cause is fixed — the section is still there.
-  assert.ok(!existsSync(`${state}.legacy-imported`));
+  assert.ok(!existsSync(markerFor(entry)));
+});
+
+// --- where the one-shot marker lives -------------------------------------
+
+test("legacyMarkerPath anchors on the profile entry", () => {
+  const entry = join("/profiles", "web", "cordis.patch.yml");
+  assert.equal(legacyMarkerPath({ entryPath: entry }), join("/profiles", "web", LEGACY_IMPORT_MARKER));
+  // Namespaced and dotted: the profile directory holds every plugin's entry, so
+  // a bare `${patchPath}.legacy-imported` would be a file the first plugin with
+  // a migration of its own would write and every other one would find.
+  assert.ok(LEGACY_IMPORT_MARKER.startsWith("."));
+  assert.ok(LEGACY_IMPORT_MARKER.includes("dsh-connect"));
+
+  // An explicit path wins over everything; then the entry; then the state file;
+  // then there is nothing to anchor on.
+  assert.equal(
+    legacyMarkerPath({ markerPath: "/tmp/im.done", entryPath: entry, statePath: "/state/s.json" }),
+    "/tmp/im.done",
+  );
+  assert.equal(
+    legacyMarkerPath({ entryPath: entry, statePath: "/state/s.json" }),
+    join("/profiles", "web", LEGACY_IMPORT_MARKER),
+  );
+  assert.equal(legacyMarkerPath({ statePath: "/state/s.json" }), "/state/s.json.legacy-imported");
+  assert.equal(legacyMarkerPath({}), undefined);
+  // Blank is as absent as missing — `join("", NAME)` would be a *relative* path.
+  assert.equal(legacyMarkerPath({ entryPath: "   ", statePath: "" }), undefined);
+  assert.equal(legacyMarkerPath({ markerPath: " ", statePath: "/state/s.json" }), "/state/s.json.legacy-imported");
+});
+
+test("the marker stays put when the user moves the state file", async () => {
+  // The defect this pins: up to 0.9.1 the marker was `${statePath}.legacy-imported`.
+  // The state path is the user's to move — `stateDir`, the `DSH_CONNECT_STATE_DIR`
+  // override, `settingsStatePath` — and to delete, and either one made the next
+  // boot believe no import had ever run. It then re-read `settings.yaml.imported`
+  // (the host's rename leaves the `dsh-connect:` section in it) and laid the
+  // legacy values back over everything changed in the pane since.
+  const home = tempDir();
+  const entry = tempEntry();
+  writeFileSync(join(home, "settings.yaml"), DOCUMENT_WITH_CHANNELS, "utf8");
+  const first = spy();
+  await importLegacySection({
+    home,
+    entryPath: entry,
+    statePath: join(tempDir(), "settings.json"),
+    current: {},
+    write: first.write,
+    logger: first.logger,
+  });
+  assert.equal(first.writes.length, 1);
+
+  // Same profile, new state directory: the user tidied up, or set `stateDir`.
+  const second = spy();
+  const result = await importLegacySection({
+    home,
+    entryPath: entry,
+    statePath: join(tempDir(), "settings.json"),
+    current: { channels: ["telegram"] },
+    write: second.write,
+    logger: second.logger,
+  });
+
+  assert.deepEqual(result, { imported: false, skipped: "already-imported" });
+  assert.deepEqual(second.writes, []);
+});
+
+test("two profiles over one home each run their own migration", async () => {
+  // Why the entry and not `$DSH_HOME`: the home is shared by every profile, so a
+  // marker there would let the second profile skip an import it never ran — and
+  // it would never run again, since the marker would be there for good.
+  const home = tempDir();
+  writeFileSync(join(home, "settings.yaml"), DOCUMENT_WITH_CHANNELS, "utf8");
+  const web = tempEntry();
+  const cli = tempEntry();
+  const first = spy();
+  const second = spy();
+
+  await importLegacySection({ home, entryPath: web, current: {}, write: first.write, logger: first.logger });
+  await importLegacySection({ home, entryPath: cli, current: {}, write: second.write, logger: second.logger });
+
+  assert.equal(first.writes.length, 1);
+  assert.equal(second.writes.length, 1);
+  assert.ok(existsSync(markerFor(web)));
+  assert.ok(existsSync(markerFor(cli)));
+});
+
+test("with no entry path the marker falls back beside the state file", async () => {
+  // A caller with no `profileContext.patchPath` to offer. Worse than the entry
+  // as an anchor, still far better than no marker at all.
+  const home = tempDir();
+  const state = join(tempDir(), "settings.json");
+  writeFileSync(join(home, "settings.yaml"), DOCUMENT_WITH_CHANNELS, "utf8");
+  const s = spy();
+
+  await importLegacySection({ home, statePath: state, current: {}, write: s.write, logger: s.logger });
+  assert.match(contents(`${state}.legacy-imported`), /imported the dsh-connect section from/);
+
+  const again = spy();
+  const result = await importLegacySection({
+    home,
+    statePath: state,
+    current: {},
+    write: again.write,
+    logger: again.logger,
+  });
+  assert.equal(result.skipped, "already-imported");
+  assert.deepEqual(again.writes, []);
 });
 
 test("an explicit marker path is honoured", async () => {
@@ -465,14 +610,14 @@ test("a document that cannot be read is not the same as one that is not there", 
   // is the whole failure mode this file is written to avoid. A directory where
   // the document should be is the portable way to arrange an unreadable path.
   const home = tempDir();
-  const state = join(tempDir(), "settings.json");
+  const entry = tempEntry();
   const document = join(home, "settings.yaml");
   mkdirSync(document, { recursive: true });
   const s = spy();
 
   const result = await importLegacySection({
     home,
-    statePath: state,
+    entryPath: entry,
     current: {},
     write: async () => {
       throw new Error("must not be reached");
@@ -489,7 +634,7 @@ test("a document that cannot be read is not the same as one that is not there", 
   assert.equal(s.writes.length, 0);
   assert.equal(s.warnings.length, 1);
   assert.ok(s.warnings[0].startsWith(`connect: could not read the legacy settings candidate at ${document}`));
-  assert.ok(!existsSync(`${state}.legacy-imported`));
+  assert.ok(!existsSync(markerFor(entry)));
 });
 
 test("a marker that cannot be written is reported rather than swallowed", async () => {

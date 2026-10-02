@@ -100,7 +100,7 @@
 
 **密钥只进 DSH 凭据库**（`credentials.save`），激活时由 `injectSecrets` 注入各渠道适配器（钉钉 stream 密钥嵌套进 `stream`）；profile patch 和 JSON 状态文件都不落密钥。
 
-> 0.9.0/0.9.1 的权威存储是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段。DSH 0.2 不再把插件设置放在那个文档里，所以升级到 0.9.2 时该段会被读取一次、投影到已声明字段后**合并**进 patch 条目（`.legacy-imported` 标记记录结果），详见插件 README 的「从 0.9.0 升级」。
+> 0.9.0/0.9.1 的权威存储是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段。DSH 0.2 不再把插件设置放在那个文档里，所以升级到 0.9.2 时该段会被读取一次、投影到已声明字段后**合并**进 patch 条目（`.dsh-connect-legacy-imported` 标记记录结果，写在 profile 条目旁），详见插件 README 的「从 0.9.0 升级」。
 
 **面板 UI**：渠道 Tab 条 + 可折叠卡片（低频字段收在二级「高级」折叠里，保存/状态固定在底部）；每个凭据字段旁边有一行只读的 `当前值：…` 掩码预览（`未配置` 表示空），掩码在宿主侧生成。钉钉的两个传输方式（webhook 推送 / stream 模式）互为互斥的凭据**组**（组内 all-of，组间 any-of）；`web` 渠道没有任何凭据，按定义即为「已配置」。
 

@@ -193,7 +193,7 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 - **写入的文件**
   - `<stateDir>/bindings.json`（默认 `.dsh-connect/`）—— 聊天 ⇄ 会话路由存储（聊天键、会话 id、镜像与锁状态）。
   - `<stateDir>/dsh-connect-settings.json`（默认 `.dsh-connect/`）—— 非密钥配置的兼容镜像，见 `settingsStatePath`。
-  - `<stateDir>/dsh-connect-settings.json.legacy-imported` —— 记录一次性升级导入已经跑过的标记文件。内容只有一句话说明设置来自哪里，不存任何数据。
+  - `<profile 目录>/.dsh-connect-legacy-imported` —— 记录一次性升级导入已经跑过的标记文件。它就放在导入所写的那个 profile 条目旁边（见[从 0.9.0 升级](#从-090-升级)），内容只有一句话说明设置来自哪里，不存任何数据。
   - 当前 profile patch 中属于本插件的条目（`profileContext.patchPath`，即 `cordis.patch.yml`）—— 经由 DSH 第一方 `settings` 服务写入，原子、加锁、保留注释。
   - `~/.dsh/.dsh-connect/feishu-credentials.json` —— **旧版、只读**。一键开通过去把飞书凭据存在这里而不是凭据库，导致刚扫码授权完的用户永远看到「未配置凭据」。现在开通流程写入凭据库，已有安装会在启动时从这个文件回填一次；此后不再读写它。
   - `<workDir>/.dsh-connect-images/` —— 为用户图片/附件暂存，供智能体工具使用。
@@ -319,8 +319,12 @@ DSH 0.2 把每个插件的设置保存在 **profile patch** 里，而不是 `$DS
   已声明字段重置回继承值，一份只带单渠道键的导入否则会清掉 `channels`，把所有适配器关掉。
 - 它走与面板保存完全相同的写入路径，所以运行中的适配器会立即对上，无需重启。
 - **不删除、不重命名任何东西。** 与宿主自己的导入不同，我们从不写 `settings.yaml`。
-- 结果会一次性记录在 `<stateDir>/dsh-connect-settings.json.legacy-imported` 里，包括
-  「本来就没有可导入内容」这种良性情形，这样后续启动就不会把旧值重新盖到你此后的修改上。
+- 结果会一次性记录在一个以 profile 条目本身（`profileContext.patchPath`）命名的标记里，
+  也就是 `<profile 目录>/.dsh-connect-legacy-imported`，包括「本来就没有可导入内容」这种良性
+  情形，这样后续启动就不会把旧值重新盖到你此后的修改上。锚点是那条**条目**，而不是它过去所在
+  的状态文件：状态路径归你所有，你可以改（`stateDir`、`DSH_CONNECT_STATE_DIR`、
+  `settingsStatePath`）也可以删，两者任一都会让下次启动误以为导入从未跑过。而 profile 目录只会
+  在 profile 本身移动时移动——那恰好就是「该重新导入」的唯一情形。
 
 重试规则比「凡失败就重试」更窄，而且是有意为之。只有三种结果是终局、会写标记：文档不在、
 文档里没有 `dsh-connect:` 段、以及导入成功。其余全部——文档解析不了、文档**在却读不了**
@@ -353,7 +357,7 @@ DSH 0.2 把每个插件的设置保存在 **profile patch** 里，而不是 `$DS
 | `connect: the legacy settings at <path> could not be parsed …` | 旧（0.2 之前）文档存在 YAML 错误，一次性迁移（见[从 0.9.0 升级](#从-090-升级)）因而跳过它并原样留下文件。修好 YAML 后重启；在那之前不会导入任何内容，也不会写标记，所以重试是自动的。 |
 | `connect: could not import the legacy dsh-connect settings from <path> …` | 迁移找到了该段，但 DSH 拒绝了这次写入（通常是某个值没通过校验）。该段仍在文件里——修好被点名的那一项后重启。 |
 | `connect: could not read the legacy settings candidate at <path> …` | 候选文件**在**那里但读不了：权限、路径其实是个目录、或者 `$DSH_HOME` 里的 `~` 没被展开。这是迁移唯一**不**标记完成的失败——什么都没导入，什么都没标记，下次启动自动重试，所以修好之后不用做别的。之所以要区分「不存在」和「读不了」：两件事此前是同一种结果，于是**一次 `EACCES` 就让整个迁移静默地、永久地结束了**。 |
-| `connect: could not write the one-shot import marker at <path> …` | 导入本身成功了，但记录它的标记写不出去（通常是 home 只读）。这不是无害的：没有标记，每次启动都会重跑整段迁移，把旧值重新盖到你升级后在面板里改过的设置上——面板看起来会「自己变回去」。修好 home 的写权限，或手动创建该标记文件。 |
+| `connect: could not write the one-shot import marker at <path> …` | 导入本身成功了，但记录它的标记写不出去（通常是 profile 目录只读）。这不是无害的：没有标记，每次启动都会重跑整段迁移，把旧值重新盖到你升级后在面板里改过的设置上——面板看起来会「自己变回去」。修好 profile 目录的写权限，或手动创建该标记文件。 |
 | `connect: the import marker at <path> could not be read …` | 标记存在但读不了。此时按**已导入**处理并提示：宁可不再导入，也不愿把旧值盖到你更新的设置上。要重新触发导入，删掉这个标记文件再重启。 |
 | 保存面板时报 *`Configuration for "connect" is overridden by a home patch or command-line overlay`* | 面板写的是 profile patch，但取值层级是 `bundle → profile → $DSH_HOME/cordis.patch.yml → --patch`，后两者的值会盖过面板保存的任何内容；DSH 因此直接拒绝这次写入，而不是让一次永远不可能生效的保存看起来成功了。想让面板接管这些设置，请改 home patch（或去掉 overlay）。 |
 | 菜单卡片不更新 / 过期 | 设计如此：卡片空闲 60 秒后自动关闭；重新打开菜单即可。提问与授权卡片同理——详见[对话中的提问与授权](#对话中的提问与授权)。 |

@@ -203,7 +203,7 @@ Environment variables (`FEISHU_*`, `TELEGRAM_*`, `DINGTALK_*`, `DSH_CONNECT_STAT
 - **Files written**
   - `<stateDir>/bindings.json` (default `.dsh-connect/`) — the chat ⇄ session route store (chat keys, session ids, mirror and lock state).
   - `<stateDir>/dsh-connect-settings.json` (default `.dsh-connect/`) — the non-secret compatibility mirror, see `settingsStatePath`.
-  - `<stateDir>/dsh-connect-settings.json.legacy-imported` — a marker recording that the one-shot upgrade import ran. Its contents are a sentence saying where the settings came from; nothing is stored in it.
+  - `<profile dir>/.dsh-connect-legacy-imported` — a marker recording that the one-shot upgrade import ran. It sits beside the profile entry the import writes to (see [Upgrading from 0.9.0](#upgrading-from-090)), and its contents are a sentence saying where the settings came from; nothing is stored in it.
   - this plugin's entry in the active **profile patch** (`profileContext.patchPath`, `cordis.patch.yml`) — written through DSH's first-party `settings` service (atomic, file-locked, comment-preserving).
   - `~/.dsh/.dsh-connect/feishu-credentials.json` — **legacy**, read-only. One-click onboarding used to save Feishu credentials here instead of the credential store, so a user who had just scanned the QR code still saw `未配置凭据` forever. Onboarding now writes to the credential store, and an existing install is backfilled from this file once on boot; after that it is never read or written again.
   - `<workDir>/.dsh-connect-images/` — user images/attachments staged for the agent's tools.
@@ -360,10 +360,16 @@ So **0.9.2 imports it once, on the first boot after the upgrade**:
   reconcile immediately — no restart.
 - **Nothing is deleted or renamed.** Unlike the host's own import, ours never
   writes to `settings.yaml`.
-- The outcome is recorded once in
-  `<stateDir>/dsh-connect-settings.json.legacy-imported`, including the benign
-  "there was nothing to import" case, so a later boot cannot re-apply the old
-  values over edits you have made since.
+- The outcome is recorded once in a marker named after the profile entry itself
+  (`profileContext.patchPath`), so it lives at
+  `<profile dir>/.dsh-connect-legacy-imported` — including the benign "there was
+  nothing to import" case, so a later boot cannot re-apply the old values over
+  edits you have made since. The anchor is the entry, not the state file it used
+  to sit beside: the state path is yours to move (`stateDir`,
+  `DSH_CONNECT_STATE_DIR`, `settingsStatePath`) and to delete, and either would
+  have made the next boot believe the import had never run. A profile directory
+  moves only if the profile itself does, which is the one case where re-importing
+  is right.
 
 The retry rule is narrower than "any failure is retried", and deliberately so.
 Three outcomes are final and get the marker: a document that is not there, a
@@ -402,7 +408,7 @@ Logs come from the DSH host logger (run `dsh web` in a terminal); plugin message
 | `connect: the legacy settings at <path> could not be parsed …` | The pre-0.2 document has a YAML error, so the one-shot migration ([Upgrading from 0.9.0](#upgrading-from-090)) skipped it and left it in place. Fix the YAML and restart; nothing is imported until then, and no marker is written, so the retry is automatic. |
 | `connect: could not import the legacy dsh-connect settings from <path> …` | The migration found the section but DSH refused the write (usually a value that fails validation). The section is still in the file — fix the named field and restart. |
 | `connect: could not read the legacy settings candidate at <path> …` | The candidate is *there* but could not be read: a permission, a path that is really a directory, or a `~` in `$DSH_HOME` that was not expanded. This is the one failure that does **not** mark the migration done — nothing is imported, nothing is marked, and the next start retries on its own, so fixing the cause is all that is needed. The distinction from "not there" is the point: the two were the same outcome until 0.9.2, so **a single `EACCES` ended the entire migration silently and permanently**. |
-| `connect: could not write the one-shot import marker at <path> …` | The import itself succeeded; the marker that records it could not be written (usually a read-only home). Not harmless: with no marker every start re-runs the whole migration and layers the legacy values back over whatever you changed in the pane after upgrading — which shows up as settings reverting on their own. Fix the home's write permission, or create the marker file by hand. |
+| `connect: could not write the one-shot import marker at <path> …` | The import itself succeeded; the marker that records it could not be written (usually a read-only home). Not harmless: with no marker every start re-runs the whole migration and layers the legacy values back over whatever you changed in the pane after upgrading — which shows up as settings reverting on their own. Fix the profile directory's write permission, or create the marker file by hand. |
 | `connect: the import marker at <path> could not be read …` | A marker exists but cannot be read. It is treated as **already imported** and reported: better to skip an import than to re-apply old values over your newer settings. Delete the marker and restart to trigger the import again. |
 | Saving the pane fails with *`Configuration for "connect" is overridden by a home patch or command-line overlay`* | The pane writes the profile patch, but resolution layers `bundle → profile → $DSH_HOME/cordis.patch.yml → --patch`, so a value set in one of the last two wins over anything the pane saves and DSH refuses the write rather than let a save that could never take effect look successful. Edit the home patch (or drop the overlay) if you want the pane to own these settings. |
 | Menu cards don't update / expire | Cards auto-close after 60 s idle by design; re-open the menu. Question and approval cards behave the same — see [Questions and approvals in a conversation](#questions-and-approvals-in-a-conversation). |
