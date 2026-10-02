@@ -25,10 +25,18 @@ import {
   type ChannelsConfig,
 } from "./settings/channels.js";
 import { ChannelRuntime } from "./settings/channel-runtime.js";
-import { installConnectSection, type LiveConnectSection, type SettingsProviderLike } from "./settings/namespace.js";
+import {
+  CONNECT_PRESENTATION,
+  installConnectSection,
+  materializeConfig,
+  paneConfigFields,
+  sectionOf,
+  type LiveConnectSection,
+  type SettingsProviderLike,
+} from "./settings/namespace.js";
+import { importLegacySection } from "./settings/legacy-import.js";
 import { installSettingsRpc } from "./settings/settings-rpc.js";
 import { createSettingsService } from "./settings/settings-service.js";
-import { CHANNEL_CONFIG_FIELDS } from "./settings/settings-model.js";
 import {
   CHANNEL_SECRET_KEYS,
   createCredentialStore,
@@ -166,6 +174,45 @@ async function migrateConfigSecrets(
   await migrateOnboardedSecrets(provider, enabled);
 }
 
+/**
+ * The profile entry id this instance was loaded from (`connect`).
+ *
+ * This — not the package name — is what `SettingsForms.replace()` addresses:
+ * its own jsdoc calls the first argument "Profile entry id". It comes from the
+ * loader entry, which is attached to the fiber at runtime but *typed* only in
+ * `cordis-plugin-loader`'s `declare module` augmentation; that package is the
+ * host's loader, not a dependency of this plugin, so importing the type is not
+ * an option and the narrow cast below is the whole of the compromise. Returns
+ * `undefined` outside a loader (`new Context().plugin(...)` in a test), which
+ * `installConnectSection` reports and degrades on rather than failing.
+ */
+function entryId(ctx: Context): string | undefined {
+  const fiber = (ctx as { fiber?: { entry?: { options?: { id?: unknown } } } }).fiber;
+  const id = fiber?.entry?.options?.id;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+/**
+ * The Harness home as the host resolved it, when it told us.
+ *
+ * `profileContext.home` is the authoritative answer (it also covers a home
+ * configured outside the environment); `undefined` hands the question to
+ * `resolveHarnessHome()`, which repeats the `$DSH_HOME` → `~/.dsh` precedence on
+ * its own. The pre-0.2 settings document lived in the *home*, not in the
+ * profile directory, which is why this is not derived from the state dir.
+ */
+function harnessHome(ctx: Context): string | undefined {
+  const profile = (ctx as { get?: (name: string) => unknown }).get?.("profileContext") as
+    | { home?: unknown }
+    | undefined;
+  return typeof profile?.home === "string" ? profile.home : undefined;
+}
+
+/** One-line error text for a warning line; `String()` for a thrown non-Error. */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Cordis plugin name used by loader diagnostics. */
 export const name = "connect";
 
@@ -219,14 +266,16 @@ export const Config = z.object({
   notifyLevel: z.union([z.const("full"), z.const("important"), z.const("result")]),
   /** Proactive progress-notice interval ms when a turn stays silent (default: 300000 = 5 min; 0 disables). */
   progressTimeoutMs: z.number(),
-  /** Channels to activate; default: all built-in channels. */
-  channels: z.array(z.union([z.const("feishu"), z.const("telegram"), z.const("dingtalk"), z.const("web")])),
-  /** Keys applied to every channel that doesn't set its own (e.g. a shared `language`). */
-  channelDefaults: z.any(),
-  feishu: z.any(),
-  telegram: z.any(),
-  dingtalk: z.any(),
-  web: z.any(),
+  /**
+   * Channels to activate, shared `channelDefaults`, and the per-channel options
+   * the settings pane edits. Spread from `paneConfigFields()` rather than
+   * restated: those are exactly the fields a profile entry is allowed to
+   * hot-commit, so declaring them here as `volatile` leaves is what turns a pane
+   * save into a live change instead of a remount (see `settings/namespace.ts`).
+   * Each channel's `appSecret`/`appId`/`botToken` stays *outside* this set on
+   * purpose — a volatile container would copy the secret into the profile.
+   */
+  ...paneConfigFields(),
   /** Optional path to persist web-settings edits (non-secret). */
   settingsStatePath: z.string(),
 });
@@ -262,9 +311,16 @@ declare module "@deepseek-ai/cordis" {
  * `apply` (the fiber is still LOADING until this function resolves).
  */
 export async function apply(ctx: Context, config: ConnectSettingsConfig | null = {}): Promise<void> {
-  // Shallow-clone so we never mutate the caller's config object. Only core
-  // fields are consumed by ConnectService; the rest are channel/settings.
-  const cfg: ConnectSettingsConfig = { ...(config ?? {}) };
+  // `config` as the loader resolved it. The pane-editable field set is declared
+  // `volatile` (see `Config` above), so those fields arrive here as *references*
+  // (`{ get() }`) whose value the loader replaces in place, while ordinary
+  // fields arrive as plain data. Both are kept: every consumer below works on a
+  // materialized plain-data copy (`cfg`, and nothing mutates the caller's
+  // object — `materializeConfig` copies as it walks), and the references stay
+  // behind in `rawConfig` so a pane save can be read back without re-running
+  // `apply`.
+  const rawConfig = (config ?? {}) as ConnectSettingsConfig;
+  const cfg: ConnectSettingsConfig = materializeConfig(rawConfig);
   const connect = new ConnectService(ctx, cfg);
 
   // DSH credentials store: report presence + inject secrets into each channel
@@ -316,13 +372,35 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
   });
   await runtime.apply(finalCfg);
 
-  // Register the `dsh-connect` namespace so the channel selection and the
-  // per-channel non-secret options become user-editable and *effective*:
-  // `installSection` layers the plugin's own config (as `base`) under the
-  // user's `settings.yaml` section, and every change re-reconciles the running
-  // adapters through the runtime above. The panel's own RPC
-  // (`settings/settings-rpc.ts`) is a separate transport onto the same idea and
-  // is kept for the pane's compatibility path.
+  // Web-settings pane state. The pane's store is the profile entry itself (see
+  // the namespace block below); this path backs only the *fallback* store, used
+  // by a host that has no settings service, and it is also where the one-shot
+  // legacy import records that it ran. Resolved through the shared helper and
+  // off the *merged* config, so the state file lands beside `bindings.json` and
+  // can't disagree with the stores. This used to read the raw `cfg.stateDir`,
+  // which made the path `undefined` for every profile that never set
+  // `stateDir` — and an undefined path made the settings service degrade to
+  // in-memory, so a pane save silently vanished.
+  const settingsStatePath = finalCfg.settingsStatePath
+    ?? join(resolveStateDir(finalCfg), "dsh-connect-settings.json");
+
+  // One projection, two triggers. A change reaches the adapters either through
+  // a write (the settings pane, or the legacy import) or through the loader
+  // committing new values into the volatile references behind `rawConfig`, and
+  // both must hand the runtime the *same* shape: `ChannelRuntime` restarts an
+  // adapter whose config it reads as different, so a mismatch here would bounce
+  // a live channel on every commit.
+  const reconcile = (): void => {
+    void runtime.apply(sectionOf(materializeConfig(rawConfig)) as ChannelsConfig);
+  };
+
+  // Register the `connect` profile entry's pane fields with the host, so the
+  // channel selection and the per-channel non-secret options become
+  // user-editable and *effective*: the pane writes them onto the entry, the
+  // loader commits them into the volatile references `rawConfig` carries, and
+  // every change re-reconciles the running adapters through `reconcile`. The
+  // panel's own RPC (`settings/settings-rpc.ts`) is a separate transport onto
+  // the same service and is kept for the pane's compatibility path.
   //
   // Deferred through `inject` for the same reason as the RPC below: `settings`
   // is a `dsh-base` row loaded after a user plugin's `apply` runs, so a plain
@@ -330,21 +408,52 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
   // host never provides it the callback never runs and the plugin config
   // stands on its own — which is exactly what `installConnectSection` falls
   // back to.
-  // Set once the namespace is live; read lazily by the settings service below,
-  // which is built before the deferred install runs.
+  //
+  // Set once the seam is live; read lazily by the settings service below, which
+  // is built before the deferred callback runs.
   let liveSection: LiveConnectSection | undefined;
   const installNamespace = (scopeCtx: Context): void => {
+    const settings = (scopeCtx as { get?: (name: string) => unknown }).get?.("settings") as
+      | SettingsProviderLike
+      | undefined;
+    // Suppress the host's automatic Plugins-page form for this entry: this
+    // plugin ships its own client pane, and two generated editors of the same
+    // fields is how a save silently reverts. `owner` must be *our* fiber — the
+    // method's default is the settings service's own fiber, which would attach
+    // the policy to the service and leave this entry's page alone.
+    if (typeof settings?.configure === "function") {
+      try {
+        const release = settings.configure(CONNECT_PRESENTATION, ctx.fiber);
+        if (typeof release === "function") ctx.effect(() => release);
+      } catch (error) {
+        scopeCtx.logger?.warn?.(`connect: could not suppress the automatic settings page (${errorText(error)})`);
+      }
+    }
     const installed = installConnectSection<Context>({
       owner: scopeCtx,
-      settings: (scopeCtx as { get?: (name: string) => unknown }).get?.("settings") as
-        | SettingsProviderLike
-        | undefined,
-      entry: finalCfg,
-      onChange: (section) => {
-        void runtime.apply(section as ChannelsConfig);
-      },
+      settings,
+      config: rawConfig,
+      ns: entryId(ctx),
+      onChange: () => reconcile(),
     });
     liveSection = installed.handle;
+    // One-shot: fold a pre-0.2 `$DSH_HOME/settings.yaml` `dsh-connect:` section
+    // into the entry. The host's own legacy import renames that document and
+    // then drops this section — it has no entry by that name — so on an
+    // upgraded install this is the only remaining copy of the user's pane
+    // choices. Nothing happens when there is no such document, and `current` is
+    // the section in force, so the write cannot clear a field the legacy
+    // document does not mention.
+    const handle = installed.handle;
+    if (handle !== undefined) {
+      void importLegacySection({
+        home: harnessHome(scopeCtx),
+        write: (section) => handle.write(section),
+        current: installed.section,
+        statePath: settingsStatePath,
+        logger: scopeCtx.logger,
+      });
+    }
   };
   if (typeof (ctx as { inject?: unknown }).inject === "function") {
     (ctx as Context).inject(["settings"], installNamespace);
@@ -352,6 +461,12 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
     // Bare context (unit tests): no inject-scope API, install directly.
     installNamespace(ctx);
   }
+
+  // A pane save is not the only writer: editing a running profile's patch (or
+  // reloading the plugin entry) commits volatile paths without re-running
+  // `apply`. The host announces that here, so the adapters follow the config
+  // they were started from.
+  ctx.on("loader/volatile-update", () => reconcile());
 
   // Expose the web-settings RPC. The host `connection`/`webServer` services are
   // loaded as base plugins AFTER this user plugin's apply runs, so a plain
@@ -375,29 +490,12 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
   // fallback for a host with no settings service, which is why the service takes
   // the handle as a getter rather than a value.
   //
-  // Seeded from the live plugin config so the pane reflects the channels actually
-  // enabled; only NON-SECRET editable fields per channel (secrets live in the
-  // credential store, never in either store this file touches). The fallback path
-  // is defaulted under the state dir so a save persists out of the box.
-  const settingsSeed: Record<string, unknown> = {
-    channels: finalCfg.channels ?? CHANNELS,
-    ...(finalCfg.channelDefaults ? { channelDefaults: finalCfg.channelDefaults } : {}),
-  };
-  for (const ch of CHANNELS) {
-    const raw = (finalCfg as unknown as Record<string, Record<string, unknown>>)[ch] ?? {};
-    const nonSecret: Record<string, unknown> = {};
-    for (const field of CHANNEL_CONFIG_FIELDS[ch] ?? []) {
-      if (raw[field.key] !== undefined) nonSecret[field.key] = raw[field.key];
-    }
-    if (Object.keys(nonSecret).length) settingsSeed[ch] = nonSecret;
-  }
-  // Resolve through the shared helper and off the *merged* config, so the state
-  // file lands beside `bindings.json` and can't disagree with the stores. This
-  // used to read the raw `cfg.stateDir`, which made the path `undefined` for
-  // every profile that never set `stateDir` — and an undefined path made the
-  // settings service degrade to in-memory, so a pane save silently vanished.
-  const settingsStatePath = finalCfg.settingsStatePath
-    ?? join(resolveStateDir(finalCfg), "dsh-connect-settings.json");
+  // Seeded from the live plugin config so the pane reflects the channels
+  // actually enabled; only NON-SECRET *declared* fields (secrets live in the
+  // credential store, never in either store this file touches), which is
+  // exactly the projection `sectionOf` performs — the same one the write path
+  // applies, so the fallback store cannot drift from the entry.
+  const settingsSeed: Record<string, unknown> = { ...sectionOf(finalCfg) };
   const settingsService = createSettingsService({
     statePath: settingsStatePath,
     credentialStore,

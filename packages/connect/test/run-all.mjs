@@ -50,6 +50,7 @@ const suites = [
   "channel-runtime.test.mjs",
   "interaction.test.mjs",
   "settings-namespace.test.mjs",
+  "legacy-import.test.mjs",
   "runner.test.mjs",
 ];
 

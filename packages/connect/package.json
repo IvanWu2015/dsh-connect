@@ -1,6 +1,6 @@
 {
   "name": "dsh-connect",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "All-in-one DeepSeek Harness (DSH) chat bridge: one plugin, one config block — Feishu/Lark, Telegram, DingTalk, and Web mirror adapters plus the web-settings pane, all behind a channels[] selector",
   "type": "module",
   "main": "lib/index.js",
@@ -93,22 +93,23 @@
     "prepack": "tsc -p tsconfig.json && node scripts/build-client.mjs"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.2",
-    "@larksuiteoapi/node-sdk": "^1.73.0"
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "@larksuiteoapi/node-sdk": "^1.73.0",
+    "yaml": "^2.8.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent": "^0.1.5-rc.2",
-    "@deepseek-ai/dsh-llm": "^0.1.5-rc.2",
-    "@deepseek-ai/dsh-session": "^0.1.5-rc.2"
+    "@deepseek-ai/dsh-agent": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "^0.2.0-rc.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent": "^0.1.5-rc.2",
-    "@deepseek-ai/dsh-llm": "^0.1.5-rc.2",
-    "@deepseek-ai/dsh-scope": "^0.1.5-rc.2",
-    "@deepseek-ai/dsh-session": "^0.1.5-rc.2",
-    "@deepseek-ai/dsh-tool-todo": "^0.1.5-rc.2",
+    "@deepseek-ai/dsh-agent": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-scope": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-tool-todo": "^0.2.0-rc.2",
     "@types/node": "^22.15.0",
     "esbuild": "^0.28.2",
     "typescript": "^5.6.3"

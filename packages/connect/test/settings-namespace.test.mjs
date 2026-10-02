@@ -1,99 +1,144 @@
 /**
- * The `dsh-connect` settings namespace.
+ * The `dsh-connect` settings seam onto `SettingsForms`.
  *
- * Two things are worth pinning here. First, `sectionOf` is the *only* thing
- * keeping secrets out of the settings document — schemastery preserves
- * undeclared keys, so anything left in the base rides out through `describe()`
- * and the settings RPC. Second, `installConnectSection` must never throw: a
- * hand-edited `settings.yaml` with a typo, or a namespace claimed by an earlier
- * fiber, has to degrade to the plugin config rather than abort the plugin's
- * `apply` (which would take the whole bridge down).
+ * Three properties are load-bearing here, and each is a test rather than a
+ * comment because each has a failure mode that is invisible in the pane:
+ *
+ * 1. **`sectionOf` is the only guard on the document.** Both directions go
+ *    through it — the snapshot the pane reads and the payload a save writes —
+ *    and schemastery preserves undeclared keys, so anything it lets past
+ *    reaches `settings.yaml`, a file users are invited to paste into bug
+ *    reports.
+ * 2. **`materializeConfig` must read a declared-but-unset leaf as *absent*.**
+ *    Every volatile leaf resolves into the parsed config whether or not the
+ *    profile set it, and the adapters resolve a channel as
+ *    `{...channelDefaults, ...channel}` — so an explicit `undefined` for a
+ *    channel's own `language` would mask the shared default it should inherit.
+ * 3. **`installConnectSection` must never throw.** A host without the service, a
+ *    context with no resolvable entry id, and a refused write all degrade to a
+ *    warning line; a settings integration that cannot work must never be the
+ *    reason a bridge fails to start.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { CHANNELS } from "../lib/settings/channels.js";
+import { CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS } from "../lib/settings/settings-model.js";
 import {
-  CONNECT_SETTINGS_NS,
-  ConnectSectionSchema,
   installConnectSection,
+  materializeConfig,
+  mergeSections,
   sectionOf,
 } from "../lib/settings/namespace.js";
 
+// --- fixtures ------------------------------------------------------------
+
+/** The shared volatile-write symbol, exactly as the module sniffs it. */
+const VOLATILE_WRITE = Symbol.for("cosmokit.volatile.write");
+
 /**
- * A settings service that behaves like the real one in the ways this module
- * depends on: it validates the layered value with the *actual* schema it was
- * handed, and it fires `onChange` again on later edits via the `setSource`
- * thunk it was given.
+ * One loader-managed leaf: an object carrying the shared volatile-write symbol,
+ * whose `get()` is the current snapshot.
+ *
+ * Hand-rolled rather than taken from cosmokit on purpose — a symbol-keyed
+ * object *is* the contract `isConfigRef` sniffs, and that is the point: the host
+ * may hand us references built by its own copy of the library, so the symbol is
+ * the only identifier guaranteed identical across copies.
  */
-function fakeSettings({ user = {}, failInstall, failReplace } = {}) {
-  const calls = [];
-  const fake = {
-    /** Sections the fake service holds for our namespace, keyed by ns. */
-    user,
-    /** Set to a message to make `installSection` throw. */
-    failInstall,
-    /** Set to a message to make `replace` reject (a schema violation on write). */
-    failReplace,
-    /** Last `entry` (the base layer) passed in — asserted to hold no secrets. */
-    entry: undefined,
-    /** A resolved value to hand back from `get()`, mimicking an earlier fiber. */
-    registered: undefined,
-    /** Every section handed to `replace()`, in call order. */
-    replaced: [],
-    /** Simulate the provider pushing a change (the file watcher's debounce). */
-    notify() {
-      calls[calls.length - 1]();
-    },
-    installSection(owner, ns, schema, entry, hooks) {
-      if (fake.failInstall !== undefined) throw new Error(fake.failInstall);
-      fake.entry = entry;
-      hooks.setSource(() => schema({ ...entry, ...(user[ns] ?? {}) }));
-      hooks.onChange();
-      calls.push(() => hooks.onChange());
-    },
-    get(ns) {
-      return ns === CONNECT_SETTINGS_NS ? fake.registered : undefined;
-    },
-    /**
-     * The provider's write path. The real one resolves after the document is
-     * committed, so a read straight afterwards already sees the new value —
-     * mirrored here by storing into `user` before the promise settles.
-     */
-    async replace(ns, section, expectedRevision) {
-      if (fake.failReplace !== undefined) throw new Error(fake.failReplace);
-      fake.replaced.push({ ns, section, expectedRevision });
-      user[ns] = section;
+function slot(initial) {
+  let value = initial;
+  return {
+    [VOLATILE_WRITE]: () => {},
+    get: () => value,
+    /** What the loader does when it commits a changed path. Test-only. */
+    commit: (next) => {
+      value = next;
     },
   };
-  return fake;
 }
 
-/** The same service, minus the write path — an older provider. */
-function readOnlySettings() {
-  const fake = fakeSettings();
-  delete fake.replace;
-  return fake;
+/**
+ * A config shaped the way the loader hands one to `apply()`: every field the
+ * pane can edit is a volatile reference, the plugin's own config keys are plain,
+ * and `commit(section)` replays what the loader does on a settings write —
+ * reset every declared leaf to its inherited value, then apply the section. The
+ * reset is why a section that omits a field is destructive, so replaying it is
+ * what makes that observable here.
+ *
+ * The fields are derived from the same tables the schema is, so this cannot
+ * drift from the real field set without a test failing.
+ */
+function volatileConfig(profile = {}) {
+  // Mirrors the schema's `.default([...CHANNELS])`: a profile that never set
+  // `channels` resolves to every built-in channel, not to an empty list.
+  const config = { channels: slot(profile.channels ?? [...CHANNELS]) };
+  const defaults = {};
+  for (const field of CHANNEL_DEFAULT_FIELDS) defaults[field.key] = slot(profile.channelDefaults?.[field.key]);
+  config.channelDefaults = defaults;
+  for (const name of CHANNELS) {
+    const channel = {};
+    for (const field of CHANNEL_CONFIG_FIELDS[name]) channel[field.key] = slot(profile[name]?.[field.key]);
+    config[name] = channel;
+  }
+  // Keys the pane does not own: they ride along in the config and must not
+  // appear in anything the seam sends or hands out.
+  config.settingsStatePath = "state.json";
+  config.appSecret = "profile-secret";
+
+  const commit = (section) => {
+    config.channels.commit(section.channels);
+    for (const field of CHANNEL_DEFAULT_FIELDS) defaults[field.key].commit(section.channelDefaults?.[field.key]);
+    for (const name of CHANNELS) {
+      for (const field of CHANNEL_CONFIG_FIELDS[name]) config[name][field.key].commit(section[name]?.[field.key]);
+    }
+  };
+  return { config, commit };
 }
 
-/** Owner context stub: `installConnectSection` only touches `logger.warn`. */
+/** A settings service that behaves like `SettingsForms` in the ways this module depends on. */
+function settingsFor(store, { failReplace } = {}) {
+  const replaced = [];
+  return {
+    /** Every section handed to `replace()`, in call order. */
+    replaced,
+    async replace(ns, section) {
+      if (failReplace !== undefined) throw new Error(failReplace);
+      replaced.push({ ns, section });
+      // The real provider resolves only after the document is committed, so a
+      // read straight afterwards already sees the new value.
+      store.commit(section);
+    },
+  };
+}
+
+/** Owner context stub: the seam only ever touches `logger.warn`. */
 function owner() {
   const warnings = [];
   return { warnings, logger: { warn: (message) => warnings.push(message) } };
 }
 
-const settle = (options, settings) => {
+/**
+ * Wire the seam and collect everything it reports.
+ *
+ * `ns: undefined` has to reach the module as an absent entry id, so the default
+ * is applied by key presence rather than by a destructuring default — which
+ * would silently turn the "no id resolvable" case back into a working one and
+ * make that test assert the opposite of what it says.
+ */
+function settle(config, options = {}) {
+  const who = options.owner ?? owner();
   const changes = [];
   const result = installConnectSection({
-    owner: options.owner ?? owner(),
-    settings,
-    entry: options.entry,
+    owner: who,
+    settings: options.settings,
+    config,
+    ns: "ns" in options ? options.ns : "connect",
     onChange: (section) => changes.push(section),
   });
-  return { result, changes };
-};
+  return { result, changes, owner: who };
+}
 
-// --- sectionOf: the secret projection -----------------------------------
+// --- sectionOf: the projection that keeps secrets out ---------------------
 
 test("sectionOf always emits channels, defaulting to every built-in channel", () => {
   assert.deepEqual(sectionOf({}), { channels: [...CHANNELS] });
@@ -135,216 +180,264 @@ test("sectionOf projects channelDefaults onto the declared keys", () => {
   assert.equal(sectionOf({ channelDefaults: { rogue: "x" } }).channelDefaults, undefined);
 });
 
-// --- the schema itself ---------------------------------------------------
-
-test("the schema accepts a realistic section", () => {
-  const parsed = ConnectSectionSchema({
-    channels: ["feishu", "web"],
-    channelDefaults: { language: "en", notifyLevel: "result" },
-    feishu: { transport: "websocket", requireMention: true, webhookPort: 8080, webhookPath: "/hook" },
-    web: { pollIntervalMs: 1000 },
-  });
-  assert.deepEqual(parsed.channels, ["feishu", "web"]);
-  assert.equal(parsed.feishu.webhookPort, 8080);
+test("sectionOf keeps an empty channel list — 'none' is a choice, not an omission", () => {
+  assert.deepEqual(sectionOf({ channels: [] }).channels, []);
 });
 
-test("the schema rejects an unknown channel and a bad select value", () => {
-  // These throws are what `installConnectSection` has to survive — a user
-  // typing a channel name that doesn't exist must not stop the bridge.
-  assert.throws(() => ConnectSectionSchema({ channels: ["feishu", "irc"] }));
-  assert.throws(() => ConnectSectionSchema({ feishu: { transport: "carrier-pigeon" } }));
-});
+// --- materializeConfig: refs in, plain data out ---------------------------
 
-test("an absent field stays absent — no default is materialized", () => {
-  // `dmMode`'s first option is the permissive one, so a schema-supplied default
-  // would silently open DMs for every user who never touched the field.
-  const parsed = ConnectSectionSchema({ channels: ["feishu"], feishu: { transport: "websocket" } });
-  assert.equal(parsed.feishu.dmMode, undefined);
-  assert.equal(parsed.feishu.requireMention, undefined);
-});
-
-test("the schema preserves undeclared keys — the hazard sectionOf exists for", () => {
-  // Not a wish, a property: schemastery passes unknown keys through verbatim.
-  // If a secret reached the schema it would survive into `describe()` output
-  // and onto the settings RPC. `sectionOf` is the only thing that stops it.
-  const parsed = ConnectSectionSchema({ feishu: { transport: "websocket", appSecret: "leaked" } });
-  assert.equal(parsed.feishu.appSecret, "leaked");
-});
-
-// --- installConnectSection ----------------------------------------------
-
-test("no settings service: the plugin config stands alone", () => {
-  const { result, changes } = settle({ entry: { channels: ["feishu"], feishu: { transport: "websocket" } } }, undefined);
-
-  assert.equal(result.live, false);
-  assert.deepEqual(result.section, { channels: ["feishu"], feishu: { transport: "websocket" } });
-  assert.deepEqual(changes, [result.section]);
-});
-
-test("a live registration layers the user's section over the plugin config", () => {
-  const settings = fakeSettings({ user: { [CONNECT_SETTINGS_NS]: { channels: ["feishu", "web"] } } });
-  const { result, changes } = settle(
-    { entry: { channels: ["feishu"], feishu: { transport: "websocket", appSecret: "s3cret" } } },
-    settings,
-  );
-
-  assert.equal(result.live, true);
-  // The resolved section carries every declared channel as a (possibly empty)
-  // object: `required(false)` omits absent *fields*, but an object schema with
-  // all-optional fields still resolves to `{}`. Harmless downstream — the
-  // runtime merges `{}` as a no-op — so it is pinned rather than worked around.
-  assert.deepEqual(result.section, {
-    channels: ["feishu", "web"],
-    channelDefaults: {},
+test("materializeConfig resolves every reference to its current snapshot", () => {
+  const { config } = volatileConfig({
+    channels: ["feishu"],
+    channelDefaults: { language: "en" },
     feishu: { transport: "websocket" },
+  });
+  assert.deepEqual(materializeConfig(config), {
+    channels: ["feishu"],
+    channelDefaults: { language: "en" },
+    feishu: { transport: "websocket" },
+    // A declared-but-unset *channel* materializes as an empty object rather
+    // than as `undefined`: schemastery resolves an object schema's keys into
+    // the result whether or not the data carried them, and the leaves inside
+    // are then dropped as unset. Harmless everywhere it lands — the adapters
+    // resolve a channel as `{...channelDefaults, ...overrides}`, where `{}` is
+    // a no-op — so it is pinned rather than worked around.
     telegram: {},
     dingtalk: {},
     web: {},
+    settingsStatePath: "state.json",
+    appSecret: "profile-secret",
   });
-  assert.deepEqual(changes, [result.section]);
-  // The base layer handed to the provider must be the projected one: the
-  // provider merges it into the document it hands back out.
-  assert.deepEqual(settings.entry, { channels: ["feishu"], feishu: { transport: "websocket" } });
-  assert.ok(!JSON.stringify(settings.entry).includes("s3cret"));
 });
 
-test("a later edit reaches onChange", () => {
-  const settings = fakeSettings();
-  const changes = [];
-  installConnectSection({
-    owner: owner(),
-    settings,
-    entry: { channels: ["feishu"] },
-    onChange: (section) => changes.push(section),
-  });
+test("materializeConfig does not let an unset field mask the shared default", () => {
+  // `language` is a key of the shared defaults *and* of every channel's own
+  // fields, so this is the exact collision the adapters merge over:
+  // `{...channelDefaults, ...channel}`. A declared-but-unset leaf that
+  // materialized as `undefined` would take the shared value away from feishu
+  // alone — a bug that shows up as "my language setting works everywhere except
+  // one channel".
+  const { config } = volatileConfig({ channels: ["feishu"], channelDefaults: { language: "en" } });
+  const plain = materializeConfig(config);
 
-  settings.user[CONNECT_SETTINGS_NS] = { channels: ["feishu", "telegram"] };
-  settings.notify();
-
-  assert.equal(changes.length, 2);
-  assert.deepEqual(changes[1].channels, ["feishu", "telegram"]);
+  assert.equal("language" in plain.feishu, false, "an unset leaf must read as absent, not as undefined");
+  assert.equal("requireMention" in plain.feishu, false);
+  assert.equal("language" in plain.channelDefaults, true);
+  assert.equal({ ...plain.channelDefaults, ...plain.feishu }.language, "en");
 });
 
-test("a stored section that fails validation falls back to the plugin config", () => {
-  const settings = fakeSettings({ failInstall: "ValidationError: channels[1]" });
-  const plugin = owner();
-  const { result, changes } = settle(
-    { owner: plugin, entry: { channels: ["feishu"], feishu: { transport: "websocket" } } },
-    settings,
+test("materializeConfig returns a fresh, mutable copy", () => {
+  // Snapshots are deeply frozen (the loader commits them read-only), while
+  // `ChannelRuntime` spreads a channel's config into a new object and the pane
+  // holds one to edit — so handing out the snapshot itself would throw in
+  // strict mode at the first write.
+  const frozenArray = Object.freeze(["feishu"]);
+  const frozenChannel = Object.freeze({ transport: "websocket" });
+  const copy = materializeConfig({ channels: slot(frozenArray), feishu: slot(frozenChannel) });
+
+  assert.doesNotThrow(() => copy.channels.push("web"));
+  assert.doesNotThrow(() => {
+    copy.feishu.transport = "webhook";
+  });
+  assert.deepEqual(copy.channels, ["feishu", "web"]);
+  assert.equal(copy.feishu.transport, "webhook");
+  assert.deepEqual([...frozenArray], ["feishu"]);
+  assert.equal(frozenChannel.transport, "websocket");
+});
+
+test("materializeConfig tolerates a cycle", () => {
+  // Ordinary config cannot contain a reference, but a hand-built one (or a test
+  // double) can, and a walk that recursed forever would take the plugin load
+  // down with a stack overflow.
+  const cyclic = { channels: slot(["feishu"]) };
+  cyclic.self = cyclic;
+  const copy = materializeConfig(cyclic);
+  assert.equal(copy.self, copy);
+  assert.deepEqual(copy.channels, ["feishu"]);
+});
+
+test("materializeConfig leaves undeclared keys to sectionOf", () => {
+  // Not a wish, a property: everything in the parsed config survives
+  // materialization verbatim, secrets included. `sectionOf` is the only thing
+  // standing between a profile's `appSecret` and the settings document.
+  const { config } = volatileConfig({ channels: ["feishu"] });
+  assert.equal(materializeConfig(config).appSecret, "profile-secret");
+});
+
+// --- mergeSections: the reset-safe write ---------------------------------
+
+test("mergeSections keeps the base's channel list when the override omits it", () => {
+  // The migration's whole safety argument: `replace()` resets what a section
+  // omits, so a legacy import carrying only per-channel keys must not drop
+  // `channels` — that is how a migration switches every adapter off.
+  assert.deepEqual(mergeSections({ channels: ["feishu"] }, { feishu: { transport: "webhook" } }), {
+    channels: ["feishu"],
+    feishu: { transport: "webhook" },
+  });
+});
+
+test("mergeSections layers per-channel keys with the override winning", () => {
+  const merged = mergeSections(
+    { channels: ["feishu"], feishu: { transport: "websocket", webhookPort: 8080 }, web: { pollIntervalMs: 1000 } },
+    { channels: ["web"], feishu: { transport: "webhook" } },
   );
+  assert.deepEqual(merged, {
+    channels: ["web"],
+    feishu: { transport: "webhook", webhookPort: 8080 },
+    web: { pollIntervalMs: 1000 },
+  });
+});
+
+test("mergeSections omits a channel neither side mentions", () => {
+  assert.deepEqual(mergeSections({ channels: ["feishu"] }, {}), { channels: ["feishu"] });
+});
+
+// --- installConnectSection ------------------------------------------------
+
+test("no settings service: the plugin config stands alone", () => {
+  const store = volatileConfig({ channels: ["feishu"], feishu: { transport: "websocket" } });
+  const { result, changes, owner: who } = settle(store.config);
 
   assert.equal(result.live, false);
+  assert.equal(result.handle, undefined);
   assert.deepEqual(result.section, { channels: ["feishu"], feishu: { transport: "websocket" } });
   assert.deepEqual(changes, [result.section]);
-  assert.match(plugin.warnings.join("\n"), /^connect: settings namespace "dsh-connect" unavailable/);
+  // A bare host is the normal case, not a misconfiguration: no line.
+  assert.deepEqual(who.warnings, []);
 });
 
-test("an already-registered namespace keeps the saved section, with the remedy logged", () => {
-  // A live plugin reload re-runs `apply` while the previous registration is
-  // still live on the settings *service* (whose effect outlives ours), so the
-  // second install throws. `get()` returns what the earlier fiber resolved.
-  const settings = fakeSettings({ failInstall: "settings namespace \"dsh-connect\" is already registered" });
-  settings.registered = { channels: ["web"], web: { pollIntervalMs: 2000 } };
-  const plugin = owner();
-  const { result, changes } = settle({ owner: plugin, entry: { channels: ["feishu"] } }, settings);
+test("a profile that never set channels resolves to every built-in channel", () => {
+  // The regression this pins: declared as a volatile array *without* a default,
+  // an absent `channels` resolves to `[]` rather than to nothing at all, which
+  // reads as "activate no adapter" — where the documented default, and the
+  // behaviour before the fields became volatile, is every channel.
+  const store = volatileConfig({ feishu: { transport: "websocket" } });
+  const { result } = settle(store.config, { settings: settingsFor(store) });
+  assert.deepEqual(result.section.channels, [...CHANNELS]);
+
+  const { config, commit } = volatileConfig({ feishu: { transport: "websocket" } });
+  assert.equal(config.channels.get().length, CHANNELS.length);
+  // And it stays a real choice once the loader commits one.
+  commit({ channels: ["web"] });
+  assert.deepEqual(config.channels.get(), ["web"]);
+});
+
+test("settings present but no resolvable entry id: read-only, with the remedy logged", () => {
+  const store = volatileConfig({ channels: ["feishu"] });
+  const { result, changes, owner: who } = settle(store.config, { settings: settingsFor(store), ns: undefined });
 
   assert.equal(result.live, false);
-  assert.deepEqual(result.section, { channels: ["web"], web: { pollIntervalMs: 2000 } });
+  assert.equal(result.handle, undefined);
   assert.deepEqual(changes, [result.section]);
-  assert.match(plugin.warnings.join("\n"), /already registered .*restart dsh to re-enable live settings updates/s);
+  assert.equal(who.warnings.length, 1);
+  assert.match(who.warnings[0], /^connect: .*profile entry id could not be resolved/);
+  assert.match(who.warnings[0], /state file/);
 });
 
-test("a non-object from get() is not mistaken for a saved section", () => {
-  const settings = fakeSettings({ failInstall: "boom" });
-  settings.registered = "nonsense";
-  const plugin = owner();
-  const { result } = settle({ owner: plugin, entry: { channels: ["feishu"] } }, settings);
+test("a settings service that cannot write is read-only, silently", () => {
+  const store = volatileConfig({ channels: ["feishu"] });
+  const { result, owner: who } = settle(store.config, { settings: {} });
 
-  assert.deepEqual(result.section, { channels: ["feishu"] });
-  assert.match(plugin.warnings.join("\n"), /unavailable/);
-});
-
-test("a service without installSection is not used, even if get() has a value", () => {
-  const { result } = settle({ entry: { channels: ["web"] } }, { get: () => ({ channels: ["feishu"] }) });
+  // `live` means "a save can land", so a provider with no write path is false —
+  // and the pane's own wording falls back to the state file, which is where the
+  // settings service sends the save.
   assert.equal(result.live, false);
-  assert.deepEqual(result.section, { channels: ["web"] });
+  assert.equal(result.handle, undefined);
+  assert.deepEqual(who.warnings, []);
 });
 
-// --- the write handle ----------------------------------------------------
-
-test("a live install hands back a handle that reads the registration live", () => {
-  const settings = fakeSettings({ user: { [CONNECT_SETTINGS_NS]: { channels: ["feishu"] } } });
-  const { result } = settle({ entry: { channels: ["web"] } }, settings);
+test("a live install hands back a handle over the same references", () => {
+  const store = volatileConfig({ channels: ["feishu"], feishu: { transport: "websocket" } });
+  const { result } = settle(store.config, { settings: settingsFor(store) });
 
   assert.equal(result.live, true);
   assert.ok(result.handle, "the live path must expose a write handle");
-  assert.deepEqual(result.handle.read().channels, ["feishu"]);
+  assert.deepEqual(result.handle.read(), result.section);
 
-  // The handle reads through `setSource` → `scope.get()`, so a later edit by
-  // any writer (the provider's watcher, the host's own Plugins page) is visible
-  // without re-installing.
-  settings.user[CONNECT_SETTINGS_NS] = { channels: ["feishu", "telegram"] };
-  settings.notify();
-  assert.deepEqual(result.handle.read().channels, ["feishu", "telegram"]);
+  // A handle reads the references, not a copy of the install-time value, so an
+  // edit by any writer is visible without re-running `apply` — that is the whole
+  // reason the seam is built on volatile refs.
+  store.commit({ channels: ["feishu", "web"] });
+  assert.deepEqual(result.handle.read(), { channels: ["feishu", "web"] });
 });
 
-test("handle.write projects secrets and undeclared keys out of the submitted section", () => {
-  // The mirror of the `sectionOf` hazard: schemastery preserves undeclared keys,
-  // so a section arriving *from the pane* would persist whatever it carried —
-  // including a secret. The projection sits inside `write`, not at the call site,
-  // so no caller can bypass it.
-  const settings = fakeSettings();
-  const { result } = settle({ entry: { channels: ["feishu"] } }, settings);
+test("handle.write sends the projected payload and reconciles the running config", async () => {
+  const store = volatileConfig({ channels: ["feishu"], feishu: { transport: "websocket" } });
+  const settings = settingsFor(store);
+  const { result, changes } = settle(store.config, { settings });
 
-  return result.handle.write({
+  await result.handle.write({
     channels: ["feishu"],
-    feishu: { transport: "websocket", appSecret: "smuggled" },
-    settingsStatePath: "s.json",
+    feishu: { transport: "webhook", appSecret: "smuggled", nonsense: 1 },
+    settingsStatePath: "elsewhere.json",
     rogue: "x",
-  }).then(() => {
-    assert.equal(settings.replaced.length, 1);
-    const sent = settings.replaced[0].section;
-    assert.deepEqual(sent, { channels: ["feishu"], feishu: { transport: "websocket" } });
-    // The namespace is the only store; the file-only key stays out of the document.
-    assert.equal(sent.settingsStatePath, undefined);
-    assert.ok(!JSON.stringify(settings.replaced).includes("smuggled"));
   });
+
+  assert.equal(settings.replaced.length, 1);
+  assert.equal(settings.replaced[0].ns, "connect", "the namespace is the profile entry id, not the package name");
+  assert.deepEqual(settings.replaced[0].section, { channels: ["feishu"], feishu: { transport: "webhook" } });
+  assert.ok(!JSON.stringify(settings.replaced).includes("smuggled"));
+  // The file-only key belongs to the fallback store; it must not be persisted
+  // into the profile entry alongside the pane's fields.
+  assert.equal(settings.replaced[0].section.settingsStatePath, undefined);
+
+  // The loader committed the values into the references, so the reconcile that
+  // follows a write sees the new section — this is what makes a save take effect
+  // without a remount.
+  assert.equal(changes.length, 2);
+  assert.deepEqual(changes[1], { channels: ["feishu"], feishu: { transport: "webhook" } });
+  assert.deepEqual(result.handle.read(), changes[1]);
 });
 
-test("handle.write with no channels falls back to every built-in", () => {
-  const settings = fakeSettings();
-  const { result } = settle({ entry: { channels: ["feishu"] } }, settings);
-  return result.handle.write({}).then(() => {
-    assert.deepEqual(settings.replaced[0].section, { channels: [...CHANNELS] });
-  });
+test("handle.write accepts a ref-carrying config instead of reading it as 'no channels'", async () => {
+  // A caller that passes this plugin's own config (refs and all) must not be
+  // silently reinterpreted: `sectionOf` would see `channels` as a reference
+  // rather than an array, read it as absent, and project *every* channel —
+  // turning an unrelated save into "enable all adapters".
+  const store = volatileConfig({ channels: ["feishu"] });
+  const settings = settingsFor(store);
+  const { result } = settle(store.config, { settings });
+
+  const fresh = volatileConfig({ channels: ["web"], web: { pollIntervalMs: 1000 } });
+  await result.handle.write(fresh.config);
+
+  assert.deepEqual(settings.replaced[0].section, { channels: ["web"], web: { pollIntervalMs: 1000 } });
 });
 
-test("a provider without replace gets a read-only install: no handle", () => {
-  const { result } = settle({ entry: { channels: ["feishu"] } }, readOnlySettings());
-  assert.equal(result.live, true);
-  assert.equal(result.handle, undefined);
+test("handle.write with nothing to say falls back to every built-in channel", async () => {
+  const store = volatileConfig({ channels: ["feishu"] });
+  const settings = settingsFor(store);
+  const { result } = settle(store.config, { settings });
+
+  await result.handle.write({});
+  assert.deepEqual(settings.replaced[0].section, { channels: [...CHANNELS] });
 });
 
-test("a rejected write propagates instead of being swallowed", () => {
-  const settings = fakeSettings({ failReplace: "ValidationError: feishu.transport" });
-  const { result } = settle({ entry: { channels: ["feishu"] } }, settings);
-  return result.handle.write({ feishu: { transport: "pigeon" } }).then(
-    () => assert.fail("a rejected write must not resolve"),
-    (error) => assert.match(error.message, /ValidationError/),
-  );
+test("a refused write propagates and changes nothing", async () => {
+  const store = volatileConfig({ channels: ["feishu"] });
+  const settings = settingsFor(store, { failReplace: "ValidationError: feishu.transport" });
+  const { result, changes } = settle(store.config, { settings });
+
+  await assert.rejects(() => result.handle.write({ feishu: { transport: "pigeon" } }), /ValidationError/);
+  assert.deepEqual(settings.replaced, []);
+  // No reconcile either: the running adapters must keep the config that is
+  // actually in force.
+  assert.equal(changes.length, 1);
 });
 
-test("a non-live install has no handle to write through", () => {
-  const { result } = settle({ entry: { channels: ["feishu"] } }, undefined);
-  assert.equal(result.handle, undefined);
+test("the handle reads the section in force even before any write", () => {
+  const store = volatileConfig({ channels: ["telegram"] });
+  const { result } = settle(store.config, { settings: settingsFor(store) });
+  assert.deepEqual(result.section, { channels: ["telegram"] });
 });
 
-test("install never throws, even with no logger on the owner", () => {
+test("install never throws, even with a bare owner and a hostile service", () => {
   assert.doesNotThrow(() =>
     installConnectSection({
       owner: {},
-      settings: fakeSettings({ failInstall: "boom" }),
-      entry: { channels: ["feishu"] },
+      settings: { replace: () => Promise.reject(new Error("boom")) },
+      config: undefined,
+      ns: undefined,
       onChange: () => {},
     }),
   );
