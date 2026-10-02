@@ -91,20 +91,37 @@ channel's enable box also expands it.
 
 ### Where settings live
 
-The pane edits the `dsh-connect` section of `$DSH_HOME/settings.yaml`, through DSH's first-party
-settings seam — hot-reloaded, written atomically under a file lock, comments preserved. So editing
-that file by hand works just as well. Values resolve in three layers, most specific last:
+The pane edits **this plugin's entry in the active profile patch** — the same
+`~/.dsh/profiles/<profile>/cordis.patch.yml` you edit by hand — through DSH's first-party `settings`
+service. That service writes atomically under a file lock and preserves your comments, and the loader
+hot-reloads the result, so a save takes effect without a restart. Values resolve in three layers, most
+specific last:
 
 1. the plugin's built-in schema defaults;
-2. the plugin's own `cordis.patch.yml` entry (your existing config is *not* discarded — it registers as the base layer);
-3. the `dsh-connect` section of `settings.yaml`.
+2. the config the plugin is composed with (its inherited entry);
+3. this plugin's entry in the active profile patch — both what you hand-write there and what the pane saves.
 
-**Secrets never go into `settings.yaml`.** That is a plain document users are encouraged to paste into
-issues; credentials live in the DSH credential store (`ctx.credentials`), which is also where
+A save is projected onto the fields the pane declares, so an undeclared key — a credential,
+`settingsStatePath`, something you added yourself — cannot reach the document even if a caller sends
+it, and undeclared keys you hand-wrote in that entry are preserved across a pane save. The converse is
+load-bearing too: the host resets a declared field an update *omits* to its inherited value, so a save
+always writes the complete declared section.
+
+**Secrets never go into the profile patch.** That is a plain document users are encouraged to paste
+into issues; credentials live in the DSH credential store (`ctx.credentials`), which is also where
 one-click onboarding and `FEISHU_*`-style environment variables write.
 
 The legacy `/dsh-connect` HTTP RPC is kept for pane compatibility; it reads and writes the same
 namespace and mirrors non-secret config to `settingsStatePath` for older panes.
+
+> **Upgrading from 0.9.1?** DSH 0.2 keeps per-plugin settings in the profile patch and does not know
+> the old `dsh-connect:` section of `$DSH_HOME/settings.yaml`, so the host's own migration drops it
+> with a warning. **0.9.2** therefore imports that section (or `settings.yaml.imported`, or the
+> fallback `dsh-connect-settings.json`) once on the first boot after the upgrade, projecting it onto
+> the pane's fields and **merging** it over the current values — and it never deletes or renames
+> anything. Nothing is lost if you never used the pane. Full detail in the package
+> [README](packages/connect/README.md#upgrading-from-091) and the
+> [0.9.2 changelog entry](CHANGELOG.md).
 
 ### Seeing and masking stored values
 

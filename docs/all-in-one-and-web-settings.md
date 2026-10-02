@@ -1,6 +1,6 @@
 # 配置简化 + Web 设置 + 多合一重构（对齐 dsh-im）
 
-> **当前状态更新（2026-09-21，0.9.0）**：设置页的持久化模型已换代——**不再写私有 JSON 状态文件**（`settingsStatePath` / `<stateDir>/dsh-connect-settings.json` 只在宿主没有设置服务时作为回退）。面板的权威存储是 **`$DSH_HOME/settings.yaml` 的 `dsh-connect` 段**，经 DSH 一方设置接缝注册（`installSection`，`src/settings/namespace.ts`）：热重载、原子写、文件锁、保留注释；取值顺序为 **schema 默认值 → 插件 `cordis.patch.yml` 配置 → `$DSH_HOME/settings.yaml`**，手改 `settings.yaml` 无需重启即生效。密钥永不写进 `settings.yaml` 或任何 JSON 状态文件，仍只进 DSH 凭据库。面板 UI 也已落地：**渠道 Tab 条 + 可折叠卡片**，低频字段收进二级「高级」折叠，保存/状态固定在底部。当前测试总数 **369 项全过**，DSH 依赖升到 `^0.1.5-rc.2`。详见根 `CHANGELOG.md` 的 0.9.x 段。
+> **当前状态更新（2026-10-02，0.9.2）**：设置存储随 DSH 0.2 再次换代。面板的权威存储不再是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段（那是 0.9.0/0.9.1 的做法；DSH 0.2 已不再从这个文档读取插件设置），而是**当前 profile patch（`cordis.patch.yml`）中本插件的条目**，经 DSH 一方 `settings` 服务（`SettingsForms`）写入：热重载、原子写、文件锁、保留注释；取值顺序为 **schema 默认值 → 插件被组合进来时的配置 → profile patch 条目**。面板可编辑字段在 schema 里声明为 `volatile`，保存因此是就地 reconcile（运行中的适配器直接采用新值）而不是重挂载；写入会投影到已声明字段，未声明的键（凭据、`settingsStatePath`）既写不进去也不会被清掉，而被省略的已声明字段会被重置回继承值，所以每次写入都是完整的已声明段。0.2 之前留在 `settings.yaml` 里的段，会在升级后的第一次启动时被**合并**（不是替换）导入 patch 条目，一次性标记 `.legacy-imported` 记录结果。密钥永不写进 profile patch 或任何 JSON 状态文件，仍只进 DSH 凭据库。面板 UI 沿用 0.9.0 的**渠道 Tab 条 + 可折叠卡片**，低频字段收进二级「高级」折叠，保存/状态固定在底部。当前测试总数 **393 项全过**，DSH 依赖升到 `^0.2.0-rc.2`（peer `dsh-agent` / `dsh-llm` / `dsh-session`）。详见根 `CHANGELOG.md` 的 0.9.2 段。
 
 ### 设置页现状（0.9.0 截图）
 
@@ -27,13 +27,13 @@
 
 **现在能拿到什么：**
 - 一份配置（`channels` + `channelDefaults` + N 个渠道块）启用任意渠道组合；渠道失败隔离、渠道级配置透传。
-- Web 可视化设置：`/dsh-connect` RPC（`settings.get/save/status` + `credentials.save`）+ 设置命名空间持久化（0.9.0 起为 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段；此前是 JSON 状态文件）+ DSH 凭据库读写，配置与凭据**读写闭环**（round-trip 已验证）。
+- Web 可视化设置：`/dsh-connect` RPC（`settings.get/save/status` + `credentials.save`）+ 设置持久化（0.9.2 起为 profile patch 中本插件的条目；0.9.0/0.9.1 为 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段；更早是 JSON 状态文件）+ DSH 凭据库读写，配置与凭据**读写闭环**（round-trip 已验证）。
 - 凭据从配置挪到凭据库：面板写密钥 → 激活时 `injectSecrets` 注入各渠道适配器（非侵入，渠道适配器零改动）。
-- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；当前 `packages/connect` 单包 **369 项测试全过**（详见 `CHANGELOG.md` 0.9.1）。
+- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；当前 `packages/connect` 单包 **393 项测试全过**（详见 `CHANGELOG.md` 0.9.2）。
 
 **当时还差什么（两项均已完成，保留存档）：**
 1. ~~`dsh web` 内构建并渲染前端 `settings-client` 组件~~——已完成：`client/client.js` 由 `scripts/build-client.mjs` 构建，`test/client-bundle.test.mjs` 直接加载构建产物在 Node 里渲染并断言。
-2. ~~推送 v0.7.2~~——已解决：v0.7.2 及其后的 0.8.0 / 0.8.1 均已发布，当前版本为 0.9.1（见根 `CHANGELOG.md`）。
+2. ~~推送 v0.7.2~~——已解决：v0.7.2 及其后的 0.8.0 / 0.8.1 均已发布，当前版本为 0.9.2（见根 `CHANGELOG.md`）。
 
 ## 1. 重构前的现状：配置与安装复杂度
 
@@ -126,7 +126,7 @@
 
 ## 进展（实现中）
 
-> **历史存档**：以下是 `packages/connect-all/`（聚合包，方案 A）时期的按时间顺序记录，**该包已随 0.8.0 的单包化被删除**。因此本节所有 `packages/connect-all/...` 路径、`dsh-connect-all` 包名与安装命令都已不存在；下文出现的测试计数（**37 / 40 / 44 / 50 / 52 / 56 / 57**）只统计当时那套 connect-all 测试，既不是当前套件、也不可与它相加——当前是 `packages/connect` 单包 **369 项全过**（DSH `0.1.5-rc.2`，见 `CHANGELOG.md` 0.9.x）。文中「前端待联调」一类表述同样只反映当时状态。
+> **历史存档**：以下是 `packages/connect-all/`（聚合包，方案 A）时期的按时间顺序记录，**该包已随 0.8.0 的单包化被删除**。因此本节所有 `packages/connect-all/...` 路径、`dsh-connect-all` 包名与安装命令都已不存在；下文出现的测试计数（**37 / 40 / 44 / 50 / 52 / 56 / 57**）只统计当时那套 connect-all 测试，既不是当前套件、也不可与它相加——当前是 `packages/connect` 单包 **393 项全过**（DSH `0.2.0-rc.2`，见 `CHANGELOG.md` 0.9.2）。文中「前端待联调」一类表述同样只反映当时状态。
 
 ### 已完成：`dsh-connect-all` 聚合包（方案 A 骨架，已 build + 单测通过）
 - 新增 `packages/connect-all/` 单插件：一个 `dsh plugin add dsh-connect dsh-connect-all` 装齐核心 + 4 渠道。
@@ -137,7 +137,7 @@
 
 ### 待办（当时的清单，附现状对照）
 - **阶段一 配置简化**：统一 `channels` 命名空间、收敛重复键、最小示例。→ **已完成**（`channels` + `channelDefaults` + 各渠道块，见 `docs/config-reference.md`）。
-- **阶段三 Web 设置页**：客户端 `settings.section` + 宿主 RPC + 凭据库 + 渠道 Tab/机器人卡片；需 `dsh web` 联调。→ **已完成**（0.9.0：宿主 RPC + `$DSH_HOME/settings.yaml` 命名空间 + 凭据库 + 渠道 Tab 条与可折叠卡片，见本页顶部截图与 `CHANGELOG.md` 0.9.0）。
+- **阶段三 Web 设置页**：客户端 `settings.section` + 宿主 RPC + 凭据库 + 渠道 Tab/机器人卡片；需 `dsh web` 联调。→ **已完成**（0.9.0 起：宿主 RPC + 凭据库 + 渠道 Tab 条与可折叠卡片；0.9.2 起设置改存 profile patch 条目，见本页顶部截图与 `CHANGELOG.md` 0.9.0 / 0.9.2）。
 - **阶段四 多机器人 + 独立绑定**。→ **仍未实现**：当前每个渠道仍按 channel+chatKey 绑定单机器人。
 - **单插件按需加载**：目前 `connect-all` 静态引入 4 个渠道，SDK 会随包存在；若只启用部分渠道的「不下载无用 SDK」，需把渠道改为可选依赖 + 动态 `import()`（引发布局/构建调整，单独排期）。→ **仍未实现**：单包化后渠道仍为静态引入（`packages/connect/src/channels/`）。
 

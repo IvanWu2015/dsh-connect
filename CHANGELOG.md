@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.2] - 2026-10-02
+
+The DSH 0.2 line. `0.9.1` was built against `0.1.5-rc.2` and DSH refuses to load it on `0.2.0-rc.2` — the compatibility gate read our pinned `^0.1.5-rc.2`, which is `>=0.1.5-rc.2 <0.2.0` and therefore excludes the new host by construction, and told the user to install a compatible version instead. The range is now in step. The same upgrade also moved where per-plugin settings live, which is what most of this release is about: DSH 0.2 no longer reads plugin settings out of `$DSH_HOME/settings.yaml`, and the host's own migration drops the old `dsh-connect:` section with a warning, so without the import below an upgrading user's pane choices would silently revert to defaults the first time they opened the pane.
+
+### Changed (breaking)
+
+- **Requires DSH `0.2.0-rc.2`.** The `peerDependencies` / `devDependencies` range for `@deepseek-ai/dsh-agent`, `dsh-llm` and `dsh-session` moved from `^0.1.5-rc.2` to `^0.2.0-rc.2`. This is not cosmetic: the host evaluates `semver.satisfies(runtimeVersion, requirement, {includePrerelease:true})` before loading a plugin, so the old range fails on `0.2.0-rc.2` and the plugin is refused with "may cause crashes or data loss". Keep the range in step with the host on every DSH upgrade — the failure mode of a stale range is a refused install, not a redirected import.
+
+### Changed
+
+- **The pane writes this plugin's entry in the active profile patch, not `$DSH_HOME/settings.yaml`.** DSH 0.2 keeps per-plugin settings inside the profile's `cordis.patch.yml`, so that is where the pane's `settings` service now resolves and saves the `connect` section — the same file users edit by hand, written atomically under a file lock, comments preserved, hot-reloaded by the loader. Values still resolve in three layers, most specific last: the plugin's schema defaults, then the config the plugin is composed with (its inherited entry), then this plugin's entry in the active profile patch, which holds both hand-written and pane-saved values.
+
+- **A save is projected onto the fields the pane declares, and written whole.** `strip()` deletes only the volatile paths and copies every other key of the raw section verbatim, so an undeclared key — a credential, `settingsStatePath`, something the user added by hand — cannot reach the document even if a caller sends it, and undeclared keys already in the entry survive a pane save. The converse is load-bearing and is why every write sends the complete declared section: the host resets a declared field an update *omits* to its inherited value, so a partial save is a deletion. The pane's editable fields are declared `volatile` in the schema, which makes the running adapters adopt a new value in place on the next turn rather than waiting for a remount.
+
+### Added
+
+- **One-shot import of the pre-0.2 pane settings** (`src/settings/legacy-import.ts`). DSH 0.2's own migration (`SettingsForms.importLegacyDocument()`) renames `settings.yaml` to `settings.yaml.imported` and calls `update(section, values)` for every top-level section, but only the base-bundle sections are renamed — `dsh-connect` reaches an entry that does not exist and is dropped with a warning, after which every pane-only choice has silently reverted. On the first boot after the upgrade the plugin reads that section from `settings.yaml`, then `settings.yaml.imported`, then the flat fallback `dsh-connect-settings.json`, and writes it into its profile entry. Three properties make it safe unattended: it **merges** rather than replaces (the section given to the host is always complete — what is in force now with the legacy values layered on — because `replace()` resets unlisted fields to their inherited layer, `channels` included, which is how a migration disables every adapter); it is **one-shot**, with a `.legacy-imported` marker beside the pane's state file recording that it ran, including the benign nothing-to-import case, so a legacy document is never re-applied over later edits; and it **never blocks the load**, degrading a missing parser, an unparseable document or a refused write to one warning line and leaving both files untouched for a retry once the cause is fixed. Secrets cannot travel through it — the legacy section is projected by `sectionOf()`, which keeps declared non-secret keys only.
+- **`yaml@^2.8.1` as a dependency**, for that import. It is loaded lazily and its absence is a `parser-missing` skip rather than a failure, so the plugin installs and runs without it.
+
+### Testing
+
+- `test/settings-namespace.test.mjs` (24) pins the section projection, the three-layer resolution and the write path; `test/legacy-import.test.mjs` (22) pins the merge-not-replace rule, the marker (including the benign skip), the three source filenames and the flat-vs-document shape of the fallback file — the last one because the fallback store writes its config *flat*, so reading it with the document reader would have marked the migration done and discarded a user's only copy. 369 → 393 tests, all passing.
+
 ## [0.9.1] - 2026-09-23
 
 Two bugs found by using `0.9.0` in a real chat. Both had the same shape: a working path was silently abandoned in favour of one that could not work, and the only symptom on the user's side was nothing at all happening.

@@ -88,20 +88,33 @@ English screenshots: [overview](packages/connect/docs/images/settings-overview-e
 
 ### 设置存放位置
 
-面板编辑的是 `$DSH_HOME/settings.yaml` 里的 `dsh-connect` 段，走 DSH 自带的（第一方）设置机制
-——支持热重载、在文件锁下原子写入、并保留你的注释，所以手工编辑它同样有效。取值分三层解析，
-越靠后越具体：
+面板编辑的是**当前 profile patch 中属于本插件的条目**——也就是你手工编辑的那个
+`~/.dsh/profiles/<profile>/cordis.patch.yml`——走 DSH 自带的（第一方）`settings` 服务。该服务
+在文件锁下原子写入并保留你的注释，loader 会热重载结果，因此保存无需重启即可生效。取值分三层
+解析，越靠后越具体：
 
 1. 插件内置的 schema 默认值；
-2. 插件自己的 `cordis.patch.yml` 条目（你现有的配置**不会**被丢弃，它注册为基础层）；
-3. `settings.yaml` 中的 `dsh-connect` 段。
+2. 插件被组合进来时的配置（其继承条目）；
+3. 当前 profile patch 中属于本插件的条目——你手写的值和面板保存的值都在这里。
 
-**密钥永远不会写入 `settings.yaml`。** 那是一份普通的、鼓励用户贴进 issue 的文档；凭据
-一律保存在 DSH 凭据库（`ctx.credentials`）——一键开通流程与 `FEISHU_*` 这类环境变量也
-正是写在那里。
+保存只会投影到面板声明拥有的字段上，因此未声明的键——凭据、`settingsStatePath`、你自己加的
+任何东西——即使调用方发过来也到不了文档里；而你在该条目里手写的未声明键会在面板保存时原样
+保留。反过来同样关键：宿主会把一次更新中**被省略**的已声明字段重置回其继承值，所以每次保存
+写入的都是完整的已声明段。
+
+**密钥永远不会写入 profile patch。** 那是一份普通的、鼓励用户贴进 issue 的文档；凭据一律
+保存在 DSH 凭据库（`ctx.credentials`）——一键开通流程与 `FEISHU_*` 这类环境变量也正是写在
+那里。
 
 旧版 `/dsh-connect` HTTP RPC 为面板兼容而保留；它现在读写同一个 namespace，并把非密钥配置
 镜像到 `settingsStatePath`，以兼容旧面板。
+
+> **从 0.9.1 升级？** DSH 0.2 把每个插件的设置保存在 profile patch 里，并且不认识旧文档
+> `$DSH_HOME/settings.yaml` 里的 `dsh-connect:` 段，所以宿主自己的迁移会把它丢下并记一条警告。
+> **0.9.2** 会在升级后的第一次启动时把该段（或 `settings.yaml.imported`，或兜底的
+> `dsh-connect-settings.json`）导入一次，投影到面板拥有的字段上并**合并**到当前值之上——并且
+> 从不删除、不重命名任何东西。如果你从来没用过面板，不会有任何损失。完整说明见插件
+> [README](packages/connect/README.zh.md#从-091-升级) 与 [0.9.2 变更记录](CHANGELOG.md)。
 
 ### 面板回显与脱敏
 

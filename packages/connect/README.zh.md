@@ -25,12 +25,14 @@
 
 | 方面 | 值 |
 |---|---|
-| DSH 版本 | `^0.1.5-rc.2`（peer `@deepseek-ai/dsh-agent`、`dsh-llm`、`dsh-session`） |
+| DSH 版本 | `^0.2.0-rc.2`（peer `@deepseek-ai/dsh-agent`、`dsh-llm`、`dsh-session`） |
 | Cordis | `^4.0.1` |
 | Node.js | ≥ 20（ESM，`NodeNext`） |
-| 最后验证 | **2026-09-21**，在 Windows 上针对 DSH `0.1.5-rc.2` 验证（宿主加载、飞书 WebSocket 传输、Web 设置面板） |
+| 最后验证 | **2026-10-02**，在 Windows 上针对 DSH `0.2.0-rc.2` 验证（宿主加载、飞书 WebSocket 传输、Web 设置面板） |
 
 **peer 版本线必须与宿主保持同步。** 上游不提供 changelog 或迁移说明，因此过期的版本范围是插件与静默损坏之间唯一的屏障：DSH `0.1.5-rc.2` 直接删除了 `Session.events` 访问器和 `assistant/chunk` 事件类型，而所有 `dsh-*` 包共用同一条版本线。升级 DSH 时，请把 `dsh-agent`、`dsh-llm`、`dsh-session` 的 `peerDependencies`（以及 `devDependencies`）**一起**上调，重新运行 `tsc`，并重跑测试套件 —— 当版本范围与宿主版本不再有交集时，就是桥接需要再次迁移的信号。
+
+DSH 会拒绝加载版本范围覆盖不到自己的插件，所以过期的范围至少是响亮的：在 `0.2.0-rc.2` 上安装 `0.9.0` 会在任何代码运行之前被拒绝，并提示 *“可能导致崩溃或数据丢失”*。覆盖 `0.2.0-rc.2` 的版本是 `0.9.2`，见[从 0.9.1 升级](#从-091-升级)。
 
 插件运行在 DSH **Host 平面**（进程级单例服务）上，而不是在智能体预设内部。
 
@@ -130,7 +132,7 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 |---|---|---|
 | `channels` | 全部内置 | 启用哪些通道：`feishu` / `telegram` / `dingtalk` / `web`。省略则启用全部内置通道。 |
 | `channelDefaults` | `{}` | 应用到未单独设置该键的每个通道（如 `{ language: "zh" }`）。 |
-| `settingsStatePath` | `<stateDir>/dsh-connect-settings.json` | Web 设置面板镜像非密钥配置的路径。默认落在 `stateDir` **之内**的 `dsh-connect-settings.json`，与 `bindings.json` 同目录，二者不会各说各话；设置该键可覆盖。自 0.9.0 起，面板的权威数据源是 `$DSH_HOME/settings.yaml` 里的 `dsh-connect` 段（见[用户设置](#用户设置)），本文件只是旧版 `/dsh-connect` RPC 读写的兼容镜像。 |
+| `settingsStatePath` | `<stateDir>/dsh-connect-settings.json` | Web 设置面板镜像非密钥配置的路径。默认落在 `stateDir` **之内**的 `dsh-connect-settings.json`，与 `bindings.json` 同目录，二者不会各说各话；设置该键可覆盖。面板的权威数据源是当前 profile patch 中本插件的条目（见[用户设置](#用户设置)），本文件只是旧版 `/dsh-connect` RPC 读写的兼容镜像；0.2 之前的安装留在其中的那份副本会在升级时被读取一次（见[从 0.9.1 升级](#从-091-升级)）。 |
 
 ### `feishu`（飞书 / Lark 通道）
 
@@ -191,7 +193,8 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 - **写入的文件**
   - `<stateDir>/bindings.json`（默认 `.dsh-connect/`）—— 聊天 ⇄ 会话路由存储（聊天键、会话 id、镜像与锁状态）。
   - `<stateDir>/dsh-connect-settings.json`（默认 `.dsh-connect/`）—— 非密钥配置的兼容镜像，见 `settingsStatePath`。
-  - `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段 —— 经由 DSH 第一方设置机制写入，原子、加锁、保留注释。
+  - `<stateDir>/dsh-connect-settings.json.legacy-imported` —— 记录一次性升级导入已经跑过的标记文件。内容只有一句话说明设置来自哪里，不存任何数据。
+  - 当前 profile patch 中属于本插件的条目（`profileContext.patchPath`，即 `cordis.patch.yml`）—— 经由 DSH 第一方 `settings` 服务写入，原子、加锁、保留注释。
   - `~/.dsh/.dsh-connect/feishu-credentials.json` —— **旧版、只读**。一键开通过去把飞书凭据存在这里而不是凭据库，导致刚扫码授权完的用户永远看到「未配置凭据」。现在开通流程写入凭据库，已有安装会在启动时从这个文件回填一次；此后不再读写它。
   - `<workDir>/.dsh-connect-images/` —— 为用户图片/附件暂存，供智能体工具使用。
   - DSH 自身在 `~/.dsh/` 下的会话日志与设置（sessions、settings 等）。
@@ -223,19 +226,30 @@ rm -f ~/.dsh/.dsh-connect/feishu-credentials.json
 
 ## 用户设置
 
-Web 设置面板（**设置** 下的 `dsh-connect`）编辑的是 `$DSH_HOME/settings.yaml` 里的
-`dsh-connect` 段，走 DSH 自带的（第一方）设置机制。该文档支持热重载、在文件锁下原子写入、
-并保留你的注释——所以手工编辑它同样有效，改动无需重启即可生效。
+Web 设置面板（**设置** 下的 `dsh-connect`）编辑的是**当前 profile patch 中属于本插件的
+条目**——也就是你手工编辑的那个 `~/.dsh/profiles/<profile>/cordis.patch.yml`——走 DSH
+自带的（第一方）`settings` 服务。该服务在文件锁下原子写入并保留你的注释，loader 会热重载
+结果，因此保存无需重启即可生效。
+
+面板能编辑的字段在插件 config schema 里声明为 `volatile`。正是这个声明让保存变成**就地
+reconcile 而不是重挂载**：loader 为每个声明字段交给插件一个活引用，设置写入会就地提交它们，
+运行中的适配器在收到下一条消息时即采用新值。面板不拥有的字段则根本没有声明——这正是它写不
+进去的原因。
 
 取值分三层解析，越靠后越具体：
 
 1. 插件内置的 schema 默认值；
-2. 插件自己的 `cordis.patch.yml` 条目（你现有的配置**不会**被丢弃，它注册为基础层）；
-3. `settings.yaml` 中的 `dsh-connect` 段。
+2. 插件被组合进来时的配置（其继承条目）；
+3. 当前 profile patch 中属于本插件的条目——你手写的值和面板保存的值都在这里。
 
-**密钥永远不会写入 `settings.yaml`。** 那是一份普通的、鼓励用户贴进 issue 的文档；凭据
-一律保存在 DSH 凭据库（`ctx.credentials`）——一键开通流程与 `FEISHU_*` 这类环境变量也
-正是写在那里。
+保存只会投影到已声明的字段上，因此未声明的键——凭据、`settingsStatePath`、你自己加的
+任何东西——即使调用方发过来也到不了文档里。反过来同样关键：宿主会把一次更新中**被省略**
+的已声明字段重置回其继承值，所以每次保存写入的都是完整的已声明段。而你在该条目里手写的
+未声明键，会在面板保存时原样保留。
+
+**面板永远不会写入凭据。** profile patch 是一份普通的、鼓励用户贴进 issue 的文档，所以你在
+面板里输入的密钥会存进 DSH 凭据库（`ctx.credentials`）——一键开通流程与 `FEISHU_*` 这类
+环境变量也正是写在那里。你自己在该条目里手写的密钥则原样保留。
 
 旧版 `/dsh-connect` HTTP RPC 为面板兼容而保留；它现在读写同一个 namespace，并把非密钥配置
 镜像到 `settingsStatePath`（见[公共（所有通道）](#公共所有通道)），以兼容旧面板。
@@ -284,12 +298,39 @@ Web 设置面板（**设置** 下的 `dsh-connect`）编辑的是 `$DSH_HOME/set
 因此，只用 webhook 推送（没有 Stream 凭据）的钉钉机器人会被正确判定为已配置，只用 Stream
 模式的同样如此。
 
+## 从 0.9.1 升级
+
+DSH 0.2 把每个插件的设置保存在 **profile patch** 里，而不是 `$DSH_HOME/settings.yaml`，
+并且它不认识旧文档里的 `dsh-connect:` 段——宿主自己的迁移会重命名该文件并导入它认得的那几段，
+我们这一段只会被丢下并记一条警告。不加处理的话，升级后各渠道照常工作（配置在 patch 里），
+但每项只存在于面板里的选择都会在面板第一次打开时静默回到默认值。
+
+因此 **0.9.2 会在升级后的第一次启动时导入一次**：
+
+- 先在 `$DSH_HOME/settings.yaml` 里找 `dsh-connect:` 段，再找
+  `settings.yaml.imported`（宿主自己的迁移会重命名到那里，而它可能早于也可能晚于本次运行），
+  最后是插件自己的 `dsh-connect-settings.json` —— 一个从来没有过可用设置对端的用户，
+  他的全部选择都在这个兜底存储里。
+- 该段会被投影到面板拥有的字段上，因此**凭据不可能随之迁移**：它们在凭据库里，文件里其他
+  任何内容都原样留在原地。
+- 它**是合并，不是替换**。当前生效的值是基底，旧值叠在其上——因为宿主会把一次更新中被省略的
+  已声明字段重置回继承值，一份只带单渠道键的导入否则会清掉 `channels`，把所有适配器关掉。
+- 它走与面板保存完全相同的写入路径，所以运行中的适配器会立即对上，无需重启。
+- **不删除、不重命名任何东西。** 与宿主自己的导入不同，我们从不写 `settings.yaml`。
+- 结果会一次性记录在 `<stateDir>/dsh-connect-settings.json.legacy-imported` 里，包括
+  「本来就没有可导入内容」这种良性情形，这样后续启动就不会把旧值重新盖到你此后的修改上。
+
+如果它跑不成，会留一行 `connect: …` 说明原因并同时不动这两个文件：解析失败的文档会在你修好
+后的下一次启动重试，而完全没有 settings 服务可用的宿主，会在它出现的那一刻重试。如果你从未
+用过面板，这一切你都看不到。
+
 ## 故障排查
 
 日志来自 DSH 宿主日志器（在终端运行 `dsh web`）；插件消息带有 `connect:` / `connect-feishu:` 前缀。
 
 | 症状 | 可能原因 / 修复 |
 |---|---|
+| 在 DSH `0.2.0-rc.2` 上安装 `dsh-connect@0.9.0` 被拒绝：*“`dsh-connect@0.9.0` 与 DSH `0.2.0-rc.2` 不兼容 …… 运行它可能导致崩溃或数据丢失”* | 这不是 bug，也不是可以忽略的警告：DSH 的兼容性闸门会拒绝任何声明范围覆盖不到当前宿主的插件，而 `0.9.0` 早于 `0.2.0` 这条线。请安装 **`0.9.2`**（或更新的版本），它的 peer 要求 `^0.2.0-rc.2`。 |
 | `connect-feishu: adapter init failed` / `start failed` | 凭据错误、应用未发布或网络被阻断。检查 `appId`/`appSecret`，重新运行开通流程，确认机器人在飞书开放平台后台处于在线状态。 |
 | `connect: resume of <id> failed, creating fresh session` | 持久化会话无法恢复（工作目录缺失、持久化问题）。检查 `workDir` 和 `~/.dsh/sessions`。 |
 | 机器人对每条消息都回一行原始的 `agent-presets: preset "…" not found`，内容到不了智能体 | `$DSH_HOME/settings.yaml` 里的 `agent-presets.default` 指向了任何已安装版本都不提供的 id。**0.9.0** 已修复：改为重试 `standard` 并记录决策，而不是让这一轮失败；在更旧的版本上，请把该键改成一个确实存在的 id（`standard`）。 |
@@ -300,6 +341,8 @@ Web 设置面板（**设置** 下的 `dsh-connect`）编辑的是 `$DSH_HOME/set
 | 长时间任务中卡片卡在「思考中…」没有进展 | 已在 **0.9.0** 修复：推理现在实时流出，工具调用显示为 `🔧` 进度行，静默期间心跳保活会更新卡片。升级后重启 `dsh web`。 |
 | 智能体给出选项 / 请求工具授权，飞书里却什么都没有 | 已在 **0.9.1** 修复：桥接此前订阅了一个宿主上并不存在的服务，问题只会静默落回宿主。升级后重启 `dsh web`。 |
 | 点击卡片按钮提示「此操作已失效」，但卡片明明是刚发出来的 | 已在 **0.9.1** 修复：卡片重绘期间（连点两下、上一问刚答完）落下的点击被误判为过期操作。升级后重启 `dsh web`。 |
+| `connect: the legacy settings at <path> could not be parsed …` | 旧（0.2 之前）文档存在 YAML 错误，一次性迁移（见[从 0.9.1 升级](#从-091-升级)）因而跳过它并原样留下文件。修好 YAML 后重启；在那之前不会导入任何内容，也不会写标记，所以重试是自动的。 |
+| `connect: could not import the legacy dsh-connect settings from <path> …` | 迁移找到了该段，但 DSH 拒绝了这次写入（通常是某个值没通过校验）。该段仍在文件里——修好被点名的那一项后重启。 |
 | 菜单卡片不更新 / 过期 | 设计如此：卡片空闲 60 秒后自动关闭；重新打开菜单即可。提问与授权卡片同理——详见[对话中的提问与授权](#对话中的提问与授权)。 |
 
 **回滚** —— 重新安装之前的版本（先移除当前版本，再执行 `dsh plugin --profile web add dsh-connect@<version>`），或在源码安装中 `git checkout` 到固定的提交。

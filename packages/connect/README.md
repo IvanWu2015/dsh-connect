@@ -25,10 +25,10 @@ The **all-in-one plugin** for connecting [DeepSeek Harness](https://github.com/d
 
 | Aspect | Value |
 |---|---|
-| DSH version | `^0.1.5-rc.2` (peer `@deepseek-ai/dsh-agent`, `dsh-llm`, `dsh-session`) |
+| DSH version | `^0.2.0-rc.2` (peer `@deepseek-ai/dsh-agent`, `dsh-llm`, `dsh-session`) |
 | Cordis | `^4.0.1` |
 | Node.js | ≥ 20 (ESM, `NodeNext`) |
-| Last verified | **2026-09-21** against DSH `0.1.5-rc.2` on Windows (host load, Feishu WebSocket transport, web-settings pane) |
+| Last verified | **2026-10-02** against DSH `0.2.0-rc.2` on Windows (host load, Feishu WebSocket transport, web-settings pane) |
 
 **Keep the peer range in step with the host.** Upstream ships no changelog or
 migration guide, so a stale range is the only thing standing between this plugin
@@ -38,6 +38,11 @@ on the same line. When you upgrade DSH, bump `peerDependencies` (and
 `devDependencies`) for `dsh-agent`, `dsh-llm` and `dsh-session` together, re-run
 `tsc`, and re-run the test suite — a range that no longer overlaps the host
 version is the signal that the bridge needs another migration.
+
+DSH refuses to load a plugin whose range does not cover it, so a stale range is
+at least loud: installing `0.9.0` on `0.2.0-rc.2` is rejected with *"may cause
+crashes or data loss"* before anything runs. `0.9.2` is the version that covers
+`0.2.0-rc.2`; see [Upgrading from 0.9.1](#upgrading-from-091).
 
 The plugin runs on the DSH **Host plane** (process-level singleton services), not inside an agent preset.
 
@@ -137,7 +142,7 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under the plug
 |---|---|---|
 | `channels` | all built-in | Which channels to activate: `feishu` / `telegram` / `dingtalk` / `web`. Omit to activate all built-in channels. |
 | `channelDefaults` | `{}` | Keys applied to every channel that doesn't set its own (e.g. `{ language: "zh" }`). |
-| `settingsStatePath` | `<stateDir>/dsh-connect-settings.json` | Where the web-settings pane mirrors non-secret config. Defaults to `dsh-connect-settings.json` *inside* `stateDir`, so it lands beside `bindings.json` and can never disagree with the stores; set it to override. Since 0.9.0 the pane's authoritative store is the `dsh-connect` section of `$DSH_HOME/settings.yaml` (see [User settings](#user-settings)), and this file is only the compatibility mirror the legacy `/dsh-connect` RPC reads and writes. |
+| `settingsStatePath` | `<stateDir>/dsh-connect-settings.json` | Where the web-settings pane mirrors non-secret config. Defaults to `dsh-connect-settings.json` *inside* `stateDir`, so it lands beside `bindings.json` and can never disagree with the stores; set it to override. The pane's authoritative store is this plugin's entry in the active profile patch (see [User settings](#user-settings)); this file is only the compatibility mirror the legacy `/dsh-connect` RPC reads and writes, and a pre-0.2 install's copy of it is read back once by the upgrade (see [Upgrading from 0.9.1](#upgrading-from-091)). |
 
 ### `feishu` (Feishu / Lark channel)
 
@@ -198,7 +203,8 @@ Environment variables (`FEISHU_*`, `TELEGRAM_*`, `DINGTALK_*`, `DSH_CONNECT_STAT
 - **Files written**
   - `<stateDir>/bindings.json` (default `.dsh-connect/`) — the chat ⇄ session route store (chat keys, session ids, mirror and lock state).
   - `<stateDir>/dsh-connect-settings.json` (default `.dsh-connect/`) — the non-secret compatibility mirror, see `settingsStatePath`.
-  - the `dsh-connect` section of `$DSH_HOME/settings.yaml` — written through DSH's first-party settings seam (atomic, file-locked, comment-preserving).
+  - `<stateDir>/dsh-connect-settings.json.legacy-imported` — a marker recording that the one-shot upgrade import ran. Its contents are a sentence saying where the settings came from; nothing is stored in it.
+  - this plugin's entry in the active **profile patch** (`profileContext.patchPath`, `cordis.patch.yml`) — written through DSH's first-party `settings` service (atomic, file-locked, comment-preserving).
   - `~/.dsh/.dsh-connect/feishu-credentials.json` — **legacy**, read-only. One-click onboarding used to save Feishu credentials here instead of the credential store, so a user who had just scanned the QR code still saw `未配置凭据` forever. Onboarding now writes to the credential store, and an existing install is backfilled from this file once on boot; after that it is never read or written again.
   - `<workDir>/.dsh-connect-images/` — user images/attachments staged for the agent's tools.
   - DSH's own session logs and settings under `~/.dsh/` (sessions, settings, etc.).
@@ -235,23 +241,39 @@ opens it too.
 
 ## User settings
 
-The web settings pane (`dsh-connect` under **Settings**) edits the `dsh-connect`
-section of `$DSH_HOME/settings.yaml`, through DSH's own first-party settings
-seam. That document is hot-reloaded, written atomically under a file lock, and
-keeps your comments — so editing it by hand works too, and a change takes
-effect without a restart.
+The web settings pane (`dsh-connect` under **Settings**) edits **this plugin's
+entry in the active profile patch** — the same
+`~/.dsh/profiles/<profile>/cordis.patch.yml` you would edit by hand — through
+DSH's own first-party `settings` service. That service writes atomically under a
+file lock and preserves your comments, and the loader hot-reloads the result, so
+a save takes effect without a restart.
+
+The fields the pane owns are declared `volatile` in the plugin's config schema.
+That declaration is what makes a save *reconcile* instead of remounting: the
+loader hands the plugin a live reference for each declared field, and a settings
+write commits them in place, so the running adapters pick the values up on their
+next message. Fields the pane does not own are simply not declared — which is
+the mechanism that keeps it from writing them.
 
 Values resolve in three layers, most specific last:
 
 1. the schema defaults shipped with the plugin;
-2. the plugin's own `cordis.patch.yml` entry (your existing config is *not*
-   discarded — it is the registered base layer);
-3. the `dsh-connect` section in `settings.yaml`.
+2. the config the plugin is composed with (its inherited entry);
+3. this plugin's entry in the active profile patch — both what you hand-write
+   there and what the pane saves.
 
-**Secrets are never written to `settings.yaml`.** It is a plain document users
-are invited to paste into bug reports, so credentials stay in the DSH
-credential store (`ctx.credentials`) — which is also where one-click onboarding
-and the `FEISHU_*`-style environment variables put them.
+A save is projected onto the declared fields only, so an undeclared key — a
+credential, `settingsStatePath`, something you added yourself — cannot reach the
+document even if a caller sends it. The converse is load-bearing too: the host
+resets a declared field that an update *omits* to its inherited value, so a save
+always writes the complete declared section. Undeclared keys you hand-wrote in
+that entry are preserved across a pane save, untouched.
+
+**The pane never writes credentials.** A profile patch is a plain document users
+are invited to paste into bug reports, so a secret you type into the pane goes to
+the DSH credential store (`ctx.credentials`) instead — which is also where
+one-click onboarding and the `FEISHU_*`-style environment variables put them. A
+secret you hand-wrote in the entry yourself is left where it is.
 
 The legacy `/dsh-connect` HTTP RPC is retained for panel compatibility; it now
 reads and writes the same namespace, and mirrors non-secret config to
@@ -308,12 +330,50 @@ bot as unconfigured:
 So a DingTalk bot using only webhook push (no stream credentials) is correctly
 reported as configured, as is one using only stream mode.
 
+## Upgrading from 0.9.1
+
+DSH 0.2 keeps per-plugin settings in the **profile patch**, not in
+`$DSH_HOME/settings.yaml`, and it does not know the old document's `dsh-connect:`
+section — its own migration renames that file and imports the sections it
+recognises, leaving ours to be dropped with a warning. Without help, an
+upgrading user's channels keep working (their config is in the patch) but every
+pane-only choice silently reverts to its default the first time the pane opens.
+
+So **0.9.2 imports it once, on the first boot after the upgrade**:
+
+- It looks for the `dsh-connect:` section in `$DSH_HOME/settings.yaml` first,
+  then in `settings.yaml.imported` (where the host's own migration renames the
+  document, and which may have happened before or after this ran), and finally in
+  this plugin's own `dsh-connect-settings.json` — the fallback store a user who
+  never had a live settings peer would be carrying all their choices in.
+- The section is projected onto the fields the pane owns, so **credentials cannot
+  travel**: they are in the credential store, and anything else in that file
+  stays where it is.
+- It **merges, it does not replace.** The values in force are the base and the
+  legacy values are layered on top, because the host resets a declared field that
+  an update omits — an import carrying only per-channel keys would otherwise
+  clear `channels` and switch every adapter off.
+- It writes through the same path a pane save uses, so the running adapters
+  reconcile immediately — no restart.
+- **Nothing is deleted or renamed.** Unlike the host's own import, ours never
+  writes to `settings.yaml`.
+- The outcome is recorded once in
+  `<stateDir>/dsh-connect-settings.json.legacy-imported`, including the benign
+  "there was nothing to import" case, so a later boot cannot re-apply the old
+  values over edits you have made since.
+
+If it cannot run, it says so in one `connect: …` line and leaves both files
+alone: a document that fails to parse is retried on the next boot once you fix
+it, and a host with no settings service at all is retried as soon as one exists.
+If you never used the pane, none of this is visible.
+
 ## Troubleshooting
 
 Logs come from the DSH host logger (run `dsh web` in a terminal); plugin messages are prefixed `connect:` / `connect-feishu:`.
 
 | Symptom | Likely cause / fix |
 |---|---|
+| Installing `dsh-connect@0.9.0` on DSH `0.2.0-rc.2` is refused: *"`dsh-connect@0.9.0` 与 DSH `0.2.0-rc.2` 不兼容 … 运行它可能导致崩溃或数据丢失"* | Not a bug and not a warning to click past: DSH's compatibility gate rejects any plugin whose declared peer range does not cover the running host, and `0.9.0` predates the `0.2.0` line. Install **`0.9.2`** (or newer), whose peers require `^0.2.0-rc.2`. |
 | `connect-feishu: adapter init failed` / `start failed` | Bad credentials, app not published, or network blocked. Check `appId`/`appSecret`, re-run onboarding, verify the bot is online in the Feishu console. |
 | `connect: resume of <id> failed, creating fresh session` | The persisted session could not be resumed (missing workdir, persistence issue). Check `workDir` and `~/.dsh/sessions`. |
 | The bot answers every message with a raw `agent-presets: preset "…" not found` line, and nothing reaches the agent | A stale `agent-presets.default` in `$DSH_HOME/settings.yaml` names an id no installed build ships. Fixed in **0.9.0**, which retries `standard` and logs the decision rather than failing the turn; on an older build, set the key to a shipped id (`standard`). |
@@ -324,6 +384,8 @@ Logs come from the DSH host logger (run `dsh web` in a terminal); plugin message
 | Card frozen on "Thinking…" with no progress on a long task | Fixed in **0.9.0**: reasoning now streams live, tool calls show as `🔧` progress lines, and a liveness heartbeat updates the card during silent stretches. Upgrade, then restart `dsh web`. |
 | The agent offers options / asks for tool approval and nothing appears in Feishu | Fixed in **0.9.1**: the bridge subscribed to a host service that does not exist, so every question fell silently back to the host. Upgrade, then restart `dsh web`. |
 | Tapping a card button says it is no longer active, on a card that was just posted | Fixed in **0.9.1**: a tap landing while the card was being redrawn (a double tap, or one right after the previous question was answered) was misread as a stale action. Upgrade, then restart `dsh web`. |
+| `connect: the legacy settings at <path> could not be parsed …` | The pre-0.2 document has a YAML error, so the one-shot migration ([Upgrading from 0.9.1](#upgrading-from-091)) skipped it and left it in place. Fix the YAML and restart; nothing is imported until then, and no marker is written, so the retry is automatic. |
+| `connect: could not import the legacy dsh-connect settings from <path> …` | The migration found the section but DSH refused the write (usually a value that fails validation). The section is still in the file — fix the named field and restart. |
 | Menu cards don't update / expire | Cards auto-close after 60 s idle by design; re-open the menu. Question and approval cards behave the same — see [Questions and approvals in a conversation](#questions-and-approvals-in-a-conversation). |
 
 **Rollback** — reinstall a previous release (`dsh plugin --profile web add dsh-connect@<version>` after removing the current one), or `git checkout` the pinned commit in a source install.
