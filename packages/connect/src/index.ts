@@ -408,8 +408,15 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
   // both must hand the runtime the *same* shape: `ChannelRuntime` restarts an
   // adapter whose config it reads as different, so a mismatch here would bounce
   // a live channel on every commit.
-  const reconcile = (): void => {
-    void runtime.apply(sectionOf(materializeConfig(rawConfig)) as ChannelsConfig);
+  // Returns the runtime's promise rather than dropping it, so a caller that is
+  // *answering the user* — the settings pane — can wait for the apply before
+  // reading back whether it worked. `ChannelRuntime.apply` already settles when
+  // that apply's reconcile finished (and applies are chained, so this waits for
+  // any queued apply too). It never rejects: a bad channel is logged and the
+  // others still start. Dropping the promise here is what made a channel start
+  // failure unreportable — the save had already succeeded and answered by then.
+  const reconcile = (): Promise<void> => {
+    return runtime.apply(sectionOf(materializeConfig(rawConfig)) as ChannelsConfig);
   };
 
   // Register the `connect` profile entry's pane fields with the host, so the
@@ -485,7 +492,12 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
   // reloading the plugin entry) commits volatile paths without re-running
   // `apply`. The host announces that here, so the adapters follow the config
   // they were started from.
-  ctx.on("loader/volatile-update", () => reconcile());
+  // Fire-and-forget here, unlike the save paths: nobody asked for this one and
+  // there is no response to make accurate, so the listener must not hold up the
+  // loader's dispatch (which would also make a slow apply look like a hang).
+  ctx.on("loader/volatile-update", () => {
+    void reconcile();
+  });
 
   // Expose the web-settings RPC. The host `connection`/`webServer` services are
   // loaded as base plugins AFTER this user plugin's apply runs, so a plain
@@ -527,6 +539,11 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
     // credentials as a second, separate call. Without this the user pastes a
     // new appSecret, is told 「已保存」, and the bot stays broken until restart.
     onCredentialsSaved: () => reconcile(),
+    // A channel whose adapter threw on start is logged and skipped, so the
+    // write still commits and the pane would answer 「已保存」 over a channel
+    // that is not running. Read after the reconcile above (`write`/the hook are
+    // both awaited now), so this describes the config the user just saved.
+    channelFailures: () => runtime.failures(),
   });
   if (typeof (ctx as { inject?: unknown }).inject === "function") {
     (ctx as Context).inject(["connection", "webServer"], (scopeCtx) => {

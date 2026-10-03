@@ -23,6 +23,8 @@ export interface FeishuMessages {
   onboardingSkipped: string;
   onboardingIncomplete: string;
   onboardingSuccess(appId: string): string;
+  /** Onboarded, but neither store took the credentials — persist for the next boot. */
+  onboardingUnsaved(appId: string): string;
   onboardingFailed(code: string): string;
   onboardingLink(url: string): string;
   onboardingLinkExpiry(minutes: number): string;
@@ -45,6 +47,8 @@ const zh: FeishuMessages = {
   onboardingSkipped: "connect-feishu: 未配置飞书凭据，且当前不是交互式终端，跳过一键接入。请在设置面板 dsh-connect 中填写 appId/appSecret。",
   onboardingIncomplete: "connect-feishu: 一键接入未完成，可重启重试，或手动配置 appId/appSecret。",
   onboardingSuccess: (appId) => `connect-feishu: 一键接入成功（${appId}），正在连接…`,
+  onboardingUnsaved: (appId) =>
+    `connect-feishu: 一键接入成功（${appId}），但凭据未能保存到本地文件或 DSH 凭据库——本次运行会正常连接，重启 dsh 后需要重新扫码接入，或在设置面板中手动填写 appId/appSecret。`,
   onboardingFailed: (code) => `[connect-feishu] 一键接入失败：${code}`,
   onboardingLink: (url) => `[connect-feishu] 未配置飞书凭据，进入一键接入。请用飞书扫码或点击链接完成：${url}`,
   onboardingLinkExpiry: (minutes) => `[connect-feishu] 链接约 ${minutes} 分钟内有效，仅限一人使用。`,
@@ -67,6 +71,8 @@ const en: FeishuMessages = {
   onboardingSkipped: "connect-feishu: no Feishu credentials configured and this host is not an interactive terminal — skipping one-click onboarding. Enter appId/appSecret in the dsh-connect settings pane.",
   onboardingIncomplete: "connect-feishu: onboarding not completed — restart to retry, or configure appId/appSecret manually.",
   onboardingSuccess: (appId) => `connect-feishu: onboarding succeeded (${appId}), connecting…`,
+  onboardingUnsaved: (appId) =>
+    `connect-feishu: onboarding succeeded (${appId}) but the credentials were not saved to the local file or the DSH credential store — this run connects normally, and after a dsh restart you must onboard again (or enter appId/appSecret in the settings pane).`,
   onboardingFailed: (code) => `[connect-feishu] onboarding failed: ${code}`,
   onboardingLink: (url) => `[connect-feishu] no Feishu credentials configured — entering one-click onboarding. Scan with Feishu or open the link to complete: ${url}`,
   onboardingLinkExpiry: (minutes) => `[connect-feishu] the link is valid for about ${minutes} minutes and usable by one person.`,

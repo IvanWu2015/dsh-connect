@@ -26,7 +26,7 @@ import { snapshotToForm, buildConfigSave, buildCredentialSaves, CHANNEL_SECRET_F
 // disagree about which keys are confidential.
 import { isMaskedSecret } from '../lib/settings/secret-disclosure.js';
 import { LOCALES, tr, optionalText } from './locale.mjs';
-import { initialOpenChannels, toggleInSet, isAdvanced } from './panel-state.mjs';
+import { initialOpenChannels, toggleInSet, isAdvanced, snapshotIssues } from './panel-state.mjs';
 
 export const name = 'dsh-connect-settings';
 export const inject = ['slots', 'connection', 'locale'];
@@ -58,7 +58,7 @@ const ALL_CHANNELS = Object.keys(CHANNEL_SECRET_FIELDS);
 //    on a light shell for anyone whose OS is dark. Do not bring it back.
 const STYLE = `
 .dsh-connect-settings,.dsh-connect-settings *,.dsh-connect-settings *::before,.dsh-connect-settings *::after{box-sizing:border-box}
-.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);--ds-warn:var(--dsw-alias-state-error-primary,#b45309);display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 .dsh-connect-settings .ds-card{display:flex;flex-direction:column;gap:10px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg);padding:12px 14px}
 .dsh-connect-settings .ds-card-title{margin:0;font-size:13px;font-weight:600}
 .dsh-connect-settings .ds-note{margin:0;font-size:11px;line-height:1.5;color:var(--ds-muted)}
@@ -92,7 +92,11 @@ const STYLE = `
 .dsh-connect-settings .ds-adv{display:flex;flex-direction:column;gap:8px}
 .dsh-connect-settings .ds-advanced-toggle{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px dashed var(--ds-border-2);border-radius:99px;background:transparent;color:var(--ds-muted);font:inherit;font-size:11px;cursor:pointer}
 .dsh-connect-settings .ds-advanced-toggle:hover{background:var(--ds-hover);color:var(--ds-text)}
-.dsh-connect-settings .ds-footer{position:sticky;bottom:0;z-index:1;display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg)}
+.dsh-connect-settings .ds-footer{position:sticky;bottom:0;z-index:1;display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg)}
+.dsh-connect-settings .ds-issues{flex-basis:100%;display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}
+.dsh-connect-settings .ds-issue{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-size:11px;line-height:1.5;color:var(--ds-warn,#b45309)}
+.dsh-connect-settings .ds-issue-reason{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all;color:var(--ds-muted)}
+.dsh-connect-settings .ds-badge.ds-badge-warn{border-color:var(--ds-warn,#b45309);color:var(--ds-warn,#b45309)}
 .dsh-connect-settings .ds-btn{height:32px;padding:0 18px;border:0;border-radius:6px;background:var(--dsw-alias-button-primary-fill,var(--ds-accent));color:var(--dsw-alias-label-primary-foreground,#ffffff);font:inherit;font-weight:500;cursor:pointer}
 .dsh-connect-settings .ds-btn:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--ds-accent))}
 .dsh-connect-settings .ds-btn:disabled{opacity:.55;cursor:default}
@@ -174,10 +178,16 @@ function renderSecretField(ch, field, form, onChange, t) {
 // supplies hook values *positionally*, so every `useState` in the tree has to
 // live in `ConnectSettingsTab` in a fixed order. Nothing in here may call a hook.
 function renderChannel(ch, ctx) {
-  const { form, creds, t, open, advOverride, setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced } = ctx;
+  const { form, creds, unknownCreds, t, open, advOverride, setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced } = ctx;
   const name = tr(t, `channel.${ch}`, ch);
   const channelHint = optionalText(t, `channel.${ch}.hint`);
   const isOpen = open.has(ch);
+  // Three-way, because "unknown" is a third state and not a shade of false: when
+  // the credential store could not be *read*, the host sends `false` (the pane
+  // needs something to render) *and* names the channel. Collapsing the two would
+  // print 「未配置凭据」 and send the user to re-enter a secret that was never the
+  // problem.
+  const badCreds = unknownCreds.has(ch);
   const advOpen = advOverride?.has(ch) ?? false;
   const configFields = CHANNEL_CONFIG_FIELDS[ch] ?? [];
   // The split is what keeps a common case on one screen: two credentials and the
@@ -216,7 +226,8 @@ function renderChannel(ch, ctx) {
         onClick: () => toggleOpen(ch),
       },
         h('span', { className: 'ds-channel-name' }, name),
-        h('span', { className: 'ds-badge' }, creds[ch] ? t('reachable') : t('unreachable')),
+        h('span', { className: badCreds ? 'ds-badge ds-badge-warn' : 'ds-badge' },
+          badCreds ? t('credentialUnknown') : creds[ch] ? t('reachable') : t('unreachable')),
         // Drawn in CSS, never a text node: the bundle test reads rendered text as
         // user-visible copy, and a `▾` here would be collected as a stray string.
         h('span', { className: 'ds-chevron' }))),
@@ -242,6 +253,33 @@ function renderChannel(ch, ctx) {
     ) : null);
 }
 
+// One line of the save bar's problem list — see `snapshotIssues` in
+// `panel-state.mjs` for where these come from and why the two error lists are
+// not merged.
+function renderIssue(issue, t) {
+  const channel = issue.channel === undefined
+    ? null
+    : h('span', null, tr(t, `channel.${issue.channel}`, issue.channel));
+  if (issue.kind === 'credentialUnknown') {
+    return h('li', { className: 'ds-issue', key: issue.key },
+      channel,
+      h('span', null, t('credentialUnknownHint')));
+  }
+  if (issue.kind === 'channelFailed') {
+    return h('li', { className: 'ds-issue', key: issue.key },
+      channel,
+      h('span', null, t('channelFailed')),
+      // The adapter's own message, verbatim. It is the only part that names the
+      // credential or option that is actually wrong, so mapping it to a code the
+      // locale would then have to guess at backwards would lose the answer.
+      h('code', { className: 'ds-issue-reason' }, issue.reason));
+  }
+  // A host warning. `w.<code>`: a code shipped without its locale entry prints
+  // the code — searchable, and visibly untranslated — rather than `undefined`.
+  return h('li', { className: 'ds-issue', key: issue.key },
+    h('span', null, tr(t, `w.${issue.code}`, issue.code)));
+}
+
 // Thin React renderer over the tested settings-model helpers.
 export function ConnectSettingsTab({ rpcCall, t }) {
   const [form, setForm] = React.useState(null);
@@ -249,6 +287,12 @@ export function ConnectSettingsTab({ rpcCall, t }) {
   const [creds, setCreds] = React.useState({});
   const [openOverride, setOpenOverride] = React.useState(null);
   const [advOverride, setAdvOverride] = React.useState(null);
+  // Everything the last call had to report but could not express as a failure:
+  // unreadable credential stores, channels the save left dead, and warnings. One
+  // slot rather than three, because the pane renders them as one list — and
+  // because the bundle test's stub supplies hook values positionally, so each
+  // extra slot has to be threaded through every call site.
+  const [notices, setNotices] = React.useState([]);
   const rpc = (endpoint, payload) => rpcCall(endpoint, payload);
 
   React.useEffect(() => {
@@ -257,6 +301,7 @@ export function ConnectSettingsTab({ rpcCall, t }) {
       if (!alive) return;
       setForm(snapshotToForm(snap));
       setCreds(snap.credentials ?? {});
+      setNotices(snapshotIssues(snap));
       setStatus('idle');
     }).catch(() => alive && setStatus('error'));
     return () => { alive = false; };
@@ -270,10 +315,21 @@ export function ConnectSettingsTab({ rpcCall, t }) {
       // write this save performed. Re-seeding the form from it also drops the
       // typed secret values (their inputs are write-only by design) and picks up
       // the new presence flags.
+      //
+      // `warnings` is the one report that has to be *accumulated* across the
+      // chain rather than read off the last snapshot: the error lists describe
+      // the state of the world and the host re-derives them on every call, but a
+      // warning is about the single call that raised it — a credential save whose
+      // reconcile failed would otherwise be erased by the next channel's save.
       let snap = await saveSettings(rpc, buildConfigSave(form));
-      for (const c of buildCredentialSaves(form)) snap = await saveCredentials(rpc, c.channel, c.values);
+      const warnings = new Set(snap.warnings ?? []);
+      for (const c of buildCredentialSaves(form)) {
+        snap = await saveCredentials(rpc, c.channel, c.values);
+        for (const code of snap.warnings ?? []) warnings.add(code);
+      }
       setForm(snapshotToForm(snap));
       setCreds(snap.credentials ?? {});
+      setNotices(snapshotIssues(snap, [...warnings]));
       setStatus('saved');
     } catch { setStatus('error'); }
   };
@@ -318,6 +374,11 @@ export function ConnectSettingsTab({ rpcCall, t }) {
   // so opening DingTalk does not silently drop the enabled Feishu the user was
   // already looking at.
   const open = openOverride ?? initialOpenChannels(form.channels, ALL_CHANNELS);
+  // Just the channels whose credential state is unknown, for the badge above —
+  // derived rather than stored so the badge and the list can never disagree.
+  const unknownCreds = new Set(
+    notices.filter((n) => n.kind === 'credentialUnknown').map((n) => n.channel),
+  );
 
   const toggleOpen = (ch) => setOpenOverride(toggleInSet(open, ch));
   // Advanced folds default to closed for every channel, so an empty set is the
@@ -355,7 +416,7 @@ export function ConnectSettingsTab({ rpcCall, t }) {
           tr(t, `channel.${ch}`, ch)))),
       // One card per built-in channel: enable toggle + cred badge + secret + config fields.
       ...ALL_CHANNELS.map((ch) => renderChannel(ch, {
-        form, creds, t, open, advOverride,
+        form, creds, unknownCreds, t, open, advOverride,
         setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced,
       }))),
     h('section', { className: 'ds-card' },
@@ -379,6 +440,11 @@ export function ConnectSettingsTab({ rpcCall, t }) {
     // Nested in the defaults card it could never move outside that card, so it
     // pinned to nothing and Save scrolled away with the channel list.
     h('div', { className: 'ds-footer' },
+      // In the save bar rather than beside the channel it concerns: these are
+      // answers to *this* save, and the bar is the one part of the pane that is
+      // always on screen. A channel card can be folded, or scrolled past, and
+      // 「已保存」 next to nothing else is the whole complaint.
+      notices.length === 0 ? null : h('ul', { className: 'ds-issues' }, ...notices.map((issue) => renderIssue(issue, t))),
       h('button', { className: 'ds-btn', type: 'button', onClick: onSave, disabled: status === 'saving' }, t('save')),
       // Rendering `status` directly leaks the raw state ids (`idle`, `saving`)
       // into the UI; every state has a locale entry instead.

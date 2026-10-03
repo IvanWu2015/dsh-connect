@@ -119,15 +119,23 @@ export class ReminderStore {
     return this.reminders.filter((r) => r.fired !== true && r.dueAt <= now);
   }
 
-  add(input: Omit<ScheduledReminder, "id" | "createdAt" | "fired">): ScheduledReminder {
+  /**
+   * Add a reminder, and report **both** halves of what happened.
+   *
+   * The reminder is live in this process from the moment it is pushed, so it will
+   * fire on schedule whether or not the file write succeeded — but it only
+   * survives a restart if it did. Returning the reminder alone let every caller
+   * treat "added" as one outcome, which is how a reminder set for tomorrow is
+   * confirmed and then quietly gone by morning.
+   */
+  add(input: Omit<ScheduledReminder, "id" | "createdAt" | "fired">): { reminder: ScheduledReminder; persisted: boolean } {
     const reminder: ScheduledReminder = {
       ...input,
       id: randomUUID(),
       createdAt: Date.now(),
     };
     this.reminders.push(reminder);
-    this.save();
-    return reminder;
+    return { reminder, persisted: this.save() };
   }
 
   remove(id: string): boolean {
@@ -174,12 +182,21 @@ export class ReminderStore {
     }
   }
 
-  private save(): void {
+  /**
+   * Write the store out. Returns false when it could not be written.
+   *
+   * Persistence is still best-effort — the live list is the truth and a reminder
+   * fires from it regardless — but the failure is *returned* rather than
+   * swallowed, because it is the difference between "set" and "set until the next
+   * restart" and only the caller can say that to the user.
+   */
+  private save(): boolean {
     try {
       mkdirSync(dirname(this.file), { recursive: true });
       writeFileSync(this.file, JSON.stringify(this.reminders, null, 2), "utf8");
+      return true;
     } catch {
-      // Persistence is best-effort; live reminders still fire in-memory.
+      return false;
     }
   }
 }

@@ -91,9 +91,13 @@ export class BindingStore {
   private readonly map = new Map<string, ChatBinding>();
   private readonly file: string;
   private readonly changeListeners = new Set<BindingChangeCallback>();
+  private readonly logger?: { warn?: (...args: unknown[]) => void };
+  /** Whether the last write attempt failed — see {@link save}. */
+  private writeFailed = false;
 
-  constructor(stateDir?: string) {
+  constructor(stateDir?: string, logger?: { warn?: (...args: unknown[]) => void }) {
     this.file = resolve(resolveStateDir({ stateDir }), "bindings.json");
+    this.logger = logger;
     this.load();
   }
 
@@ -210,12 +214,37 @@ export class BindingStore {
     }
   }
 
+  /**
+   * Persist the map. Never throws — every live binding already works in memory,
+   * and `put` is called on the hot path of each message, so a failure must not
+   * take the message down with it.
+   *
+   * What it must not do is be *silent* about it. This file is the only record of
+   * which session a chat is talking to, so a failed write means the next boot
+   * cannot resume any of these conversations: the user sends a message into a
+   * chat that looks fine and gets a brand-new session with no history. Nothing
+   * observable goes wrong until then, which is why the one report available — a
+   * log line naming the unwritable path — has to happen here.
+   *
+   * Reported on the *transition* rather than per call: the state dir is either
+   * writable or it is not, so a per-call warning would emit one line per message
+   * and bury itself.
+   */
   private save(): void {
     try {
       mkdirSync(dirname(this.file), { recursive: true });
       writeFileSync(this.file, JSON.stringify([...this.map.values()], null, 2), "utf8");
-    } catch {
-      // Persistence is best-effort; live bindings still work in-memory.
+      if (this.writeFailed) {
+        this.writeFailed = false;
+        this.logger?.warn?.(`connect: binding store writes to ${this.file} are working again`);
+      }
+    } catch (error) {
+      if (!this.writeFailed) {
+        this.writeFailed = true;
+        this.logger?.warn?.(
+          `connect: cannot persist bindings to ${this.file} — existing chats will not be resumed after a restart, and each will start a new session: ${String(error)}`,
+        );
+      }
     }
   }
 }

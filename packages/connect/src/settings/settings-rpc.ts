@@ -74,7 +74,57 @@ export interface SettingsSnapshot {
    * path control still applies, and a save needs a restart.
    */
   live?: boolean;
+  /**
+   * Non-fatal problems with the call that produced this snapshot. Absent when
+   * there is nothing to say.
+   *
+   * These are the cases where the save *did* happen but did not (yet) have the
+   * effect the user asked for — a rotated secret stored in the credential store
+   * that the running adapter did not pick up, say. Neither answer available to
+   * the service is honest on its own: reporting a failed save would be a lie
+   * (the value *is* stored, and re-sending it changes nothing), and reporting a
+   * clean save is the lie the user then acts on — they see 「已保存」 over a bot
+   * that stays broken until restart.
+   *
+   * Codes come from {@link SettingsWarningCode}; the pane owns the wording, so a
+   * new code needs a `w.<code>` locale key in both languages (the locale test
+   * enforces that) rather than an English sentence shipped from the host.
+   */
+  warnings?: SettingsWarningCode[];
+  /**
+   * Channels whose stored credentials could not be **read**.
+   *
+   * Distinct from `credentials[ch] === false`, and the distinction is the whole
+   * point: `false` asserts "nothing is stored", while an IO error means the
+   * answer is *unknown*. Reporting absence over a `EACCES` is how a working bot
+   * comes to be described as 「未配置凭据」, which sends the user off to
+   * re-enter a credential that was never broken. A channel listed here renders
+   * as unknown — it is deliberately not `credentials[ch] === undefined`, because
+   * a missing key already means "not a channel this pane knows".
+   */
+  credentialErrors?: string[];
+  /**
+   * Channels whose adapter failed to **start** with the config just saved, as
+   * `{channel: reason}`.
+   *
+   * A channel that throws on start is logged and the rest still come up (see
+   * `ChannelRuntime`), so the save itself succeeds and the pane would otherwise
+   * report 「已保存」 over a channel that is silently not running. The reason is
+   * the adapter's own message — passed through rather than mapped to a code,
+   * because it is the only part that identifies *which* credential is wrong.
+   */
+  channelErrors?: Record<string, string>;
 }
+
+/**
+ * Codes a snapshot's {@link SettingsSnapshot.warnings} can carry. Each one needs
+ * a `w.<code>` key in `client/locale.mjs` (both languages). A real array rather
+ * than a bare union so the locale test can *derive* that list instead of keeping
+ * a second copy of it — a copy is exactly what goes stale.
+ */
+export const SETTINGS_WARNING_CODES = ["credentialsStoredNotApplied"] as const;
+
+export type SettingsWarningCode = (typeof SETTINGS_WARNING_CODES)[number];
 
 /** The service backing the RPC; supplied by the web-settings integration. */
 export interface SettingsService {

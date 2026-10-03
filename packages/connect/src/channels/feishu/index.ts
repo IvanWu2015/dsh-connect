@@ -67,6 +67,13 @@ export interface FeishuRegisterOptions {
    * stdout is a TTY; tests pass it explicitly.
    */
   interactive?: boolean;
+  /**
+   * The onboarding flow itself. Defaults to {@link onboardFeishu}, which drives
+   * the real device-authorization QR flow — a network round trip to Feishu that
+   * a test cannot perform. Injecting one lets the *reporting* be exercised, which
+   * is the part that used to lie.
+   */
+  onboard?: typeof onboardFeishu;
 }
 
 /**
@@ -107,25 +114,34 @@ export function register(
   }
 
   ctx.logger?.warn?.(t.onboardingEnter);
-  void onboardFeishu(ctx.logger, config.language ?? "zh").then(async (credentials) => {
+  void (options.onboard ?? onboardFeishu)(ctx.logger, config.language ?? "zh").then(async (credentials) => {
     if (credentials === null) {
       ctx.logger?.warn?.(t.onboardingIncomplete);
       return;
     }
     // Legacy mirror: older builds (and a downgrade) read this file. Best-effort.
-    saveCredentials(credentials);
+    const mirrored = saveCredentials(credentials);
     // The DSH credential store is the source of truth from here on: the next
     // boot's `injectSecrets` fills the channel config from it, so onboarding
     // does not run again and the settings pane reports the app as configured.
-    try {
-      await options.credentialStore?.save("feishu", {
-        appId: credentials.appId,
-        appSecret: credentials.appSecret,
-      });
-    } catch (error) {
-      ctx.logger?.warn?.(`connect-feishu: could not persist credentials to the store: ${String(error)}`);
+    let stored = false;
+    if (options.credentialStore !== undefined) {
+      try {
+        await options.credentialStore.save("feishu", {
+          appId: credentials.appId,
+          appSecret: credentials.appSecret,
+        });
+        stored = true;
+      } catch (error) {
+        ctx.logger?.warn?.(`connect-feishu: could not persist credentials to the store: ${String(error)}`);
+      }
     }
-    ctx.logger?.warn?.(t.onboardingSuccess(credentials.appId));
+    // The app really was created in the user's tenant — that half is true either
+    // way. Whether the credentials *survived* is a separate fact, and this is the
+    // only place that knows it: the instance below connects from the values in
+    // memory, so a failed write here is indistinguishable from success until the
+    // next boot runs the whole scan again, with the user none the wiser.
+    ctx.logger?.warn?.(mirrored || stored ? t.onboardingSuccess(credentials.appId) : t.onboardingUnsaved(credentials.appId));
     start(connect, { ...config, appId: credentials.appId, appSecret: credentials.appSecret }, ctx.logger);
   });
 }

@@ -589,6 +589,11 @@ export class AgentRunner implements MenuHost {
     const selection: ModelSelection = this.defaultSelection();
     const composed = await this.composeSetup(selection);
 
+    // Set when the stored session could not be resumed and this turn therefore
+    // starts a new one. Reported to the chat only *after* the fresh session exists
+    // — see the notice below.
+    let resumeFailure: string | undefined;
+
     if (binding !== undefined) {
       try {
         const handle = await this.agents.resume({
@@ -608,6 +613,12 @@ export class AgentRunner implements MenuHost {
         
         return handle.agent;
       } catch (error) {
+        // An empty id is not a lost conversation. `maybeSendWelcome` writes the
+        // binding for a brand-new chat with `sessionId: ""` before the first
+        // `ensureAgent`, so this same catch runs once on every chat's first
+        // message with nothing to resume — the log line is right, a chat notice
+        // saying "could not resume your session" would not be.
+        if (binding.sessionId !== "") resumeFailure = String(error);
         (this.ctx.get("logger") as { warn?: (...args: unknown[]) => void } | undefined)?.warn?.(`connect: resume of ${binding.sessionId} failed, creating fresh session: ${String(error)}`);
       }
     }
@@ -626,7 +637,27 @@ export class AgentRunner implements MenuHost {
     this.agent = handle.agent;
     this.watchAgent(handle.agent);
     this.recordSession(String(sessionId), truncate(msg.text, 40), msg.senderKey);
-    
+
+    // The resume above failed. Until now only the log said so, which is the one
+    // place a chat user never looks: they send a follow-up into a conversation that
+    // looks intact, and the reply arrives with no memory of it. The old session is
+    // not lost — it is still in the session store and still viewable in the Web GUI
+    // — so the honest report is "continuing in a new one", plus the reason, so a
+    // permanent cause (a deleted session store, a moved work dir) is distinguishable
+    // from a one-off.
+    //
+    // Sent only here, after `create` succeeded, and never from the catch: claiming a
+    // session was started before it exists would be the same lie in the other
+    // direction. `recordSession` has already repointed the binding at the new
+    // session, so this fires once per breakage rather than once per message.
+    if (resumeFailure !== undefined) {
+      await this.adapter
+        .sendText(this.target(msg), this.t.resumeFallback(truncate(resumeFailure, 300)))
+        .catch((error: unknown) => {
+          this.warn(`connect: resume-fallback notice could not be delivered (${this.channel}/${this.chatKey}): ${String(error)}`);
+        });
+    }
+
     // Auto-create Web mirror for new sessions (if enabled)
     this.autoCreateWebMirror(String(sessionId), msg.senderKey);
     
@@ -929,6 +960,14 @@ export class AgentRunner implements MenuHost {
     // explicit milestone sync has been pushed for the configured interval.
     const progressTimeoutMs = this.progressTimeoutMs;
     let lastProgressNoticeAt = now;
+    // The tick is derived from the configured interval instead of being fixed at
+    // `PROGRESS_WATCHDOG_CHECK_MS`: a fixed 15s tick means `progressTimeoutMs:
+    // 30_000` is honoured at 30–45s, i.e. up to 1.5× what the user asked for,
+    // and no test can observe the feature without sleeping the constant out.
+    // Half the interval lands within 1–1.5× of the request; the 250ms floor
+    // stops a pathologically small value from becoming a busy loop; the cap
+    // leaves the default (5 min) on the same 15s tick as before.
+    const watchdogTickMs = Math.max(250, Math.min(PROGRESS_WATCHDOG_CHECK_MS, Math.round(progressTimeoutMs / 2)));
     const progressWatchdog = progressTimeoutMs > 0
       ? setInterval(() => {
           const turn = this.turn;
@@ -942,7 +981,7 @@ export class AgentRunner implements MenuHost {
           // message: the milestone is appended to the same card via the chunk
           // stream, so progress updates never clutter the chat with new bubbles.
           turn.chunks.push(`\n\n${this.t.progressReminder(minutes, status)}\n\n`);
-        }, PROGRESS_WATCHDOG_CHECK_MS)
+        }, watchdogTickMs)
       : undefined;
 
     // End the chunk stream unconditionally: if `followup` / `whenIdle` /
@@ -1231,6 +1270,31 @@ export class AgentRunner implements MenuHost {
     (this.ctx.get("logger") as { info?: (...args: unknown[]) => void } | undefined)?.info?.(message);
   }
 
+  private warn(message: string): void {
+    (this.ctx.get("logger") as { warn?: (...args: unknown[]) => void } | undefined)?.warn?.(message);
+  }
+
+  /**
+   * Send a task-end card and report a delivery failure instead of discarding it.
+   *
+   * The catch used to be a bare `undefined`, which made a dropped card and a card
+   * with nothing to say indistinguishable. It is neither: this card is the
+   * durable record of the turn — the result text and the token/duration summary —
+   * and the streaming card it replaces is meanwhile stuck on its last frame. A
+   * silent failure here leaves the user watching a frozen "running" indicator
+   * with no reason to think anything went wrong.
+   *
+   * The log is the only report available: the user-facing channel is precisely
+   * what just failed, so there is nothing to send the notice on.
+   */
+  private async sendTaskCard(msg: InboundMessage, card: SummaryCard, kind: string): Promise<void> {
+    try {
+      await this.adapter.sendCard(this.taskTarget(msg), card);
+    } catch (error) {
+      this.warn(`connect: ${kind} card could not be delivered to ${this.channel}/${this.chatKey}: ${String(error)}`);
+    }
+  }
+
   private readTodos(): TodoItem[] {
     const agent = this.agent;
     if (agent === undefined) return [];
@@ -1253,7 +1317,7 @@ export class AgentRunner implements MenuHost {
     if (outcome.message !== undefined) lines.push(this.t.reasonMessage(truncate(outcome.message)));
     if (outcome.text !== "") lines.push(this.t.produced(truncate(outcome.text, 300)));
     const card: SummaryCard = { markdown: lines.join("\n") };
-    await this.adapter.sendCard(this.taskTarget(msg), card).catch(() => undefined);
+    await this.sendTaskCard(msg, card, "summary");
   }
 
   /** Context-window usage at or above this percentage suggests compaction. */
@@ -1292,7 +1356,7 @@ export class AgentRunner implements MenuHost {
       lines.push(this.t.produced(truncate(outcome.text, 300)));
     }
     const card: SummaryCard = { markdown: lines.join("\n") };
-    await this.adapter.sendCard(this.taskTarget(msg), card).catch(() => undefined);
+    await this.sendTaskCard(msg, card, "stats");
   }
 
   private async handleCommand(command: Command, msg: InboundMessage): Promise<void> {
@@ -1511,7 +1575,7 @@ export class AgentRunner implements MenuHost {
       await this.adapter.sendText(target, this.t.reminderNoText);
       return;
     }
-    this.reminders.add({
+    const { persisted } = this.reminders.add({
       channel: this.channel,
       chatKey: this.chatKey,
       chatType: this.chatType,
@@ -1519,7 +1583,12 @@ export class AgentRunner implements MenuHost {
       dueAt,
       ownerKey: msg.senderKey,
     });
-    await this.adapter.sendText(target, this.t.reminderSet(formatRemindAt(dueAt, this.language), body));
+    // Two outcomes and one message would hide half of one: the reminder is live in
+    // this process and will fire, but a failed write means it will not survive a
+    // restart. Saying only 「已设置」 is how a reminder set for tomorrow quietly
+    // disappears overnight, and refusing to set it at all would be the opposite lie.
+    const line = this.t.reminderSet(formatRemindAt(dueAt, this.language), body);
+    await this.adapter.sendText(target, persisted ? line : `${line}\n${this.t.reminderNotPersisted}`);
   }
 
   /**

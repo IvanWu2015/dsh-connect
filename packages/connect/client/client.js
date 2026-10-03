@@ -240,8 +240,8 @@ var LOCALES = {
     error: "\u4FDD\u5B58\u5931\u8D25",
     loading: "\u52A0\u8F7D\u4E2D\u2026",
     statePath: "\u8BBE\u7F6E\u6587\u4EF6",
-    statePathHint: "\u6CA1\u6709 settings.yaml \u547D\u540D\u7A7A\u95F4\u65F6\uFF0C\u914D\u7F6E\u56DE\u9000\u5B58\u653E\u5728\u8FD9\u4E2A JSON \u6587\u4EF6\u91CC\u3002",
-    livePlane: "\u914D\u7F6E\u5B58\u653E\u5728 settings.yaml\uFF0C\u4FDD\u5B58\u540E\u7ACB\u5373\u751F\u6548\u3002",
+    statePathHint: "\u5BBF\u4E3B\u6CA1\u6709\u63D0\u4F9B\u8BBE\u7F6E\u547D\u540D\u7A7A\u95F4\u65F6\uFF0C\u914D\u7F6E\u56DE\u9000\u5B58\u653E\u5728\u8FD9\u4E2A JSON \u6587\u4EF6\u91CC\u3002",
+    livePlane: "\u914D\u7F6E\u5199\u5165 cordis.patch.yml\uFF0C\u4FDD\u5B58\u540E\u7ACB\u5373\u751F\u6548\u3002",
     filePlane: "\u914D\u7F6E\u5B58\u653E\u5728\u672C\u5730\u8BBE\u7F6E\u6587\u4EF6\uFF0C\u91CD\u542F dsh \u540E\u751F\u6548\u3002",
     reachable: "\u5DF2\u914D\u7F6E\u51ED\u636E",
     unreachable: "\u672A\u914D\u7F6E\u51ED\u636E",
@@ -254,6 +254,10 @@ var LOCALES = {
     collapse: "\u6536\u8D77",
     advanced: "\u9AD8\u7EA7\u9009\u9879",
     tabsAria: "\u6E20\u9053\u5207\u6362",
+    credentialUnknown: "\u51ED\u636E\u72B6\u6001\u672A\u77E5",
+    credentialUnknownHint: "\u65E0\u6CD5\u8BFB\u53D6\u5DF2\u5B58\u50A8\u7684\u51ED\u636E\uFF0C\u8BF7\u786E\u8BA4\u51ED\u636E\u5E93\u53EF\u8BBF\u95EE\u540E\u91CD\u8BD5\u3002",
+    channelFailed: "\u6E20\u9053\u542F\u52A8\u5931\u8D25\uFF1A",
+    "w.credentialsStoredNotApplied": "\u51ED\u636E\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u8FD0\u884C\u4E2D\u7684\u6E20\u9053\u6CA1\u80FD\u91CD\u65B0\u52A0\u8F7D\uFF0C\u8BF7\u91CD\u542F dsh \u540E\u786E\u8BA4\u3002",
     "status.loading": "\u52A0\u8F7D\u4E2D\u2026",
     "status.idle": "\u5C31\u7EEA",
     "status.saving": "\u4FDD\u5B58\u4E2D\u2026",
@@ -326,8 +330,8 @@ var LOCALES = {
     error: "Save failed",
     loading: "Loading\u2026",
     statePath: "Settings file",
-    statePathHint: "Where the config falls back to when no settings.yaml namespace is live.",
-    livePlane: "Stored in settings.yaml \u2014 a save takes effect immediately.",
+    statePathHint: "Where the config falls back to when the host has no settings namespace live.",
+    livePlane: "Written to cordis.patch.yml \u2014 a save takes effect immediately.",
     filePlane: "Stored in a local settings file \u2014 a save applies after dsh restarts.",
     reachable: "Credentials set",
     unreachable: "Credentials missing",
@@ -340,6 +344,10 @@ var LOCALES = {
     collapse: "Collapse",
     advanced: "Advanced",
     tabsAria: "Channel switcher",
+    credentialUnknown: "Credential state unknown",
+    credentialUnknownHint: "The stored credentials could not be read \u2014 check that the credential store is reachable, then try again.",
+    channelFailed: "Channel failed to start:",
+    "w.credentialsStoredNotApplied": "The credential was saved, but the running channels did not reload it \u2014 restart dsh to be sure.",
     "status.loading": "Loading\u2026",
     "status.idle": "Ready",
     "status.saving": "Saving\u2026",
@@ -434,6 +442,19 @@ function toggleInSet(set, key) {
   else next.add(key);
   return next;
 }
+function snapshotIssues(snap, warnings) {
+  const issues = [];
+  for (const channel of snap?.credentialErrors ?? []) {
+    issues.push({ kind: "credentialUnknown", channel, key: `credentialUnknown:${channel}` });
+  }
+  for (const code of warnings ?? snap?.warnings ?? []) {
+    issues.push({ kind: "warning", code, key: `warning:${code}` });
+  }
+  for (const [channel, reason] of Object.entries(snap?.channelErrors ?? {})) {
+    issues.push({ kind: "channelFailed", channel, reason, key: `channelFailed:${channel}` });
+  }
+  return issues;
+}
 
 // client/settings-client.mjs
 var name = "dsh-connect-settings";
@@ -444,7 +465,7 @@ var h = React.createElement;
 var ALL_CHANNELS = Object.keys(CHANNEL_SECRET_FIELDS);
 var STYLE = `
 .dsh-connect-settings,.dsh-connect-settings *,.dsh-connect-settings *::before,.dsh-connect-settings *::after{box-sizing:border-box}
-.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);--ds-warn:var(--dsw-alias-state-error-primary,#b45309);display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 .dsh-connect-settings .ds-card{display:flex;flex-direction:column;gap:10px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg);padding:12px 14px}
 .dsh-connect-settings .ds-card-title{margin:0;font-size:13px;font-weight:600}
 .dsh-connect-settings .ds-note{margin:0;font-size:11px;line-height:1.5;color:var(--ds-muted)}
@@ -478,7 +499,11 @@ var STYLE = `
 .dsh-connect-settings .ds-adv{display:flex;flex-direction:column;gap:8px}
 .dsh-connect-settings .ds-advanced-toggle{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px dashed var(--ds-border-2);border-radius:99px;background:transparent;color:var(--ds-muted);font:inherit;font-size:11px;cursor:pointer}
 .dsh-connect-settings .ds-advanced-toggle:hover{background:var(--ds-hover);color:var(--ds-text)}
-.dsh-connect-settings .ds-footer{position:sticky;bottom:0;z-index:1;display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg)}
+.dsh-connect-settings .ds-footer{position:sticky;bottom:0;z-index:1;display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg)}
+.dsh-connect-settings .ds-issues{flex-basis:100%;display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}
+.dsh-connect-settings .ds-issue{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-size:11px;line-height:1.5;color:var(--ds-warn,#b45309)}
+.dsh-connect-settings .ds-issue-reason{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all;color:var(--ds-muted)}
+.dsh-connect-settings .ds-badge.ds-badge-warn{border-color:var(--ds-warn,#b45309);color:var(--ds-warn,#b45309)}
 .dsh-connect-settings .ds-btn{height:32px;padding:0 18px;border:0;border-radius:6px;background:var(--dsw-alias-button-primary-fill,var(--ds-accent));color:var(--dsw-alias-label-primary-foreground,#ffffff);font:inherit;font-weight:500;cursor:pointer}
 .dsh-connect-settings .ds-btn:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--ds-accent))}
 .dsh-connect-settings .ds-btn:disabled{opacity:.55;cursor:default}
@@ -568,10 +593,11 @@ function renderSecretField(ch, field, form, onChange, t) {
   );
 }
 function renderChannel(ch, ctx) {
-  const { form, creds, t, open, advOverride, setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced } = ctx;
+  const { form, creds, unknownCreds, t, open, advOverride, setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced } = ctx;
   const name2 = tr(t, `channel.${ch}`, ch);
   const channelHint = optionalText(t, `channel.${ch}.hint`);
   const isOpen = open.has(ch);
+  const badCreds = unknownCreds.has(ch);
   const advOpen = advOverride?.has(ch) ?? false;
   const configFields = CHANNEL_CONFIG_FIELDS[ch] ?? [];
   const common = configFields.filter((f) => !isAdvanced(ch, f.key));
@@ -615,7 +641,11 @@ function renderChannel(ch, ctx) {
           onClick: () => toggleOpen(ch)
         },
         h("span", { className: "ds-channel-name" }, name2),
-        h("span", { className: "ds-badge" }, creds[ch] ? t("reachable") : t("unreachable")),
+        h(
+          "span",
+          { className: badCreds ? "ds-badge ds-badge-warn" : "ds-badge" },
+          badCreds ? t("credentialUnknown") : creds[ch] ? t("reachable") : t("unreachable")
+        ),
         // Drawn in CSS, never a text node: the bundle test reads rendered text as
         // user-visible copy, and a `▾` here would be collected as a stray string.
         h("span", { className: "ds-chevron" })
@@ -654,12 +684,41 @@ function renderChannel(ch, ctx) {
     ) : null
   );
 }
+function renderIssue(issue, t) {
+  const channel = issue.channel === void 0 ? null : h("span", null, tr(t, `channel.${issue.channel}`, issue.channel));
+  if (issue.kind === "credentialUnknown") {
+    return h(
+      "li",
+      { className: "ds-issue", key: issue.key },
+      channel,
+      h("span", null, t("credentialUnknownHint"))
+    );
+  }
+  if (issue.kind === "channelFailed") {
+    return h(
+      "li",
+      { className: "ds-issue", key: issue.key },
+      channel,
+      h("span", null, t("channelFailed")),
+      // The adapter's own message, verbatim. It is the only part that names the
+      // credential or option that is actually wrong, so mapping it to a code the
+      // locale would then have to guess at backwards would lose the answer.
+      h("code", { className: "ds-issue-reason" }, issue.reason)
+    );
+  }
+  return h(
+    "li",
+    { className: "ds-issue", key: issue.key },
+    h("span", null, tr(t, `w.${issue.code}`, issue.code))
+  );
+}
 function ConnectSettingsTab({ rpcCall, t }) {
   const [form, setForm] = React.useState(null);
   const [status, setStatus] = React.useState("loading");
   const [creds, setCreds] = React.useState({});
   const [openOverride, setOpenOverride] = React.useState(null);
   const [advOverride, setAdvOverride] = React.useState(null);
+  const [notices, setNotices] = React.useState([]);
   const rpc = (endpoint, payload) => rpcCall(endpoint, payload);
   React.useEffect(() => {
     let alive = true;
@@ -667,6 +726,7 @@ function ConnectSettingsTab({ rpcCall, t }) {
       if (!alive) return;
       setForm(snapshotToForm(snap));
       setCreds(snap.credentials ?? {});
+      setNotices(snapshotIssues(snap));
       setStatus("idle");
     }).catch(() => alive && setStatus("error"));
     return () => {
@@ -678,9 +738,14 @@ function ConnectSettingsTab({ rpcCall, t }) {
     setStatus("saving");
     try {
       let snap = await saveSettings(rpc, buildConfigSave(form));
-      for (const c of buildCredentialSaves(form)) snap = await saveCredentials(rpc, c.channel, c.values);
+      const warnings = new Set(snap.warnings ?? []);
+      for (const c of buildCredentialSaves(form)) {
+        snap = await saveCredentials(rpc, c.channel, c.values);
+        for (const code of snap.warnings ?? []) warnings.add(code);
+      }
       setForm(snapshotToForm(snap));
       setCreds(snap.credentials ?? {});
+      setNotices(snapshotIssues(snap, [...warnings]));
       setStatus("saved");
     } catch {
       setStatus("error");
@@ -709,6 +774,9 @@ function ConnectSettingsTab({ rpcCall, t }) {
   });
   if (!form) return h("div", { className: "dsh-connect-settings" }, t("loading"));
   const open = openOverride ?? initialOpenChannels(form.channels, ALL_CHANNELS);
+  const unknownCreds = new Set(
+    notices.filter((n) => n.kind === "credentialUnknown").map((n) => n.channel)
+  );
   const toggleOpen = (ch) => setOpenOverride(toggleInSet(open, ch));
   const toggleAdvanced = (ch) => setAdvOverride(toggleInSet(advOverride ?? /* @__PURE__ */ new Set(), ch));
   const focusChannel = (ch) => {
@@ -749,6 +817,7 @@ function ConnectSettingsTab({ rpcCall, t }) {
       ...ALL_CHANNELS.map((ch) => renderChannel(ch, {
         form,
         creds,
+        unknownCreds,
         t,
         open,
         advOverride,
@@ -793,6 +862,11 @@ function ConnectSettingsTab({ rpcCall, t }) {
     h(
       "div",
       { className: "ds-footer" },
+      // In the save bar rather than beside the channel it concerns: these are
+      // answers to *this* save, and the bar is the one part of the pane that is
+      // always on screen. A channel card can be folded, or scrolled past, and
+      // 「已保存」 next to nothing else is the whole complaint.
+      notices.length === 0 ? null : h("ul", { className: "ds-issues" }, ...notices.map((issue) => renderIssue(issue, t))),
       h("button", { className: "ds-btn", type: "button", onClick: onSave, disabled: status === "saving" }, t("save")),
       // Rendering `status` directly leaks the raw state ids (`idle`, `saving`)
       // into the UI; every state has a locale entry instead.

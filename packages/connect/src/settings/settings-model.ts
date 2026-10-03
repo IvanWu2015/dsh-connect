@@ -148,7 +148,17 @@ function stripEmpty(obj: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-/** Build the non-secret config to persist via `settings.save`. */
+/**
+ * Build the non-secret config to persist via `settings.save`.
+ *
+ * Sent as the *whole* visible config, and that is deliberate — see the note on
+ * `SettingsForms.replace` in `settings/namespace.ts`. A payload that tried to
+ * send only what changed would not shrink the profile entry by a single key
+ * (`replace` merges the caller's section over the *inherited* one, so every
+ * volatile field is written to the profile either way) and *would* quietly
+ * revert anything the user had saved earlier: a field this save omits resolves
+ * to its inherited value, not to its previously saved one.
+ */
 export function buildConfigSave(form: SettingsForm): Record<string, unknown> {
   const config: Record<string, unknown> = { channels: form.channels };
   const defaults = stripEmpty(form.channelDefaults ?? {});

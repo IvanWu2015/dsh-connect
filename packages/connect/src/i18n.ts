@@ -98,6 +98,8 @@ export interface Messages {
   // Progress enhancement.
   toolStepLabel(n: number, name: string): string;
   queuedHint(n: number): string;
+  /** The stored session could not be resumed, so this turn starts a new one. */
+  resumeFallback(reason: string): string;
 
   // Append-to-running-task (`/ps`) + proactive context-high nudge.
   psUsage: string;
@@ -251,6 +253,8 @@ export interface Messages {
   remindersCount(n: number, list: string): string;
   reminderFired(text: string): string;
   reminderSet(atDisplay: string, text: string): string;
+  /** Appended to a reminder confirmation whose store write failed. */
+  reminderNotPersisted: string;
   reminderNoText: string;
   reminderParseFailed(arg: string): string;
   reminderPersistedHeader: string;
@@ -396,6 +400,8 @@ const zh: Messages = {
   actionCancelled: "已取消，未执行任何操作。",
   toolStepLabel: (n, name) => `🔧 第 ${n} 次工具调用 \`${name}\``,
   queuedHint: (n) => `（还有 ${n} 条消息排队中）`,
+  resumeFallback: (reason) =>
+    `⚠️ 无法恢复上次的会话，已为你开启一个新会话继续（旧会话仍可在 Web 端查看）。\n原因：${reason}`,
   psUsage: "用法：`/ps <补充信息>`，向正在执行的任务追加说明。",
   psReceived: (text) => `✅ 已向当前任务追加：${text}`,
   psNoActiveSession: "当前没有活动会话，无法追加。可发送消息开始新对话。",
@@ -550,6 +556,7 @@ const zh: Messages = {
   remindersCount: (n, list) => `定时提醒（${n}）：\n${list}`,
   reminderFired: (text) => `⏰ 提醒：${text}`,
   reminderSet: (atDisplay, text) => `⏰ 已设置提醒（${atDisplay}）：${text}`,
+  reminderNotPersisted: "⚠️ 但提醒文件写入失败，本次运行期间仍会按时提醒，重启 dsh 后这条提醒会丢失。",
   reminderNoText: "用法：/remind <时间> <内容>，例如 /remind 10分钟 提醒我喝水",
   reminderParseFailed: (arg) => `无法解析时间「${arg}」。支持「10分钟」「2小时」「14:30」`,
   reminderPersistedHeader: "— 持久化提醒 —",
@@ -698,6 +705,8 @@ const en: Messages = {
   actionCancelled: "Cancelled — nothing was changed.",
   toolStepLabel: (n, name) => `🔧 Tool call #${n}: \`${name}\``,
   queuedHint: (n) => `(${n} more message(s) queued)`,
+  resumeFallback: (reason) =>
+    `⚠️ Could not resume the previous session, so this turn continues in a new one (the old one is still viewable in the Web GUI).\nReason: ${reason}`,
   psUsage: "Usage: `/ps <note>` — append a note to the running task.",
   psReceived: (text) => `✅ Note appended to the current task: ${text}`,
   psNoActiveSession: "No active session to append to. Send a message to start a new conversation.",
@@ -851,6 +860,7 @@ const en: Messages = {
   remindersCount: (n, list) => `Scheduled reminders (${n}):\n${list}`,
   reminderFired: (text) => `⏰ Reminder: ${text}`,
   reminderSet: (atDisplay, text) => `⏰ Reminder set (${atDisplay}): ${text}`,
+  reminderNotPersisted: "⚠️ But the reminder file could not be written — it will still fire while dsh runs, and will be lost when dsh restarts.",
   reminderNoText: "Usage: /remind <time> <text>, e.g. /remind 10m drink water",
   reminderParseFailed: (arg) => `Cannot parse time "${arg}". Try "10m", "2h" or "14:30"`,
   reminderPersistedHeader: "— persistent reminders —",

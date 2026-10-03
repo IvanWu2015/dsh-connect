@@ -17,6 +17,7 @@
  * - `s.<channel>.<key>` / `.hint` — a secret field (`CHANNEL_SECRET_FIELDS`)
  * - `o.<value>` — a `select` option value, shared across fields
  * - `status.<state>` — the save-button status line
+ * - `w.<code>` — a non-fatal warning code from the host (`SettingsWarningCode`)
  */
 
 export const LOCALES = {
@@ -30,8 +31,8 @@ export const LOCALES = {
     error: '保存失败',
     loading: '加载中…',
     statePath: '设置文件',
-    statePathHint: '没有 settings.yaml 命名空间时，配置回退存放在这个 JSON 文件里。',
-    livePlane: '配置存放在 settings.yaml，保存后立即生效。',
+    statePathHint: '宿主没有提供设置命名空间时，配置回退存放在这个 JSON 文件里。',
+    livePlane: '配置写入 cordis.patch.yml，保存后立即生效。',
     filePlane: '配置存放在本地设置文件，重启 dsh 后生效。',
     reachable: '已配置凭据',
     unreachable: '未配置凭据',
@@ -44,6 +45,11 @@ export const LOCALES = {
     collapse: '收起',
     advanced: '高级选项',
     tabsAria: '渠道切换',
+    credentialUnknown: '凭据状态未知',
+    credentialUnknownHint: '无法读取已存储的凭据，请确认凭据库可访问后重试。',
+    channelFailed: '渠道启动失败：',
+
+    'w.credentialsStoredNotApplied': '凭据已保存，但运行中的渠道没能重新加载，请重启 dsh 后确认。',
 
     'status.loading': '加载中…',
     'status.idle': '就绪',
@@ -121,8 +127,8 @@ export const LOCALES = {
     error: 'Save failed',
     loading: 'Loading…',
     statePath: 'Settings file',
-    statePathHint: 'Where the config falls back to when no settings.yaml namespace is live.',
-    livePlane: 'Stored in settings.yaml — a save takes effect immediately.',
+    statePathHint: 'Where the config falls back to when the host has no settings namespace live.',
+    livePlane: 'Written to cordis.patch.yml — a save takes effect immediately.',
     filePlane: 'Stored in a local settings file — a save applies after dsh restarts.',
     reachable: 'Credentials set',
     unreachable: 'Credentials missing',
@@ -135,6 +141,11 @@ export const LOCALES = {
     collapse: 'Collapse',
     advanced: 'Advanced',
     tabsAria: 'Channel switcher',
+    credentialUnknown: 'Credential state unknown',
+    credentialUnknownHint: 'The stored credentials could not be read — check that the credential store is reachable, then try again.',
+    channelFailed: 'Channel failed to start:',
+
+    'w.credentialsStoredNotApplied': 'The credential was saved, but the running channels did not reload it — restart dsh to be sure.',
 
     'status.loading': 'Loading…',
     'status.idle': 'Ready',

@@ -21,7 +21,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { CHANNELS, type ChannelName } from "./channels.js";
-import type { SettingsService, SettingsSnapshot } from "./settings-rpc.js";
+import type { SettingsService, SettingsSnapshot, SettingsWarningCode } from "./settings-rpc.js";
 import { CHANNEL_SECRET_KEYS, type CredentialStore } from "./credential-store.js";
 import { maskSecret } from "./secret-disclosure.js";
 import type { LiveConnectSection } from "./namespace.js";
@@ -60,8 +60,29 @@ export interface SettingsServiceOptions {
    * hook a rotated `appSecret` stayed inert until the next host restart while
    * the pane reported 「已保存」 — the user's fix for a broken bot would appear
    * to have done nothing.
+   *
+   * A returned promise is **awaited** before the snapshot is built, which is
+   * what puts the re-apply's own outcome (a channel that failed to restart, see
+   * {@link channelFailures}) into the snapshot the pane receives instead of the
+   * next one. The hook was fire-and-forget while `reconcile` was — both are
+   * promises that settle quickly (adapters are applied synchronously).
    */
-  onCredentialsSaved?: () => void;
+  onCredentialsSaved?: () => void | Promise<void>;
+  /**
+   * Channels whose adapter failed to start, as `{channel: reason}` — read
+   * after a write to report a channel that the save left *not running*.
+   *
+   * A save can succeed and still not produce a working bot: `ChannelRuntime`
+   * logs a throwing `apply` and starts the remaining channels anyway, so the
+   * write is committed and the pane would say 「已保存」 over a channel that is
+   * silently down. This is the read side of that: the runtime keeps the last
+   * failure per channel, and the snapshot reports the ones for channels this
+   * write touched.
+   *
+   * Failures are cleared by a later successful start (see `ChannelRuntime`), so
+   * this stays a statement about the *current* state and not a growing history.
+   */
+  channelFailures?: () => Record<string, string>;
 }
 
 function logError(msg: string) {
@@ -175,7 +196,25 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
     }
   }
 
-  async function snapshot(rawConfig: Record<string, unknown>): Promise<SettingsSnapshot> {
+  /**
+   * Read the channel runtime's failures, or `{}` when there is no runtime to
+   * ask (no live namespace) or the probe itself throws — a failure to *describe*
+   * a failure must not turn a successful save into a rejected one.
+   */
+  function channelErrors(): Record<string, string> {
+    if (!options.channelFailures) return {};
+    try {
+      return { ...options.channelFailures() };
+    } catch (error) {
+      log(`failed to read the channel runtime failures: ${String(error)}`);
+      return {};
+    }
+  }
+
+  async function snapshot(
+    rawConfig: Record<string, unknown>,
+    warnings: SettingsWarningCode[] = [],
+  ): Promise<SettingsSnapshot> {
     // The one boundary every read crosses — `get`, `status`, both save paths —
     // so the secret filter belongs here and not in each read (see
     // `withoutSecrets`).
@@ -190,6 +229,9 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
     // `SettingsSnapshot.secretPreviews` in settings-rpc.ts.
     const secrets: Record<string, Record<string, boolean>> = {};
     const secretPreviews: Record<string, Record<string, string>> = {};
+    // Channels whose credential lookup *threw* — presence unknown, which is not
+    // the same claim as "not configured" (see `SettingsSnapshot.credentialErrors`).
+    const credentialErrors: string[] = [];
     for (const name of channels) {
       if (credentialStore) {
         try {
@@ -206,7 +248,16 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
           }
           secrets[name] = presence;
           secretPreviews[name] = previews;
-        } catch {
+        } catch (error) {
+          // Was a bare `catch {}`, with the comment nowhere in sight: an IO
+          // error — an unreadable store, a locked file — became
+          // 「未配置凭据」, which sent the user to re-enter an appSecret that was
+          // never the problem. The boolean is still false (the pane needs
+          // *something* to render), but the channel is named in
+          // `credentialErrors` so the pane can say the state is unknown instead
+          // of asserting it is empty.
+          log(`failed to read the stored credentials for "${name}": ${String(error)}`);
+          credentialErrors.push(name);
           credentials[name] = false;
           secrets[name] = {};
           secretPreviews[name] = {};
@@ -217,7 +268,20 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
         secretPreviews[name] = {};
       }
     }
-    return { config, enabled, credentials, secrets, secretPreviews, live: liveHandle() !== undefined };
+    const failures = channelErrors();
+    return {
+      config,
+      enabled,
+      credentials,
+      secrets,
+      secretPreviews,
+      live: liveHandle() !== undefined,
+      // Attached only when non-empty: the pane's own tests deep-equal whole
+      // snapshots, and an always-present `[]` would be noise on the happy path.
+      ...(warnings.length > 0 ? { warnings } : {}),
+      ...(credentialErrors.length > 0 ? { credentialErrors } : {}),
+      ...(Object.keys(failures).length > 0 ? { channelErrors: failures } : {}),
+    };
   }
 
   return {
@@ -241,17 +305,25 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
       }
       await credentialStore.save(channel as ChannelName, refValues);
       // The adapters are holding the previous secret; hand them the new one
-      // before answering the pane (see `onCredentialsSaved`).
+      // before answering the pane (see `onCredentialsSaved`). Awaited so the
+      // re-apply is *done* by the time the snapshot below reads the runtime's
+      // failures — otherwise the pane gets this save's answer on the next call.
+      const warnings: SettingsWarningCode[] = [];
       if (options.onCredentialsSaved) {
         try {
-          options.onCredentialsSaved();
+          await options.onCredentialsSaved();
         } catch (error) {
-          // The credential *is* stored — a failure to re-apply must not be
-          // reported as a failed save.
+          // The credential *is* stored, so reporting a failed save would be a
+          // lie in the other direction — re-sending the same secret changes
+          // nothing and the user would be told to try again forever. The lie
+          // that remains is 「已保存」 with no hint that the running adapter
+          // never picked the new value up, so the pane is told both things:
+          // the save succeeded, and it has not taken effect (yet).
+          warnings.push("credentialsStoredNotApplied");
           log(`credential store updated but the channel reconcile failed: ${String(error)}`);
         }
       }
-      return snapshot(readConfig());
+      return snapshot(readConfig(), warnings);
     },
     async save(config: Record<string, unknown>) {
       const live = liveHandle();

@@ -335,8 +335,14 @@ export interface InstallConnectSectionOptions<Ctx extends LoggerLike> {
   config: unknown;
   /** The profile entry id (`connect`), from the loader entry. */
   ns: string | undefined;
-  /** Called with the in-force section at install and after every successful write. */
-  onChange: (section: ConnectSection) => void;
+  /**
+   * Called with the in-force section at install and after every successful
+   * write. A returned promise is **awaited by `write`** before it resolves, so
+   * the caller that is answering the user sees the re-apply's own outcome
+   * rather than a snapshot taken before it ran. The install-time call does not
+   * await — there is no caller waiting on it, and the plugin is mid-`apply`.
+   */
+  onChange: (section: ConnectSection) => void | Promise<void>;
 }
 
 /**
@@ -388,7 +394,12 @@ export function installConnectSection<Ctx extends LoggerLike>(
       // effect even on a host that does not dispatch it. A repeat apply of the
       // same values is a no-op (`ChannelRuntime` diffs before it restarts
       // anything), so the belt is free.
-      onChange(read());
+      //
+      // Awaited, not dropped: the reconcile is what decides whether the newly
+      // saved config actually *started* the channels it names, and the caller
+      // reads that back to answer the pane. `reconcile` never rejects, so this
+      // cannot turn a committed write into a reported failure.
+      await onChange(read());
     },
   };
   onChange(section);

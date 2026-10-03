@@ -1,6 +1,7 @@
 /**
- * Which channel cards the settings pane shows open, and which fields hide behind
- * each card's "advanced" fold.
+ * Which channel cards the settings pane shows open, which fields hide behind
+ * each card's "advanced" fold, and how a snapshot's failure reports become the
+ * list the pane renders.
  *
  * Dependency-free and separate from the React component for the same reason
  * `locale.mjs` is: these rules are the interesting part, they are pure, and a
@@ -51,4 +52,41 @@ export function toggleInSet(set, key) {
   if (next.has(key)) next.delete(key);
   else next.add(key);
   return next;
+}
+
+/**
+ * Turn a snapshot's failure reports into the pane's render-ready issue list:
+ * `{kind, key}` plus the fields that kind needs. Three kinds —
+ *
+ * - `credentialUnknown` — the stored credentials could not be *read*, so
+ *   presence is unknown and the channel must not be labelled 「未配置凭据」
+ *   (that sends the user to re-enter a secret that was never the problem).
+ * - `warning` — a code from the host (`w.<code>` in the locale), e.g. a secret
+ *   that is stored but that the running adapters did not pick up.
+ * - `channelFailed` — a channel whose adapter threw on start, with the adapter's
+ *   own reason. The reason is passed through verbatim rather than mapped to a
+ *   code: it is the only part that says *which* credential or option is wrong.
+ *
+ * `warnings` is the union the caller has collected across a whole save chain and
+ * defaults to this snapshot's own. The split is deliberate: the two error lists
+ * are *state of the world* — the host re-derives them on every call — so the
+ * last snapshot is the truth, and merging in earlier ones would strand an entry
+ * for a channel that has since recovered. A warning is about a single call, so
+ * it has to survive the call that raised it.
+ *
+ * `key` is stable per issue and carries no index, so React reconciles a list
+ * that reorders instead of remounting every row.
+ */
+export function snapshotIssues(snap, warnings) {
+  const issues = [];
+  for (const channel of snap?.credentialErrors ?? []) {
+    issues.push({ kind: 'credentialUnknown', channel, key: `credentialUnknown:${channel}` });
+  }
+  for (const code of warnings ?? snap?.warnings ?? []) {
+    issues.push({ kind: 'warning', code, key: `warning:${code}` });
+  }
+  for (const [channel, reason] of Object.entries(snap?.channelErrors ?? {})) {
+    issues.push({ kind: 'channelFailed', channel, reason, key: `channelFailed:${channel}` });
+  }
+  return issues;
 }

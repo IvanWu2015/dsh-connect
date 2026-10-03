@@ -105,7 +105,7 @@ export class ConnectService extends Service {
     };
     
     this.config = resolveConnectConfig(mergedConfig);
-    this.bindings = new BindingStore(this.config.stateDir);
+    this.bindings = new BindingStore(this.config.stateDir, this.ctx.logger);
     this.interaction = new InteractionBridge(ctx, this.adapters, this.bindings, this.config);
     this.reminders = new ReminderStore(this.config.stateDir);
     this.startReminderLoop();

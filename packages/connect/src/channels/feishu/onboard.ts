@@ -34,7 +34,16 @@ export function loadCredentials(): FeishuCredentials | null {
   return null;
 }
 
-export function saveCredentials(credentials: FeishuCredentials): void {
+/**
+ * Write the credentials to the legacy JSON file. Returns whether the write
+ * succeeded.
+ *
+ * The file is a mirror, not the source of truth, so a failure here is not fatal
+ * — the running instance holds the values in memory and connects fine. But it is
+ * the difference between "onboarded once" and "onboarded again on every boot",
+ * and only the caller can tell the user which one they got.
+ */
+export function saveCredentials(credentials: FeishuCredentials): boolean {
   try {
     const file = credentialFile();
     mkdirSync(dirname(file), { recursive: true });
@@ -46,8 +55,9 @@ export function saveCredentials(credentials: FeishuCredentials): void {
     } catch {
       // Platform without chmod support — best effort.
     }
+    return true;
   } catch {
-    // Best-effort persistence; the running instance still works in memory.
+    return false;
   }
 }
 

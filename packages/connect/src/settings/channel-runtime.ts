@@ -90,6 +90,20 @@ export class ChannelRuntime<Ctx extends LoggerLike = LoggerLike> {
   private readonly opts: ChannelRuntimeOptions<Ctx>;
   /** Channel → the effective config it was started with. */
   private readonly running = new Map<ChannelName, unknown>();
+  /**
+   * Channel → why its last start failed, for the channels that are *not* up
+   * because starting them threw.
+   *
+   * `reconcile` deliberately lets one bad channel fail without taking the rest
+   * down, and the log line was the only trace of it — so a save that left a
+   * channel dead still answered 「已保存」, and the user waited for a bot that
+   * was never coming. This is the read side the settings pane reports.
+   *
+   * It is a statement about the *current* state, not a history: a start that
+   * succeeds and a stop both clear the entry, so a channel that was fixed by a
+   * later save stops being listed.
+   */
+  private readonly failed = new Map<ChannelName, string>();
   /** Tail of the apply chain; see "Serialised applies" above. */
   private chain: Promise<void> = Promise.resolve();
   private disposed = false;
@@ -101,6 +115,11 @@ export class ChannelRuntime<Ctx extends LoggerLike = LoggerLike> {
   /** Channels currently up, in activation order. */
   active(): ChannelName[] {
     return [...this.running.keys()];
+  }
+
+  /** Channels that are down because their start threw, as `{channel: reason}`. */
+  failures(): Record<string, string> {
+    return Object.fromEntries(this.failed);
   }
 
   /**
@@ -157,7 +176,9 @@ export class ChannelRuntime<Ctx extends LoggerLike = LoggerLike> {
       try {
         apply(this.opts.ctx, channelConfig);
         this.running.set(name, channelConfig);
+        this.failed.delete(name);
       } catch (error) {
+        this.failed.set(name, String(error));
         this.log(`connect: channel "${name}" failed to start: ${String(error)}`);
       }
     }
@@ -199,6 +220,10 @@ export class ChannelRuntime<Ctx extends LoggerLike = LoggerLike> {
     // still off the books, and the next apply will try to start it again
     // rather than believing a half-stopped adapter is healthy.
     this.running.delete(name);
+    // A stopped channel is not a failed one: `disabled` and `shutdown` end
+    // here, and a reconfigure restarts immediately below — if that start
+    // throws it records its own (fresh) reason.
+    this.failed.delete(name);
     try {
       await this.opts.teardown(name);
     } catch (error) {
