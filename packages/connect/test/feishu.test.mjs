@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { FeishuAdapter, padLabels, buildButtonGrid, buildSelectMenu, buildChoiceElements, sanitizeFileName, extractErrorDetail, encodeChatKey, decodeChatKey, classifyFeishuFile } from "../lib/channels/feishu/index.js";
+import { FeishuAdapter, padLabels, buildButtonGrid, buildSelectMenu, buildChoiceElements, sanitizeFileName, extractErrorDetail, encodeChatKey, decodeChatKey, classifyFeishuFile, loadCredentials } from "../lib/channels/feishu/index.js";
 import { feishuMessages } from "../lib/channels/feishu/i18n.js";
 
 test("padLabels pads CJK labels to equal display width", () => {
@@ -163,7 +163,17 @@ function registerHarness() {
   const warnings = [];
   const registered = [];
   const ctx = { logger: { warn: (...args) => warnings.push(args.join(" ")) } };
-  const connect = { registerAdapter: (adapter) => registered.push(adapter) };
+  const connect = {
+    registerAdapter: (adapter) => {
+      registered.push(adapter);
+      // `start()` runs on the very next line of the production code — it
+      // subscribes and opens the connection — so the stub has to be in place
+      // before this returns, not afterwards. Same swap the adapter tests below
+      // use, one frame earlier; otherwise the onboarding tests would open a real
+      // Feishu websocket and park a retry timer on it.
+      adapter.channel = fakeChannel();
+    },
+  };
   return { ctx, connect, warnings, registered };
 }
 
@@ -208,6 +218,131 @@ test("register honors onboarding:false even on an interactive host", () =>
     register(connect, { onboarding: false }, ctx, { interactive: true });
     assert.equal(registered.length, 0);
     assert.match(warnings[0], /跳过一键接入/);
+  }));
+
+// --- onboarding persistence ------------------------------------------------
+// The success message used to be unconditional: the app was created (true), the
+// credentials were written (assumed), and both were reported as one fact. When
+// the write fails the instance still connects — it holds the values in memory —
+// so the user sees a working bot and finds out at the next restart, when the
+// whole scan runs again. The two halves now travel together.
+
+/**
+ * Like `withoutCredentials`, but the caller gets the home directory and can
+ * prepare it. The four cases below differ only in whether the credentials can
+ * survive a restart, and that is decided entirely by what `$DSH_HOME` looks like.
+ */
+function withFreshHome(prepare, body) {
+  const savedHome = process.env.DSH_HOME;
+  const savedId = process.env.FEISHU_APP_ID;
+  const savedSecret = process.env.FEISHU_APP_SECRET;
+  const root = mkdtempSync(join(tmpdir(), "dsh-connect-onboard-"));
+  const home = join(root, "home");
+  process.env.DSH_HOME = prepare(home);
+  delete process.env.FEISHU_APP_ID;
+  delete process.env.FEISHU_APP_SECRET;
+  // The body may be async; hold the restore until it settles, or a case that
+  // resolves late would run with the environment already put back.
+  return Promise.resolve()
+    .then(() => body(home))
+    .finally(() => {
+      if (savedHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = savedHome;
+      if (savedId === undefined) delete process.env.FEISHU_APP_ID; else process.env.FEISHU_APP_ID = savedId;
+      if (savedSecret === undefined) delete process.env.FEISHU_APP_SECRET; else process.env.FEISHU_APP_SECRET = savedSecret;
+      // A temp dir left behind must never be the reason a test fails.
+      try {
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch {
+        // Windows can still hold a handle; the OS sweeps tmp eventually.
+      }
+    });
+}
+
+/** A home that is writable, so both `loadCredentials` and `saveCredentials` work. */
+const writableHome = (home) => {
+  mkdirSync(home, { recursive: true });
+  return home;
+};
+
+/**
+ * A home where `.dsh-connect` is a *file* rather than a directory: the state dir
+ * a half-finished sync or a stray `> .dsh-connect` leaves behind. `mkdirSync`
+ * then throws, so `saveCredentials` fails the way it would on a read-only or
+ * full disk — without needing a read-only filesystem.
+ */
+const unwritableHome = (home) => {
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, ".dsh-connect"), "not a directory");
+  return home;
+};
+
+const ONBOARDED = { appId: "cli_onboarded", appSecret: "sec_onboarded" };
+const onboardOk = async () => ONBOARDED;
+
+/** Drive `register` to the success path and let its fire-and-forget `.then` land. */
+async function runOnboarding(options) {
+  const { register } = await import("../lib/channels/feishu/index.js");
+  const harness = registerHarness();
+  register(harness.connect, {}, harness.ctx, { interactive: true, onboard: onboardOk, ...options });
+  await tick();
+  return harness;
+}
+
+test("onboarding reports plain success when the file took the credentials", () =>
+  withFreshHome(writableHome, async () => {
+    const { warnings, registered } = await runOnboarding({});
+    const t = feishuMessages("zh");
+    // Exactly enter + success: the second message is what tells the user the
+    // next boot will reuse the app instead of rescanning. `onboardingUnsaved`
+    // would be a different string, so pinning the equality rules it out — and,
+    // with the case below, proves the two are not accidentally the same text.
+    assert.deepEqual(warnings, [t.onboardingEnter, t.onboardingSuccess(ONBOARDED.appId)]);
+    // The claim in that message, checked against the real store the next boot
+    // reads — not against the message itself.
+    assert.deepEqual(loadCredentials(), ONBOARDED);
+    assert.equal(registered.length, 1, "onboarding must still start the adapter");
+  }));
+
+test("onboarding says the credentials were not saved when no store takes them", () =>
+  withFreshHome(unwritableHome, async () => {
+    const { warnings, registered } = await runOnboarding({});
+    const t = feishuMessages("zh");
+    assert.deepEqual(warnings, [t.onboardingEnter, t.onboardingUnsaved(ONBOARDED.appId)]);
+    // Both halves of the same run: the warning above, and a live adapter. The
+    // app really was created and this session really will connect — that is why
+    // the honest answer is "onboarded, but not saved" rather than a refusal.
+    assert.equal(registered.length, 1, "the failed write must not stop this run from connecting");
+    assert.equal(loadCredentials(), null, "and nothing was written for the next boot");
+  }));
+
+test("onboarding reports success when the credential store saves it instead", () =>
+  withFreshHome(unwritableHome, async () => {
+    let saved = null;
+    const { warnings } = await runOnboarding({
+      credentialStore: { save: async (channel, values) => { saved = { channel, values }; } },
+    });
+    const t = feishuMessages("zh");
+    // The DSH store is the source of truth, so it alone is enough to survive a
+    // restart — a failed legacy mirror must not raise a false alarm.
+    assert.deepEqual(warnings, [t.onboardingEnter, t.onboardingSuccess(ONBOARDED.appId)]);
+    assert.deepEqual(saved, { channel: "feishu", values: ONBOARDED });
+  }));
+
+test("onboarding says the credentials were not saved when the store throws too", () =>
+  withFreshHome(unwritableHome, async () => {
+    const { warnings } = await runOnboarding({
+      credentialStore: { save: async () => { throw new Error("store is read-only"); } },
+    });
+    const t = feishuMessages("zh");
+    // Three messages now: enter, the store's own failure (which keeps the reason
+    // for the maintainer), and the user-facing verdict. Losing the first would
+    // hide *why*; losing the last would hide *that*.
+    assert.deepEqual(warnings, [
+      t.onboardingEnter,
+      "connect-feishu: could not persist credentials to the store: Error: store is read-only",
+      t.onboardingUnsaved(ONBOARDED.appId),
+    ]);
+    assert.equal(loadCredentials(), null);
   }));
 
 // --- FeishuAdapter inbound/outbound path -----------------------------------

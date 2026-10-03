@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -45,6 +45,47 @@ test("BindingStore put/get/delete round-trips", () => {
 
     store.delete("feishu", "oc_1");
     assert.equal(store.get("feishu", "oc_1"), undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("BindingStore reports a failed write once, and says when it recovers", () => {
+  // Same shape as the reminder test further down: aim the state dir at a path
+  // that is a *file*, so `mkdirSync` throws the way a read-only or full disk
+  // would. What is at stake is not this write — the binding is live in memory
+  // either way — but the next boot, which resumes sessions from this file. A
+  // silent failure there means every chat quietly starts over with no history.
+  const dir = mkdtempSync(join(tmpdir(), "dsh-connect-binding-"));
+  const notADir = join(dir, "occupied");
+  const warnings = [];
+  const logger = { warn: (...args) => warnings.push(args.join(" ")) };
+  const binding = { channel: "feishu", chatKey: "oc_1", chatType: "p2p", sessionId: "s1", ownerKey: "ou_1", createdAt: 1, lastActiveAt: 2 };
+  try {
+    writeFileSync(notADir, "x");
+    const store = new BindingStore(notADir, logger);
+    store.put(binding);
+    assert.equal(warnings.length, 1, `a failed write must be reported; got ${JSON.stringify(warnings)}`);
+    assert.match(warnings[0], /cannot persist bindings/);
+    // Still the truth in this process — that is why the write stays best-effort
+    // rather than becoming a thrown error at every one of `put`'s call sites.
+    assert.equal(store.get("feishu", "oc_1")?.sessionId, "s1");
+
+    // `put` runs on the hot path of every message. One line per message would
+    // bury the one line that matters: the state dir is unwritable, not the write.
+    store.put({ ...binding, lastActiveAt: 3 });
+    store.put({ ...binding, lastActiveAt: 4 });
+    assert.equal(warnings.length, 1, "a persistent condition is one report, not one per call");
+
+    // The condition ends: make the path a directory again.
+    rmSync(notADir, { force: true });
+    mkdirSync(notADir);
+    store.put({ ...binding, lastActiveAt: 5 });
+    assert.equal(warnings.length, 2, "recovery is worth a line — it is the other half of the report");
+    assert.match(warnings[1], /working again/);
+    // And "working again" is checked, not asserted by the message alone: a fresh
+    // store over the same directory sees the writes that followed the recovery.
+    assert.equal(new BindingStore(notADir).get("feishu", "oc_1")?.lastActiveAt, 5);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -636,7 +677,8 @@ test("ReminderStore add/list/due/markFired round-trips and persists across insta
   const dir = mkdtempSync(join(tmpdir(), "dsh-connect-remind-"));
   try {
     const store = new ReminderStore(dir);
-    const r = store.add({ channel: "feishu", chatKey: "oc_1", chatType: "group", text: "喝水", dueAt: Date.now() + 60_000, ownerKey: "ou_1" });
+    const { reminder: r, persisted } = store.add({ channel: "feishu", chatKey: "oc_1", chatType: "group", text: "喝水", dueAt: Date.now() + 60_000, ownerKey: "ou_1" });
+    assert.equal(persisted, true, "a writable state dir persists");
     assert.equal(store.list().length, 1);
     assert.equal(store.listFor("feishu", "oc_1")[0].id, r.id);
     assert.equal(store.listFor("feishu", "oc_2").length, 0);
@@ -667,6 +709,29 @@ test("ReminderStore tolerates a corrupt store file", async () => {
     fs.writeFileSync(join(dir, "reminders.json"), "{not json");
     const reloaded = new ReminderStore(dir);
     assert.equal(reloaded.list().length, 0, "corrupt file starts empty");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ReminderStore reports a failed write instead of swallowing it", () => {
+  // The reminder is live in memory either way, so the failure is not an error —
+  // it is the second half of the outcome, and the caller cannot state it without
+  // being told. Point the store at a path that is a *file*: `mkdirSync` and
+  // `readFileSync` both throw, which is exactly a read-only or full state dir.
+  const dir = mkdtempSync(join(tmpdir(), "dsh-connect-remind-"));
+  const notADir = join(dir, "occupied");
+  try {
+    writeFileSync(notADir, "x");
+    const store = new ReminderStore(notADir);
+    const { reminder, persisted } = store.add({ channel: "feishu", chatKey: "oc_1", chatType: "p2p", text: "x", dueAt: 1, ownerKey: "ou_1" });
+    assert.equal(persisted, false, "an unwritable store must say so");
+    // The live list is still the truth: this reminder will fire this session.
+    assert.equal(store.list().length, 1);
+    assert.equal(store.due(2).length, 1);
+    assert.equal(reminder.text, "x");
+    // And it really is gone on restart — the reason the caller had to be told.
+    assert.equal(new ReminderStore(notADir).list().length, 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -760,5 +825,181 @@ test("menuRender: only data-heavy menus use a dropdown, the rest stay buttons", 
   assert.equal(menuRender("progress"), "buttons");
   assert.equal(menuRender("reasoning"), "buttons");
   assert.equal(menuRender("root"), "buttons");
+});
+
+// ---------------------------------------------------------------------------
+// openMenu navigation
+// ---------------------------------------------------------------------------
+
+/**
+ * `menuItems` builds each submenu; `openMenu` is what actually *routes* a tap,
+ * and until now nothing called it. The four branches below are the whole of its
+ * control flow, and two of them exist only because of failure modes seen in the
+ * wild: a tap belonging to a card that has already been replaced (the
+ * "此操作已失效" report) and a `back` that has to walk a stack rather than
+ * remember one parent.
+ *
+ * The taps are scripted rather than derived from the rendered options on
+ * purpose: a test that can only press buttons the previous render offered could
+ * never press a stale one, which is exactly the case worth covering.
+ */
+
+/**
+ * A `MenuHost` stand-in. `promptChoice` is the only adapter method these tests
+ * reach, and it answers from a queue of scripted taps: each call records the
+ * `(prompt, cardId)` it was asked with, pops the next tap, and hands back the
+ * card it is editing. A drained queue answers `undefined` — the "user closed
+ * the card" case — which is also what ends the recursion these tests drive.
+ */
+function menuHost(t, taps) {
+  const prompts = [];
+  const sent = [];
+  const closed = [];
+  const calls = { showStatus: 0, newChat: 0 };
+  const target = { channel: "stub", chatKey: "chat-menu" };
+  return {
+    t,
+    adapter: {
+      async promptChoice(at, prompt, cardId) {
+        prompts.push({ at, prompt, cardId });
+        // A real adapter edits the card it was handed, so the id it reports
+        // back is that same card — falling back to a new one only when there
+        // was none, i.e. the menu was opened fresh.
+        return { choice: taps.shift(), messageId: cardId ?? "card-1" };
+      },
+      async closeMenu(messageId, text) {
+        closed.push({ messageId, text });
+      },
+      async sendText(at, text) {
+        sent.push({ at, text });
+      },
+    },
+    workDir: "",
+    language: "en",
+    bindings: { get: () => undefined },
+    channel: "stub",
+    chatKey: "chat-menu",
+    notifyLevel: "result",
+    progressTimeoutMs: 300_000,
+    // No `llm` service: only the model submenu consults it, and these tests
+    // never open that one.
+    ctx: { get: () => undefined },
+    prompts,
+    sent,
+    closed,
+    calls,
+    target,
+    defaultSelection: () => ({ provider: "", model: "" }),
+    listWorkspaces: () => [{ path: "C:/proj", title: "proj" }],
+    menuTitle: (id) => menuTitle(id, t),
+    rootMenuSections: () => rootMenuSections(t),
+    async newChat() {
+      calls.newChat += 1;
+    },
+    async showStatus() {
+      calls.showStatus += 1;
+    },
+    async showTasks() {},
+    async showHistory() {},
+    async showGoals() {},
+    async showSchedule() {},
+    async showPlugins() {},
+    async showSettings() {},
+    async compact() {},
+    async collectWorkdirSessions() {
+      return [];
+    },
+    async switchTo() {},
+    async confirmAction() {
+      return false;
+    },
+    async setLanguage() {},
+    async setReasoning() {},
+    async setNotifyLevel() {},
+    async setProgressTimeout() {},
+    async setModel() {},
+  };
+}
+
+const menuInbound = { channel: "stub", chatKey: "chat-menu", chatType: "p2p", senderKey: "u1", text: "/menu" };
+
+test("openMenu: a tap from a stale card redraws the same menu on the same card", async () => {
+  const t = messages("en");
+  // "session:gone" is an id no root item has — the shape a tap carries when the
+  // card it came from was already replaced by a redraw.
+  const host = menuHost(t, ["session:gone", undefined]);
+  await new MenuController(host).openMenu(host.target, menuInbound, "root");
+
+  assert.equal(host.prompts.length, 2, "a stale tap must redraw the menu rather than be swallowed");
+  const [first, second] = host.prompts;
+  assert.equal(first.prompt.title, t.menuRoot);
+  assert.equal(first.cardId, undefined, "the first render opens a fresh card");
+  assert.equal(second.prompt.title, t.menuRoot, "the redraw must stay on the same menu");
+  assert.deepEqual(second.prompt.options, first.prompt.options, "with the same options to choose from");
+  assert.equal(second.cardId, "card-1", "and edit that card in place, not post a second one");
+  assert.deepEqual(host.sent, [], "a stale tap must not invent an answer of its own");
+  assert.equal(host.calls.showStatus, 0, "and must not fire any item it does not have");
+  // The exit row is always last, and `back` is offered only when there is
+  // somewhere to go back to — a root card showing "back" would be a dead end.
+  assert.deepEqual(first.prompt.options.map((o) => o.id).at(-1), "menu:exit");
+  assert.ok(
+    !first.prompt.options.some((o) => o.id === "menu:back"),
+    "the root menu has no parent to go back to",
+  );
+});
+
+test("openMenu: exit closes the card with the closed notice", async () => {
+  const t = messages("en");
+  const host = menuHost(t, ["menu:exit"]);
+  await new MenuController(host).openMenu(host.target, menuInbound, "root", [], "card-7");
+
+  assert.deepEqual(host.closed, [{ messageId: "card-7", text: t.menuClosed }]);
+  assert.equal(host.prompts.length, 1, "exit must not redraw anything after it");
+  assert.deepEqual(host.sent, []);
+});
+
+test("openMenu: a leaf press reports its feedback, then returns to the root menu on the same card", async () => {
+  const t = messages("en");
+  const host = menuHost(t, ["dir:C:/proj", undefined]);
+  await new MenuController(host).openMenu(host.target, menuInbound, "workspace", ["root"], "card-4");
+
+  // The action itself ran…
+  assert.equal(host.workDir, "C:/proj", "selecting a workspace must switch to it");
+  assert.equal(host.calls.newChat, 1, "and start a new chat there");
+  // …its feedback was delivered…
+  assert.deepEqual(host.sent, [{ at: host.target, text: t.dirSwitched("C:/proj") }]);
+  // …and the card came back to the root menu rather than staying on the
+  // submenu the tap came from, so the user is not left one level deep.
+  assert.equal(host.prompts.length, 2);
+  assert.equal(host.prompts[1].prompt.title, t.menuRoot, "a leaf ends at the root menu, not at its parent");
+  assert.equal(host.prompts[1].cardId, host.prompts[0].cardId, "on the card the tap came from");
+  assert.ok(
+    host.prompts[0].prompt.options.some((o) => o.id === "menu:back"),
+    "a submenu opened with a stack must offer a way back",
+  );
+});
+
+test("openMenu: back pops one level and keeps the stack below it", async () => {
+  const t = messages("en");
+  // `["settings", "root"]` is the stack the settings submenu opens with, so the
+  // frames are [root, settings] and the first `back` must land on root — not on
+  // settings, and not on an empty stack.
+  const host = menuHost(t, ["menu:back", "menu:back", undefined]);
+  await new MenuController(host).openMenu(host.target, menuInbound, "settings", ["settings", "root"], "card-9");
+
+  assert.deepEqual(
+    host.prompts.map((p) => p.prompt.title),
+    [t.menuSettings, t.menuRoot, t.menuSettings],
+    "back must walk one frame at a time, root → settings, not reset to the top or stop at the root",
+  );
+  // The intermediary frame is the load-bearing one: it proves the popped stack
+  // was handed on (`["settings"]`, so root still offers `back`) instead of being
+  // discarded along with the frame that was consumed.
+  assert.ok(
+    host.prompts[1].prompt.options.some((o) => o.id === "menu:back"),
+    "the shortened stack must still offer a way back",
+  );
+  assert.equal(host.prompts[1].cardId, "card-9", "every frame of the walk edits the one card");
+  assert.deepEqual(host.sent, [], "navigation alone never posts a message");
 });
 

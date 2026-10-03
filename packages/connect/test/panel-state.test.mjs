@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { ADVANCED_KEYS, isAdvanced, initialOpenChannels, toggleInSet } from "../client/panel-state.mjs";
+import { ADVANCED_KEYS, isAdvanced, initialOpenChannels, toggleInSet, snapshotIssues } from "../client/panel-state.mjs";
 import { CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS } from "../lib/settings/settings-model.js";
 
 /**
@@ -77,4 +77,50 @@ test("isAdvanced is per-channel, so a shared key folds differently per channel",
   assert.equal(isAdvanced("telegram", "language"), false);
   // An unknown channel has no advanced fields rather than a crash.
   assert.equal(isAdvanced("mattermost", "language"), false);
+});
+
+test("a clean snapshot produces no issues at all", () => {
+  // The happy path is the one that has to stay quiet: an empty list is what the
+  // pane reads to decide whether to render the save bar's problem block.
+  assert.deepEqual(snapshotIssues({ config: {}, credentials: { feishu: true } }), []);
+  // Explicit empty lists mean "nothing to report", not "unknown".
+  assert.deepEqual(snapshotIssues({ credentialErrors: [], warnings: [], channelErrors: {} }), []);
+  assert.deepEqual(snapshotIssues(undefined), []);
+});
+
+test("each report becomes its own kind of issue, with a stable key", () => {
+  const issues = snapshotIssues({
+    credentialErrors: ["dingtalk"],
+    warnings: ["credentialsStoredNotApplied"],
+    channelErrors: { feishu: "Error: app id is empty" },
+  });
+  assert.deepEqual(issues, [
+    { kind: "credentialUnknown", channel: "dingtalk", key: "credentialUnknown:dingtalk" },
+    { kind: "warning", code: "credentialsStoredNotApplied", key: "warning:credentialsStoredNotApplied" },
+    { kind: "channelFailed", channel: "feishu", reason: "Error: app id is empty", key: "channelFailed:feishu" },
+  ]);
+  // Keys carry no index, so a list that reorders reconciles in place rather than
+  // remounting every row.
+  for (const issue of issues) assert.ok(!/\d/.test(issue.key), `unstable key ${issue.key}`);
+});
+
+test("the host's own warnings are used when the caller has none of its own", () => {
+  // The single-snapshot read path (`get` on load) has no chain to accumulate.
+  assert.deepEqual(snapshotIssues({ warnings: ["credentialsStoredNotApplied"] }), [
+    { kind: "warning", code: "credentialsStoredNotApplied", key: "warning:credentialsStoredNotApplied" },
+  ]);
+});
+
+test("accumulated warnings add to the snapshot's, rather than replacing them", () => {
+  // The credential save chain: an earlier channel's warning must survive a later
+  // channel's save, because it is a statement about the call that raised it and
+  // the host does not repeat it.
+  const issues = snapshotIssues({ channelErrors: { feishu: "boom" } }, ["credentialsStoredNotApplied"]);
+  assert.deepEqual(issues.map((i) => i.kind), ["warning", "channelFailed"]);
+});
+
+test("an explicit empty warning list is respected, not treated as absent", () => {
+  // `??` and not `||`: a caller that clears its warnings means it, and falling
+  // back to `snap.warnings` would resurrect exactly the entry it just dropped.
+  assert.deepEqual(snapshotIssues({ warnings: ["credentialsStoredNotApplied"] }, []), []);
 });

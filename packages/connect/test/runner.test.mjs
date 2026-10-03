@@ -9,8 +9,8 @@
  * lock, `ensureAgent`, `driveAgent`, `summarizeTurn`, `sendTurnStats` and
  * `sendSummary`. No network, no model key, no host process.
  *
- * Four groups, each pinning a contract that would otherwise only be discovered
- * in production:
+ * Twelve groups, each pinning a contract that would otherwise only be
+ * discovered in production:
  *
  *   A — the mirror lock: who may write, who gets queued, who is told to wait,
  *       and what a timed-out lock does. (`feishu` here means "a channel with a
@@ -21,10 +21,20 @@
  *   D — session lifecycle: reuse a live session, create one for a fresh chat,
  *       re-create when the binding points at a session that no longer exists.
  *   E — per-chat overrides win over the plugin config.
+ *   F — the allowlist gate, against thread-scoped chat keys.
+ *   G — agent-preset resolution degrades instead of failing the turn.
+ *   H — `/remind` tells the truth about both halves of "set".
+ *   I — a task-end card the channel refuses is reported, not swallowed.
+ *   J — a resume that falls back to a fresh session is said out loud, in chat.
+ *   K — the two timers that keep a long turn from looking frozen (the liveness
+ *       heartbeat and the progress watchdog), and that both edit the streaming
+ *       card in place rather than posting bubbles.
+ *   L — the per-chat override *writers*: what `/model`, `/reasoning`, `/lang`
+ *       and `/notify` persist, including for a chat with no binding at all.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -630,3 +640,489 @@ test("G5 a stale roster default degrades too — the shape this actually failed 
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// H. /remind tells the truth about both halves of "set"
+// ---------------------------------------------------------------------------
+
+/**
+ * The failure this pins: `save()` used to swallow its own error, so a reminder
+ * whose store could not be written was confirmed with 「已设置」 and was then
+ * gone by morning. Neither answer is honest on its own — the reminder *is* live
+ * in this process, so refusing would be a lie in the other direction. The
+ * confirmation has to carry both.
+ */
+test("H1 a reminder whose store cannot be written is confirmed and flagged, not silently lost", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-connect-remind-fail-"));
+  try {
+    // A directory where `reminders.json` should be: `readFileSync` fails (so the
+    // store starts empty) and `writeFileSync` fails on every save. This is a real
+    // shape — a half-finished sync or restore leaves exactly this behind — and it
+    // is the only knob that fails the *write* without breaking the binding store
+    // that shares this state dir.
+    mkdirSync(join(dir, "reminders.json"));
+    const bridge = await makeBridge({ stateDir: dir, language: "en" });
+    try {
+      const adapter = bridge.addAdapter("stub");
+      await bridge.inbound(inboundFor("stub", "chat-remind", { text: "/remind 10m drink water" }));
+      await waitFor(() => texts(adapter).length > 0, 5_000);
+
+      const sent = texts(adapter);
+      assert.equal(sent.length, 1, `expected exactly the confirmation; got ${JSON.stringify(sent.map((m) => m.text))}`);
+      const text = sent[0].text;
+      assert.ok(text.includes("Reminder set"), `the reminder must still be confirmed as set; got ${JSON.stringify(text)}`);
+      assert.ok(
+        text.includes("could not be written"),
+        `the failed write must be part of the confirmation; got ${JSON.stringify(text)}`,
+      );
+
+      // And the reminder really is live: it is what makes the second half true.
+      assert.equal(bridge.service.reminders.list().length, 1, "the reminder must be live in this process regardless");
+    } finally {
+      await bridge.dispose();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+});
+
+test("H2 a reminder that does persist is confirmed and nothing more", () =>
+  withBridge({}, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    await bridge.inbound(inboundFor("stub", "chat-remind-ok", { text: "/remind 10m drink water" }));
+    await waitFor(() => texts(adapter).length > 0, 5_000);
+
+    const text = texts(adapter)[0].text;
+    assert.ok(text.includes("Reminder set"), `got ${JSON.stringify(text)}`);
+    assert.ok(
+      !text.includes("could not be written"),
+      `a successful write must not warn about the write; got ${JSON.stringify(text)}`,
+    );
+    assert.equal(bridge.service.reminders.list().length, 1);
+  }));
+
+// ---------------------------------------------------------------------------
+// I. a task-end card the channel refuses is reported, not swallowed
+// ---------------------------------------------------------------------------
+
+/**
+ * `sendCard(...).catch(() => undefined)` made a rejected card indistinguishable
+ * from a card with nothing to say. They are opposite outcomes: the stats card is
+ * the durable record of the turn — the result text, tokens, duration — and the
+ * streaming card it replaces is meanwhile frozen on its last frame. Delivery
+ * failing is the one case where the log *is* the only possible report, because
+ * the channel that would carry a notice is the thing that just failed.
+ */
+test("I1 a refused task-end card is logged with its chat and reason", () =>
+  withBridge({}, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    // A card the client cannot render, a revoked card permission, a transient
+    // 5xx — the runner cannot tell them apart and does not need to; it needs to
+    // stop pretending the delivery happened.
+    adapter.sendCard = async () => { throw new Error("card rejected by the channel"); };
+
+    await bridge.inbound(inboundFor("stub", "chat-card-fail", { text: "hello" }));
+    const reported = await waitFor(
+      () => bridge.logs.some((line) => line.includes("stats card could not be delivered")),
+      5_000,
+    );
+    assert.ok(reported, `the dropped card must be reported; logs were ${JSON.stringify(bridge.logs)}`);
+
+    const line = bridge.logs.find((l) => l.includes("stats card could not be delivered"));
+    assert.ok(line.includes("stub/chat-card-fail"), `the chat must be identified; got ${JSON.stringify(line)}`);
+    assert.ok(line.includes("card rejected by the channel"), `the reason must survive; got ${JSON.stringify(line)}`);
+
+    // The turn itself ran: the failure is in delivery, not in the work, and the
+    // acknowledgement proves the runner got as far as the end of the turn. Matched
+    // by prefix because the ack carries a preview of the message after it, so no
+    // equality check can hold — same as every other ack assertion in this file.
+    assert.ok(
+      texts(adapter).some((m) => m.text.startsWith(EN_ACK)),
+      `the turn must still have run to completion; sent ${JSON.stringify(texts(adapter))}`,
+    );
+    assert.deepEqual(cards(adapter), [], "a card that throws delivers nothing");
+  }));
+
+test("I2 a card that is delivered reports nothing about delivery", () =>
+  withBridge({}, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    await bridge.inbound(inboundFor("stub", "chat-card-ok", { text: "hello" }));
+    assert.ok(await waitFor(() => cards(adapter).length > 0, 5_000), "the healthy path must deliver its card");
+
+    assert.ok(
+      !bridge.logs.some((line) => line.includes("could not be delivered")),
+      `a delivered card must not warn about delivery; logs were ${JSON.stringify(bridge.logs)}`,
+    );
+  }));
+
+// ---------------------------------------------------------------------------
+// J. a resume that falls back to a fresh session is said out loud
+// ---------------------------------------------------------------------------
+
+/**
+ * `connect: resume of <id> failed, creating fresh session` went to the log and
+ * nowhere else. The chat is the one place the user is looking, and it is the one
+ * place that showed nothing: they send a follow-up into a conversation that looks
+ * intact and get a reply with no memory of it. The session is not lost — it is
+ * still in the store and still viewable in the Web GUI — so the honest report is
+ * "continuing in a new one", delivered before the reply is, not after.
+ */
+test("J1 a resume that falls back tells the chat, before the reply", () =>
+  withBridge({}, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    // A binding that points at a session this host cannot produce — a deleted
+    // session store, a moved work dir, a wiped state dir. Exactly the shape the
+    // harness's own `resume` treats as un-resumable.
+    bridge.seedBinding(bindingFor("stub", "chat-gone", { sessionId: "s-gone" }));
+
+    await bridge.inbound(inboundFor("stub", "chat-gone", { text: "still there?" }));
+    const reported = await waitFor(
+      () => texts(adapter).some((m) => m.text.includes("Could not resume the previous session")),
+      5_000,
+    );
+    assert.ok(reported, `the fallback must be reported to the chat; sent ${JSON.stringify(texts(adapter))}`);
+
+    const noticeIndex = texts(adapter).findIndex((m) => m.text.includes("Could not resume the previous session"));
+    const notice = texts(adapter)[noticeIndex].text;
+    // The reason survives: a one-off is distinguishable from a permanent cause
+    // (a missing session store) only if the chat carries the actual error.
+    assert.ok(notice.includes("no session"), `the reason must survive; got ${JSON.stringify(notice)}`);
+    // And it says what actually happened, rather than implying the history is gone.
+    assert.ok(notice.includes("new one"), `the notice must say a new session was started; got ${JSON.stringify(notice)}`);
+
+    // Order matters: the acknowledgement comes first, so the user is never told
+    // their session was replaced before being told the message was received.
+    assert.ok(
+      texts(adapter)[0].text.startsWith(EN_ACK),
+      `the ack must still open the turn; sent ${JSON.stringify(texts(adapter))}`,
+    );
+    assert.ok(noticeIndex > 0, "the notice must follow the ack, not precede it");
+
+    // The claim in the notice, checked against the store rather than the message:
+    // the binding now points at the fresh session, which is what makes this fire
+    // once per breakage instead of once per message.
+    const after = bridge.binding("stub", "chat-gone");
+    assert.ok(after.sessionId.startsWith("connect-"), `the binding must point at the new session; got ${after.sessionId}`);
+    assert.notEqual(after.sessionId, "s-gone");
+    assert.equal(bridge.counts.creates, 1, "a fresh session must really have been created");
+  }));
+
+test("J2 a brand-new chat is not told its session could not be resumed", () =>
+  withBridge({}, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    // `maybeSendWelcome` persists `sessionId: ""` for a first-time chat, so the
+    // resume of "" fails on this path too. There is no lost conversation here, and
+    // a notice saying otherwise would land on the first message of every chat.
+    await bridge.inbound(inboundFor("stub", "chat-first-ever", { text: "hi" }));
+    assert.ok(
+      await waitFor(() => texts(adapter).some((m) => m.text.startsWith(EN_ACK)), 5_000),
+      "the turn must have run",
+    );
+    assert.ok(
+      !texts(adapter).some((m) => m.text.includes("Could not resume")),
+      `a first message must not claim a session was lost; sent ${JSON.stringify(texts(adapter))}`,
+    );
+  }));
+
+// ---------------------------------------------------------------------------
+// K. The two timers that keep a long turn from looking frozen
+// ---------------------------------------------------------------------------
+
+/**
+ * The text of the one streaming card the turn opened.
+ *
+ * Progress notices are deliberately *not* their own messages: both timers push
+ * into the chunk stream that the adapter drains into the already-open editable
+ * card ("Edit the existing streaming card in place instead of sending a new
+ * message… so progress updates never clutter the chat with new bubbles"). The
+ * recording adapter concatenates that stream into one record, so a marker found
+ * here is an edit of the card, and a marker found in `texts()` would be a
+ * bubble — the two assertions every test below makes.
+ */
+function streamedText(adapter) {
+  const record = adapter.sent.find((m) => m.kind === "stream");
+  assert.ok(
+    record,
+    `the turn must have opened a streaming card; sent ${JSON.stringify(adapter.sent.map((m) => m.kind))}`,
+  );
+  return record.text;
+}
+
+test("K1 a liveness heartbeat edits the streaming card instead of posting a bubble", () =>
+  withBridge({ config: { streamHeartbeatMs: 10 }, planFor: { whenIdleHoldMs: 120 } }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    // `full` is the level the heartbeat is gated on; `result` would disable it.
+    // Seeded on the binding because that is a path the suite already proves
+    // works (E1), rather than a second thing to get wrong at once.
+    bridge.seedBinding(bindingFor("stub", "chat-heartbeat", { notifyLevel: "full" }));
+
+    await bridge.inbound(inboundFor("stub", "chat-heartbeat", { text: "something long" }));
+    assert.ok(
+      await waitFor(() => adapter.sent.some((m) => m.kind === "stream"), 5_000),
+      "the turn must have opened a streaming card",
+    );
+
+    // The card is only closed once the turn ends, so by now the whole 120ms hold
+    // — and therefore every heartbeat inside it — has been drained into it.
+    const card = streamedText(adapter);
+    assert.ok(card.includes("answer"), `the answer must be on the card; got ${JSON.stringify(card)}`);
+    assert.ok(
+      card.includes("Still processing"),
+      `the heartbeat must have been pushed into the card; got ${JSON.stringify(card)}`,
+    );
+    assert.ok(
+      !texts(adapter).some((m) => m.text.includes("Still processing")),
+      `no heartbeat may arrive as a separate message; sent ${JSON.stringify(texts(adapter))}`,
+    );
+  }));
+
+test("K2 at the default notify level there is no heartbeat, and the answer still streams", () =>
+  withBridge({ config: { streamHeartbeatMs: 10 }, planFor: { whenIdleHoldMs: 120 } }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    // No binding override, so this chat runs at the documented default of
+    // `result` (pinned by E2).
+    await bridge.inbound(inboundFor("stub", "chat-no-heartbeat", { text: "something long" }));
+    assert.ok(
+      await waitFor(() => adapter.sent.some((m) => m.kind === "stream"), 5_000),
+      "the turn must have opened a streaming card",
+    );
+
+    const card = streamedText(adapter);
+    // The positive half matters as much as the negative one: it rules out the
+    // explanation that the card is simply dead or the interval never started,
+    // leaving "the level gated it" as the only reading.
+    assert.ok(card.includes("answer"), `the answer must still stream; got ${JSON.stringify(card)}`);
+    assert.ok(
+      !card.includes("Still processing"),
+      `a quiet chat must not be interrupted by heartbeats; got ${JSON.stringify(card)}`,
+    );
+  }));
+
+test("K3 the progress watchdog and the heartbeat both fire, both into the same card", () =>
+  // The tick is derived from the configured interval (`progressTimeoutMs / 2`,
+  // floored at 250ms), so a 400ms interval is observable inside a sub-second
+  // hold instead of only after a 15s constant. The heartbeat is set an order of
+  // magnitude faster than the watchdog on purpose: it is the thing that must
+  // *not* reset the watchdog's clock.
+  withBridge(
+    { config: { streamHeartbeatMs: 100 }, planFor: { whenIdleHoldMs: 900 } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(
+        bindingFor("stub", "chat-progress", { notifyLevel: "full", progressTimeoutMs: 400 }),
+      );
+
+      await bridge.inbound(inboundFor("stub", "chat-progress", { text: "a long task" }));
+      assert.ok(
+        await waitFor(() => adapter.sent.some((m) => m.kind === "stream"), 5_000),
+        "the turn must have opened a streaming card",
+      );
+
+      const card = streamedText(adapter);
+      assert.ok(
+        card.includes("Still working on the task (1 min so far)"),
+        `the watchdog must have synced a milestone into the card; got ${JSON.stringify(card)}`,
+      );
+      // The status line is the point of the reminder — a milestone, not a bare
+      // minute count. `milestone` is unset here (the scripted turn streams no
+      // reasoning), so this is the documented thinking fallback.
+      assert.ok(
+        card.includes("Latest progress: 🤔 Thinking"),
+        `the reminder must carry a status line; got ${JSON.stringify(card)}`,
+      );
+      // Both timers alive at once, and independent: with heartbeats arriving
+      // every ~100ms, an implementation that let one reset the watchdog's
+      // `lastProgressNoticeAt` would push no reminder at all inside 900ms.
+      assert.ok(
+        card.includes("Still processing"),
+        `the heartbeat must still be running alongside the watchdog; got ${JSON.stringify(card)}`,
+      );
+      for (const marker of ["Still working on the task", "Still processing"]) {
+        assert.ok(
+          !texts(adapter).some((m) => m.text.includes(marker)),
+          `${JSON.stringify(marker)} must not arrive as a separate message; sent ${JSON.stringify(texts(adapter))}`,
+        );
+      }
+    },
+  ));
+
+// ---------------------------------------------------------------------------
+// L. The per-chat override writers
+// ---------------------------------------------------------------------------
+
+/**
+ * `/model`, `/reasoning`, `/lang`, `/notify` and `/progress` are the only way
+ * the settings the pane exposes ever reach a *chat*. Both halves matter and only
+ * one of them was covered: E1/E2 prove a binding's override is *read* when the
+ * runner is built, and nothing proved anything is ever *written* — a setter that
+ * updated `this.language` but forgot `bindings.put` would pass the whole suite
+ * while silently reverting on the next process restart.
+ */
+
+/**
+ * Wait for the turn to have *ended*, not merely to have been acknowledged.
+ *
+ * The ack is sent as the turn starts, so `waitFor(() => texts(adapter).length >
+ * 0)` returns while the turn is still in flight — and a fresh chat has no
+ * binding at all until the turn finishes and `recordSession` writes one. A test
+ * that reads the binding at the ack is racing the turn it just started, and one
+ * that *deletes* a binding at the ack can have it re-created a moment later,
+ * quietly exercising the wrong branch of the setter it means to test.
+ */
+function turnRecorded(bridge, channel, chatKey) {
+  return waitFor(() => (bridge.binding(channel, chatKey)?.sessionId ?? "") !== "", 5_000);
+}
+
+test("L1 a model change saves the selection, carries the reasoning effort, and starts a new session", () =>
+  withBridge({}, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    // The host's *current* selection is what the carry-over reads. Switching
+    // model must not silently drop the effort the user had chosen: the key
+    // would be gone from the profile and the next turn would run at whatever
+    // the provider defaults to, with nothing in the chat to show it.
+    bridge.defaultModel.currentSelection = () => ({
+      provider: "harness-provider",
+      model: "harness-model",
+      reasoningEffort: "high",
+    });
+    const saved = [];
+    bridge.defaultModel.saveSelection = async (selection) => {
+      saved.push(selection);
+    };
+
+    const msg = inboundFor("stub", "chat-model");
+    await bridge.inbound(msg);
+    assert.ok(await turnRecorded(bridge, "stub", "chat-model"), "the turn must have completed");
+
+    const runner = bridge.runnerFor("stub", "chat-model");
+    const before = bridge.binding("stub", "chat-model");
+    assert.ok(before.sessionId !== "", "the turn must have bound a session");
+    assert.equal(before.sessions.length, 1, "and recorded it in the chat's session list");
+
+    await runner.setModel("prov-x", "model-y", msg);
+
+    assert.deepEqual(
+      saved,
+      [{ provider: "prov-x", model: "model-y", reasoningEffort: "high" }],
+      "the new model must be saved with the effort that was already in force",
+    );
+
+    const after = bridge.binding("stub", "chat-model");
+    // A model change is a new conversation: the next message must not resume the
+    // old session and answer under the new model as if it had always been there.
+    assert.equal(after.sessionId, "", "the binding must stop pointing at the old session");
+    // …but the chat's history is not the model's business. Losing it here would
+    // drop the session from the switch list on a single model change.
+    assert.deepEqual(after.sessions, before.sessions, "the session list must survive the reset untouched");
+    assert.equal(runner.agent, undefined, "the live agent must have been let go");
+    assert.equal(
+      bridge.agentOf(before.sessionId).cancelCalls.length,
+      1,
+      "the abandoned session's agent must be cancelled, not leaked",
+    );
+    // Cancelling stops the work; the handle is the host's own registration of
+    // the session. Both have to go, and only one of them can be observed from
+    // the agent — an un-released handle is invisible until the host runs out.
+    assert.equal(bridge.counts.handleDisposals, 1, "the host handle must be released as well as the agent cancelled");
+  }));
+
+test("L2 clearing the reasoning effort writes a selection with no effort key at all", () =>
+  withBridge({}, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    bridge.defaultModel.currentSelection = () => ({
+      provider: "harness-provider",
+      model: "harness-model",
+      reasoningEffort: "high",
+    });
+    const saved = [];
+    bridge.defaultModel.saveSelection = async (selection) => {
+      saved.push(selection);
+    };
+
+    const msg = inboundFor("stub", "chat-effort");
+    await bridge.inbound(msg);
+    assert.ok(await turnRecorded(bridge, "stub", "chat-effort"), "the turn must have completed");
+
+    await bridge.runnerFor("stub", "chat-effort").setReasoning(undefined, msg);
+
+    assert.equal(saved.length, 1, "the effort is the thing being changed, so the selection must be written");
+    // `undefined` is the explicit *clear*. A payload carrying
+    // `reasoningEffort: undefined` is indistinguishable from one that omits the
+    // key once it is serialized, and forwarding the old value instead would look
+    // identical in the UI while quietly leaving the effort on.
+    assert.ok(
+      !("reasoningEffort" in saved[0]),
+      `the key must be absent, not undefined; got ${JSON.stringify(saved[0])}`,
+    );
+    assert.deepEqual(Object.keys(saved[0]).sort(), ["model", "provider"]);
+  }));
+
+test("L3 a language change is persisted on the binding and switches the reply at once", () =>
+  withBridge({}, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    const msg = inboundFor("stub", "chat-lang");
+    await bridge.inbound(msg);
+    assert.ok(await turnRecorded(bridge, "stub", "chat-lang"), "the turn must have completed");
+
+    const runner = bridge.runnerFor("stub", "chat-lang");
+    assert.equal(runner.language, "en", "the bridge was built with `language: \"en\"`");
+    const sessionBefore = bridge.binding("stub", "chat-lang").sessionId;
+
+    await runner.setLanguage("zh", { channel: "stub", chatId: "chat-lang" }, msg);
+
+    assert.equal(runner.language, "zh", "the switch must take effect for this chat immediately");
+    // The binding already existed, so this is the *update* branch — the session
+    // it points at must come through untouched. A pass here through the create
+    // branch would look identical on the assertion below while having thrown the
+    // chat's session away.
+    assert.equal(
+      bridge.binding("stub", "chat-lang").sessionId,
+      sessionBefore,
+      "changing the language must not disturb the session",
+    );
+    // The setting is a *chat* setting, so it has to outlive the process. It is
+    // read back as `stored?.language` when the runner is next constructed (E1).
+    assert.equal(bridge.binding("stub", "chat-lang").language, "zh", "and be written to the binding");
+    const confirmation = texts(adapter).at(-1).text;
+    assert.ok(
+      confirmation.includes("语言已切换为 中文"),
+      `the confirmation must come from the language just chosen; got ${JSON.stringify(confirmation)}`,
+    );
+  }));
+
+test("L4 a setting changed on a chat with no binding creates one that claims no session", () =>
+  withBridge({}, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    const msg = inboundFor("stub", "chat-orphan");
+    await bridge.inbound(msg);
+    // The wait is load-bearing rather than polite: `recordSession` writes the
+    // binding as the turn *ends*, so dropping it before this point would race the
+    // very write this test is about to delete — and the setter would then take
+    // the update branch while the assertions below still passed.
+    assert.ok(await turnRecorded(bridge, "stub", "chat-orphan"), "the turn must have completed");
+
+    // A binding that is simply gone — a pruned or hand-edited `bindings.json`, a
+    // state dir that was reset — while the runner for that chat is still live.
+    // Nothing else recreates it, so if the setter only handled the update branch
+    // the override would be accepted and then silently discarded.
+    bridge.dropBinding("stub", "chat-orphan");
+    await bridge
+      .runnerFor("stub", "chat-orphan")
+      .setNotifyLevel("important", { channel: "stub", chatId: "chat-orphan" }, msg);
+
+    const created = bridge.binding("stub", "chat-orphan");
+    assert.ok(created, "the setting must land somewhere durable rather than evaporate");
+    assert.equal(created.notifyLevel, "important");
+    assert.equal(created.chatType, "p2p", "the new record must still be routeable");
+    assert.equal(created.ownerKey, "user-1", "…and owned by whoever asked for the change");
+    // `sessionId: ""` is the honest value here: the chat has no session right
+    // now. A fabricated id would make the next turn try to resume a session that
+    // never existed and — through the J1 notice — tell the user their
+    // conversation had been lost.
+    assert.equal(created.sessionId, "", "the new binding must not claim a session");
+    assert.deepEqual(created.sessions, []);
+    assert.ok(
+      texts(adapter).at(-1).text.includes("Notification level set to: Key milestones"),
+      `the change must still be confirmed; sent ${JSON.stringify(texts(adapter))}`,
+    );
+  }));

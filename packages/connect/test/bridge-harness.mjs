@@ -83,6 +83,9 @@ export function cards(adapter) {
  *   `followup(message)` — starts the turn.
  *   `whenIdle()` — resolves when the turn settles.
  *   `ctx.on("session/event" | "agent/assistant-stream")` — the live feed.
+ *   `cancel(reason)` — `disposeAgent` calls it (synchronously, unawaited) on
+ *   every session reset, so it has to exist for the `/model`, `/reasoning` and
+ *   `/clear` paths to get past it at all.
  *
  * `plan` selects which shape of turn to script:
  *
@@ -100,6 +103,10 @@ export function cards(adapter) {
  *                   reach `runTurn`'s catch, since `driveAgent` calls
  *                   `agent.followup(...)` *without* awaiting it, so a rejecting
  *                   `followup` escapes as an unhandled rejection instead.
+ *   `whenIdleHoldMs` how long to keep the turn open after the events have been
+ *                   emitted. The scripted turn otherwise settles in the same
+ *                   tick, so nothing timer-driven (the liveness heartbeat, the
+ *                   progress watchdog) ever gets a window to fire.
  */
 export function scriptedAgent(id, plan = {}) {
   const {
@@ -109,6 +116,7 @@ export function scriptedAgent(id, plan = {}) {
     context = true,
     steps = 1,
     whenIdleError,
+    whenIdleHoldMs = 0,
   } = plan;
 
   const ctx = new Context();
@@ -159,7 +167,16 @@ export function scriptedAgent(id, plan = {}) {
       emit("turn/end", { reason: { kind: reason } });
     },
     async whenIdle() {
+      // The error first: a test that scripts a rejecting turn has no reason to
+      // wait, and holding before throwing would only slow it down.
       if (whenIdleError !== undefined) throw new Error(whenIdleError);
+      if (whenIdleHoldMs > 0) await new Promise((resolve) => setTimeout(resolve, whenIdleHoldMs));
+    },
+    /** Every reason `AgentRunner.disposeAgent` cancelled this agent with. */
+    cancelCalls: [],
+    cancel(reason) {
+      agent.cancelCalls.push(reason);
+      agent.status = "idle";
     },
   };
   return agent;
@@ -225,9 +242,24 @@ export async function makeBridge({ stateDir, language = "en", config = {}, planF
    * *before* `ensureAgent` runs, so the runner asks to resume the empty id, the
    * host has no such session, and it falls through to `create`.
    */
-  const counts = { creates: 0, resumes: 0, resumeMisses: 0 };
+  const counts = { creates: 0, resumes: 0, resumeMisses: 0, handleDisposals: 0 };
   const agentCtx = new Context();
   const plan = typeof planFor === "function" ? planFor : () => planFor;
+
+  /**
+   * The registry's `{ agent, session }` return, plus the `dispose()` the real
+   * host hangs off it. `AgentRunner.disposeAgent` releases the handle on every
+   * session reset (`/model`, `/reasoning`, `/clear`), so a stand-in without one
+   * throws on those paths — with a message about `handle.dispose` that says
+   * nothing about which path called it.
+   */
+  const makeHandle = (agent) => ({
+    agent,
+    session: agent.session,
+    async dispose() {
+      counts.handleDisposals += 1;
+    },
+  });
 
   const agents = {
     get: (id) => registry.get(String(id)),
@@ -239,7 +271,7 @@ export async function makeBridge({ stateDir, language = "en", config = {}, planF
       const id = String(sessionId);
       const agent = scriptedAgent(id, plan(id, counts.creates));
       registry.set(id, agent);
-      return { agent, session: agent.session };
+      return makeHandle(agent);
     },
     async resume({ resumeSessionId, setup }) {
       await setup?.(agentCtx);
@@ -255,7 +287,7 @@ export async function makeBridge({ stateDir, language = "en", config = {}, planF
         throw new Error(`harness: no session ${JSON.stringify(id)} to resume`);
       }
       counts.resumes += 1;
-      return { agent: existing, session: existing.session };
+      return makeHandle(existing);
     },
   };
 
@@ -273,7 +305,15 @@ export async function makeBridge({ stateDir, language = "en", config = {}, planF
   // `composeSetup` takes on a host with no presets at all; a test that wants
   // the resolution path supplies its own stub.
   if (presets !== undefined) ctx.provide("agentPresets", presets);
-  ctx.provide("agentDefaultModel", { currentSelection: () => ({ provider: "harness-provider", model: "harness-model" }) });
+  /**
+   * The host service `defaultSelection` reads and that `setModel` /
+   * `setReasoning` write through. `saveSelection` is deliberately *absent* here:
+   * production calls it optionally (`svc?.saveSelection?.(…)`), so a stub that
+   * always had one would hide the case where the host provides no such hook —
+   * and a test that asserts the write has to opt in by assigning one.
+   */
+  const defaultModel = { currentSelection: () => ({ provider: "harness-provider", model: "harness-model" }) };
+  ctx.provide("agentDefaultModel", defaultModel);
   // The credential store is a row in the always-loaded dsh-base bundle, so the
   // plugin requires it; an in-memory stand-in keeps this harness offline.
   const credentials = new Map();
@@ -311,6 +351,8 @@ export async function makeBridge({ stateDir, language = "en", config = {}, planF
     counts,
     /** The credential store stand-in, for asserting onboarding writes land. */
     credentials,
+    /** The `agentDefaultModel` stand-in — assign `saveSelection` to observe writes. */
+    defaultModel,
     /** Every `connect:` line the plugin logged, in order. */
     logs,
     /** The state dir in effect — identical to the one asked for, or `makeBridge` threw. */
@@ -339,6 +381,11 @@ export async function makeBridge({ stateDir, language = "en", config = {}, planF
     /** Seed a binding record before any turn runs (e.g. to hold the mirror lock). */
     seedBinding(binding) {
       service["bindings"].put(binding);
+    },
+
+    /** Drop a binding record, the shape a lost or pruned `bindings.json` leaves. */
+    dropBinding(channel, chatKey) {
+      service["bindings"].delete(channel, chatKey);
     },
 
     /** One inbound message, through the real `handleInbound` gate. */

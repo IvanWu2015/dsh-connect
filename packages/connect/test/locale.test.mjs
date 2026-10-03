@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { LOCALES, LOCALE_KEYS, hasLocale, tr, optionalText } from "../client/locale.mjs";
 import { CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS } from "../lib/settings/settings-model.js";
+import { SETTINGS_WARNING_CODES } from "../lib/settings/settings-rpc.js";
 
 /**
  * The pane's language consistency is not a matter of care, it is a matter of
@@ -22,6 +23,7 @@ const CHROME_KEYS = [
   "statePath", "statePathHint", "livePlane", "filePlane", "reachable", "unreachable",
   "configured", "current", "notConfigured", "previewNote", "secrets",
   "expand", "collapse", "advanced", "tabsAria",
+  "credentialUnknown", "credentialUnknownHint", "channelFailed",
 ];
 
 const LANGS = ["zh", "en"];
@@ -51,6 +53,17 @@ test("the chrome keys the component renders are all present", () => {
   }
   for (const state of ["loading", "idle", "saving", "saved", "error"]) {
     assert.ok(hasLocale(`status.${state}`), `missing locale for status.${state}`);
+  }
+});
+
+test("every host warning code is translated", () => {
+  // Derived from the host's own list rather than a second copy of it. The pane
+  // renders `w.<code>` with the code itself as the fallback, so a new code
+  // shipped without its wording degrades to `credentialsStoredNotApplied` sitting
+  // in a Chinese pane — visible, but not something a reader can act on.
+  assert.ok(SETTINGS_WARNING_CODES.length > 0);
+  for (const code of SETTINGS_WARNING_CODES) {
+    assert.ok(hasLocale(`w.${code}`), `missing locale for the warning code w.${code}`);
   }
 });
 

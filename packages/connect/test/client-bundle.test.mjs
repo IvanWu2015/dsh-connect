@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { snapshotToForm, CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS } from "../lib/settings/settings-model.js";
 import { isMaskedSecret } from "../lib/settings/secret-disclosure.js";
+import { snapshotIssues } from "../client/panel-state.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLE = path.join(here, "..", "client", "client.js");
@@ -131,7 +132,7 @@ const ALL_OPEN = new Set(["feishu", "telegram", "dingtalk", "web"]);
  * the pane's contents exactly as they were before the cards could fold — those
  * tests are about what the pane renders, and folding is tested on its own.
  */
-function mount(lang, queued) {
+function mount(lang, queued, rpcResponder) {
   const registered = loadBundle();
   // One stub for the whole mount: its setters are the component's state, so a
   // fresh one per draw would throw away everything the previous draw did.
@@ -149,7 +150,13 @@ function mount(lang, queued) {
     effect: (fn) => fn(),
     locale: { register: (_ns, table) => { localeTable = table; }, bind: () => hostTranslate(localeTable, lang) },
     slots: { inject: (_name, fn) => fn(), register: (spec) => { slot = spec; } },
-    connection: { rpc: { call: () => Promise.resolve({}) } },
+    // The host's signature is `call(channel, endpoint, payload, signal)` — the
+    // channel is bound by the pane, so the first argument is not the endpoint.
+    // `{ ok: true, value }` is the envelope it resolves to; a responder lets a save
+    // test hand back a different snapshot per endpoint without a live host. It must
+    // be async: `callRpc` awaits it, and a bare object makes `.then` a TypeError
+    // that the pane's own `catch` swallows into a misleading 「保存失败」.
+    connection: { rpc: { call: (_channel, endpoint, payload) => (rpcResponder ?? (async () => ({ ok: true, value: {} })))(endpoint, payload) } },
   };
   mod.apply(ctx);
   assert.ok(localeTable, "apply() never registered a locale table");
@@ -173,7 +180,11 @@ function render(lang, opts = {}) {
     snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials },
     opts.open ?? ALL_OPEN,
     opts.advanced ?? ALL_OPEN,
-  ]);
+    // The issue list, which the load effect fills from the snapshot. Empty by
+    // default: the fixture is a healthy one, and the branch that renders nothing
+    // is what the "clean snapshot" test is about.
+    opts.notices ?? [],
+  ], opts.rpc);
   const { tree, text, elements: els } = pane.draw();
   return { tree, text, elements: els, localeTable: pane.localeTable, slot: pane.slot };
 }
@@ -305,6 +316,25 @@ function byClass(node, className) {
   return elements(node.children).find((el) => el.props.className === className);
 }
 
+/** True when `el` carries `className` among its classes. */
+function hasClass(el, className) {
+  return String(el?.props?.className ?? "").split(" ").includes(className);
+}
+
+/** A channel card's credential badge: what it says, and whether it is flagged. */
+function badgeOf(view, ch) {
+  const card = byId(view.elements, `ds-ch-${ch}`);
+  const badge = elements(card.children).find((el) => hasClass(el, "ds-badge"));
+  assert.ok(badge, `${ch} has no credential badge`);
+  return { text: visibleText(badge).join(""), warn: hasClass(badge, "ds-badge-warn") };
+}
+
+/** Every line of the save bar's problem list. */
+function issueLines(view) {
+  const list = view.elements.find((el) => hasClass(el, "ds-issues"));
+  return list ? elements(list.children).filter((el) => hasClass(el, "ds-issue")) : [];
+}
+
 test("a collapsed channel renders no fields at all, not just hidden ones", () => {
   // The whole point of the fold: with only Feishu open the others must be gone
   // from the tree, because "still rendered but invisible" would leave the pane
@@ -396,7 +426,7 @@ test("unchecking a channel does not fold its card shut under the cursor", () => 
   // enable box, and the one where a naive untick takes the card away: Feishu
   // leaves `form.channels`, `initialOpenChannels` is recomputed without it, and
   // the card the user is looking at disappears.
-  const pane = mount("zh", [snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials }, null, new Set()]);
+  const pane = mount("zh", [snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials }, null, new Set(), []]);
   const name = (ch) => pane.localeTable.zh[`channel.${ch}`];
   const box = (view, ch) => view.elements.find(
     (el) => el.type === "input" && el.props.type === "checkbox" && el.props["aria-label"] === name(ch),
@@ -445,11 +475,18 @@ test("the fallback plane still names the file it writes, and only there", () => 
   const live = render("zh");
   assert.ok(!live.text.includes(live.localeTable.zh.statePath), "the live plane rendered the fallback file-path field");
   assert.ok(live.text.includes(live.localeTable.zh.livePlane), "the live plane did not say its saves are immediate");
+  // 0.9.2 moved the live store to the plugin's entry in the profile patch, and
+  // the pane kept saying `settings.yaml` for a release after that stopped being
+  // true — it is the one string a user reads to answer "where did my save go?".
+  for (const l of ["zh", "en"]) {
+    assert.match(live.localeTable[l].livePlane, /cordis\.patch\.yml/, `the live plane (${l}) no longer names the file a save lands in`);
+    assert.ok(!live.localeTable[l].livePlane.includes("settings.yaml"), `the live plane (${l}) still points at settings.yaml`);
+  }
 
   const statePath = ".dsh-connect/dsh-connect-settings.json";
   const pane = mount("zh", [
     snapshotToForm({ ...SNAPSHOT, live: false, config: { ...SNAPSHOT.config, settingsStatePath: statePath } }),
-    "idle", { ...SNAPSHOT.credentials }, ALL_OPEN, new Set(),
+    "idle", { ...SNAPSHOT.credentials }, ALL_OPEN, new Set(), [],
   ]);
   const view = pane.draw();
   const L = pane.localeTable.zh;
@@ -461,4 +498,129 @@ test("the fallback plane still names the file it writes, and only there", () => 
     view.elements.some((el) => el.type === "input" && el.props.value === statePath),
     "the state-path field was not seeded with the loaded value",
   );
+});
+
+test("a channel whose store could not be read is unknown, not missing", () => {
+  // The fixture's DingTalk line is the failure: the host sends `credentials.dingtalk
+  // === false` (the pane needs something to render) *and* names the channel in
+  // `credentialErrors`. Reading only the boolean prints 「未配置凭据」 over a bot
+  // that is running fine, and sends the user to re-enter a secret that was never
+  // the problem — so the two states must not collapse into one badge.
+  const clean = render("zh");
+  assert.equal(badgeOf(clean, "dingtalk").text, clean.localeTable.zh.reachable, "the fixture changed: dingtalk is meant to read as configured");
+
+  const snap = {
+    ...SNAPSHOT,
+    credentials: { ...SNAPSHOT.credentials, dingtalk: false },
+    credentialErrors: ["dingtalk"],
+  };
+  const view = render("zh", { notices: snapshotIssues(snap) });
+  const L = view.localeTable.zh;
+
+  const dingtalk = badgeOf(view, "dingtalk");
+  assert.equal(dingtalk.text, L.credentialUnknown);
+  assert.ok(dingtalk.warn, "the unknown badge is not flagged, so it reads as an ordinary state");
+  assert.notEqual(dingtalk.text, L.unreachable, "an unreadable store was reported as an absent credential");
+
+  // Per-channel: one unreadable entry must not grey out the rest, or a single
+  // permissions problem turns into "all my configuration is gone".
+  for (const ch of ["feishu", "telegram", "web"]) {
+    const badge = badgeOf(view, ch);
+    assert.equal(badge.warn, false, `${ch} was flagged for a failure that is not its own`);
+    assert.equal(badge.text, badgeOf(clean, ch).text, `${ch}'s badge changed with an unrelated channel`);
+  }
+});
+
+test("a call with nothing to report renders no problem list at all", () => {
+  // The happy path has to stay quiet. An always-present empty `<ul>` is not just
+  // noise: `ds-issues` takes a full row of the save bar, so a stray one pushes the
+  // Save button around on every clean load.
+  const view = render("zh");
+  assert.equal(view.elements.some((el) => hasClass(el, "ds-issues")), false, "an empty problem list was rendered");
+  assert.deepEqual(issueLines(view), []);
+  // And its opposite, so the assertion above is about the reports and not about a
+  // class name that never renders at all in this tree.
+  assert.ok(issueLines(render("zh", { notices: snapshotIssues({ warnings: ["credentialsStoredNotApplied"] }) })).length === 1);
+});
+
+test("every report the host could not express as a failure reaches the save bar", () => {
+  // The three kinds together are the whole point of the change: a save that
+  // committed but did not take effect must be reported as *both* succeeded and
+  // not-yet-in-effect, and each of these lived in a log line before.
+  const reason = "Error: app id and app secret are both required";
+  const view = render("zh", {
+    notices: snapshotIssues({
+      credentialErrors: ["dingtalk"],
+      warnings: ["credentialsStoredNotApplied"],
+      channelErrors: { feishu: reason },
+    }),
+  });
+  const L = view.localeTable.zh;
+
+  const lines = issueLines(view);
+  assert.equal(lines.length, 3, "a report was dropped between the host and the pane");
+  const rendered = lines.map((line) => visibleText(line).join(""));
+  const has = (needle) => rendered.some((text) => text.includes(needle));
+
+  // Which channel, then what happened to it — the pair is what makes a line
+  // actionable. The unknown-store line deliberately does *not* say "not configured".
+  assert.ok(has(L["channel.dingtalk"]) && has(L.credentialUnknownHint), `no unreadable-store line: ${JSON.stringify(rendered)}`);
+  assert.ok(!has(L.unreachable), "the unreadable store was also reported as a missing credential");
+  // A warning is about the call, so it names no channel and needs no reason.
+  assert.ok(has(L["w.credentialsStoredNotApplied"]), `no warning line: ${JSON.stringify(rendered)}`);
+  // A dead channel carries the adapter's own message verbatim: it is the only part
+  // that says *which* credential or option is wrong, and a locale code would have
+  // to guess that backwards.
+  assert.ok(has(L["channel.feishu"]) && has(L.channelFailed) && has(reason), `no channel-failure line: ${JSON.stringify(rendered)}`);
+
+  // In the save bar, not beside the channel it concerns: the bar is the one part of
+  // the pane that is always on screen, and a channel card can be folded or scrolled
+  // past — 「已保存」 next to nothing else is the complaint this answers.
+  const footer = view.elements.find((el) => hasClass(el, "ds-footer"));
+  const list = view.elements.find((el) => hasClass(el, "ds-issues"));
+  assert.ok(elements(footer).includes(list), "the problem list is not in the save bar");
+});
+
+test("a warning raised by an earlier credential save survives a later one", async () => {
+  // The error lists describe the state of the world and the host re-derives them
+  // on every call, so the last snapshot is the truth for those. A warning is about
+  // the single call that raised it, and the host does not repeat it — so reading
+  // only the last snapshot silently erases the first channel's warning.
+  let credentialSaves = 0;
+  const rpc = async (endpoint) => {
+    if (endpoint === "credentials.save") {
+      credentialSaves += 1;
+      // Only the *first* channel warns, so the final snapshot is clean and the
+      // notice can only be there because the chain accumulated it.
+      return { ok: true, value: credentialSaves === 1 ? { ...SNAPSHOT, warnings: ["credentialsStoredNotApplied"] } : SNAPSHOT };
+    }
+    return { ok: true, value: SNAPSHOT };
+  };
+
+  const pane = mount("zh", [
+    snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials }, ALL_OPEN, ALL_OPEN, [],
+  ], rpc);
+  let view = pane.draw();
+
+  // `snapshotToForm` always yields `secrets: {}` (the stored values are never sent
+  // back), and `buildCredentialSaves` skips empty ones — so a save of an untouched
+  // form reaches no channel at all. Type into two channels' secrets first.
+  const secretInput = (v, ch) => elements(byId(v.elements, `ds-ch-${ch}`).children)
+    .find((el) => el.type === "input" && el.props.autoComplete === "off");
+  secretInput(view, "feishu").props.onChange({ target: { value: "cli_typed" } });
+  secretInput(view, "telegram").props.onChange({ target: { value: "123456:ABC" } });
+  view = pane.draw();
+
+  const save = view.elements.find((el) => el.props.className === "ds-btn");
+  assert.ok(save, "the save bar has no button");
+  await save.props.onClick();
+  view = pane.draw();
+
+  assert.equal(credentialSaves, 2, "the save did not reach both channels");
+  assert.equal(pane.queued[1], "saved", "the save did not report success");
+  // The durable half: the value was stored, so the status is 「已保存」 — and the
+  // half that says it has not taken effect yet is the list below it.
+  const lines = issueLines(view);
+  assert.equal(lines.length, 1, `expected exactly the one warning, got ${JSON.stringify(lines.map((l) => visibleText(l).join("")))}`);
+  assert.ok(visibleText(lines[0]).join("").includes(pane.localeTable.zh["w.credentialsStoredNotApplied"]));
 });
