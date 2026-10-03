@@ -60,11 +60,25 @@ deepseek-harness  dsh  dsh-plugin  feishu  lark  dingtalk  ai-agent  chatbot  co
 | `packages/connect/README.md` / `README.zh.md` | `docs/images/settings-overview-zh.png` |
 | `packages/connect/README.i18n.yaml` | 与 README 相同（该 i18n 文件镜像英文 README） |
 
-设置页这套截图共 6 张 PNG，均为 1600×1600——`settings-overview`、`settings-advanced`、`settings-defaults`，各有 `-zh` 与 `-en` 两个变体：
+设置页这套截图共 10 张 PNG，均为 1600×1600——5 个名字，各有 `-zh` 与 `-en` 两个变体：
 
-- `settings-overview-{zh,en}.png`——渠道 Tab 条 + 可折叠卡片。
+- `settings-overview-{zh,en}.png`——渠道 Tab 条 + 可折叠卡片（设置项单列）。
 - `settings-advanced-{zh,en}.png`——二级「高级」折叠。
 - `settings-defaults-{zh,en}.png`——渠道未设置任何值时的默认值展示。
+- `settings-feishu-{zh,en}.png`——飞书卡片上的「一键创建」按钮（1.0.0）。这张是**滚动后**拍的，同时也正好证明页签条钉在顶部。
+- `settings-manual-{zh,en}.png`——Telegram 卡片的官方入口链接，与上一张互为对照。
+
+**故意没有「一键创建之后」的结果截图**：要拍出它就得在真实租户里建一个真实应用，所以文档改用一张表描述结果行。不要用效果图去补这个空缺。
+
+截图取自一个**一次性** `dsh` profile：插件 `link:` 到工作树，里面所有凭据都是假占位符。画面里没有真实密钥，任何一次截图也都不会真的启动流程（按钮只拍不按）。
+
+**怎么拍出来的。** 用一个**不是开发者本人**的一次性 `dsh` profile：一个临时 `DSH_HOME`，其 profile 的插件 `link:` 到本工作树，凭据全是假占位符。画面里没有真实密钥，任何一次截图都不会真的启动流程（一键按钮只拍不按）。用空闲端口启动——`--port 0` 让 OS 挑一个，这很重要，因为开发机上 3080 很可能已经跑着真实的 DSH Web UI：
+
+```sh
+DSH_HOME=<scratch-home> dsh --profile <scratch-profile> --no-open --port 0
+```
+
+然后用 Playwright 驱动，对**面板元素本身**截图（一个固定的 800×800 CSS px 画框，所以 `deviceScaleFactor: 2` 下每张恰好是 1600×1600）。正因为画框固定，**一张图拍到什么完全由滚动位置决定**——那几张滚动中的图是把某个选择器滚到画面中部，不是裁剪。宿主 UI 语言跟随宿主自己的语言设置且是黏性的，所以拍 `-en` 时要先切宿主语言那一行。
 
 **变体要与文档语言一致**：中文文档与 `README.zh.md` 用 `-zh`，英文文档与 `README.md` 用 `-en`，同一文件内不要混用。由于原图宽 1600px，请用带显式宽度的原始 HTML 嵌入，避免撑破页面：
 

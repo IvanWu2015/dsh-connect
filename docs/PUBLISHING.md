@@ -58,11 +58,23 @@ The first paragraph must naturally include searchable terms — see the opening 
 | `packages/connect/README.md` / `README.zh.md` | `docs/images/settings-overview-zh.png` |
 | `packages/connect/README.i18n.yaml` | same as the READMEs (the i18n file mirrors the English README) |
 
-The settings-pane set is six PNGs, all 1600×1600 — `settings-overview`, `settings-advanced`, `settings-defaults`, each in a `-zh` and an `-en` variant:
+The settings-pane set is ten PNGs, all 1600×1600 — five names, each in a `-zh` and an `-en` variant:
 
-- `settings-overview-{zh,en}.png` — channel tab strip over collapsible cards.
+- `settings-overview-{zh,en}.png` — channel tab strip over collapsible cards (one setting per row).
 - `settings-advanced-{zh,en}.png` — the second-level 高级 / Advanced fold.
 - `settings-defaults-{zh,en}.png` — how defaults are shown for a channel that has none set.
+- `settings-feishu-{zh,en}.png` — the Feishu card's one-click create button (1.0.0). Shot mid-scroll, which is also what shows the tab strip staying pinned at the top.
+- `settings-manual-{zh,en}.png` — the Telegram card's official-entry link, the manual counterpart to the above.
+
+There is deliberately **no screenshot of the result of a one-click run**: producing one means creating a real app in a real tenant, so the docs describe the result lines in a table instead. Do not fill the gap with a mock-up.
+
+**How the shots are taken.** From a throwaway `dsh` profile that is *not* the developer's own: a scratch `DSH_HOME` with a profile whose plugin is linked to this working tree, and whose credentials are all fake placeholders. Nothing in frame is a real secret, and no capture ever starts a flow (the one-click button is photographed, never pressed). Boot it on a free port — `--port 0` lets the OS pick one, which matters because a developer machine is likely already serving the real DSH web UI on 3080:
+
+```sh
+DSH_HOME=<scratch-home> dsh --profile <scratch-profile> --no-open --port 0
+```
+
+Then drive it with Playwright, screenshotting the pane element itself (a fixed 800×800 CSS-px frame, so every shot is exactly 1600×1600 at `deviceScaleFactor: 2`). Because the frame is fixed, **scroll position alone decides what a shot shows** — the mid-scroll shots are centred on a selector, not cropped. The host UI locale follows the host's own language setting, which is sticky, so a capture for `-en` has to switch the shell's locale row first.
 
 **Pick the variant that matches the document's language**: Chinese docs and `README.zh.md` use `-zh`, English docs and `README.md` use `-en`. Do not mix them within one file. Because the images are 1600px wide, embed them as raw HTML with an explicit width so they don't blow up the page — e.g.
 

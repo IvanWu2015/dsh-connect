@@ -12,16 +12,25 @@
  * - `credentials.save` — persist secrets to the DSH credential store (payload
  *   `{ channel, values }`, values are {configKey: secret}).
  * - `settings.status` — fresh status snapshot.
+ * - `onboarding.start` / `onboarding.status` / `onboarding.cancel` — the
+ *   one-click bot creation flow. `start` answers with the *current* state and
+ *   the flow goes on living in the host process; the pane polls `status` until
+ *   a terminal phase, so a page refresh cannot abort a single-use
+ *   device-authorization link. See `./feishu-onboarding`.
  *
  * @module dsh-connect/settings/settings-rpc
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { OnboardingStatus } from "./feishu-onboarding.js";
 
 /** RPC channel the settings pane calls. */
 export const SETTINGS_RPC_CHANNEL = "/dsh-connect";
 
 /** Endpoints the settings pane can invoke on the channel. */
-export const SETTINGS_ENDPOINTS = Object.freeze(["settings.get", "settings.save", "credentials.save", "settings.status"]);
+export const SETTINGS_ENDPOINTS = Object.freeze([
+  "settings.get", "settings.save", "credentials.save", "settings.status",
+  "onboarding.start", "onboarding.status", "onboarding.cancel",
+]);
 
 /** Error codes considered safe to surface verbatim to the browser. */
 const PUBLIC_ERRORS = new Set([
@@ -122,7 +131,9 @@ export interface SettingsSnapshot {
  * than a bare union so the locale test can *derive* that list instead of keeping
  * a second copy of it — a copy is exactly what goes stale.
  */
-export const SETTINGS_WARNING_CODES = ["credentialsStoredNotApplied"] as const;
+export const SETTINGS_WARNING_CODES = [
+  "credentialsStoredNotApplied",
+] as const;
 
 export type SettingsWarningCode = (typeof SETTINGS_WARNING_CODES)[number];
 
@@ -132,6 +143,17 @@ export interface SettingsService {
   save(config: Record<string, unknown>): Promise<SettingsSnapshot>;
   /** Persist channel secrets ({configKey: secret}) to the credential store. */
   saveCredentials?(channel: string, values: Record<string, string>): Promise<SettingsSnapshot>;
+  /**
+   * One-click bot creation. Optional like `saveCredentials` — a host that wired
+   * no onboarding registry reports `unsupported` instead of failing to compile.
+   * Returns the flow's own status shape, not a `SettingsSnapshot`: a
+   * `SettingsSnapshot` is deep-compared field by field in several tests and is
+   * only spread when non-empty, so a permanent new field there would cost far
+   * more than this feature needs.
+   */
+  onboardingStart?(channel: string): Promise<OnboardingStatus>;
+  onboardingStatus?(): Promise<OnboardingStatus>;
+  onboardingCancel?(): Promise<OnboardingStatus>;
   status(): Promise<SettingsSnapshot>;
 }
 
@@ -143,6 +165,11 @@ function validPayload(endpoint: string, payload: unknown): boolean {
     return keys.length > 0 && typeof (payload as any).channel === "string"
       && (payload as any).values !== null && typeof (payload as any).values === "object"
       && !Array.isArray((payload as any).values);
+  }
+  // Shape only: an unknown channel is a valid shape and the service answers for
+  // it (`invalid-channel`), the same posture `credentials.save` already takes.
+  if (endpoint === "onboarding.start") {
+    return keys.length > 0 && typeof (payload as any).channel === "string" && (payload as any).channel !== "";
   }
   // The reads carry no payload.
   return keys.length === 0;
@@ -163,7 +190,13 @@ export function createSettingsRpcHandler(service: SettingsService) {
           ? await service.save(record)
           : endpoint === "credentials.save"
             ? await saveCredentialsP(service, record)
-            : await service.status();
+            : endpoint === "onboarding.start"
+              ? await onboardingStartP(service, record)
+              : endpoint === "onboarding.status"
+                ? await onboardingStatusP(service)
+                : endpoint === "onboarding.cancel"
+                  ? await onboardingCancelP(service)
+                  : await service.status();
       return { ok: true, value };
     } catch (error) {
       const code = PUBLIC_ERRORS.has((error as any)?.code) ? (error as any).code : "settings-failed";
@@ -172,15 +205,33 @@ export function createSettingsRpcHandler(service: SettingsService) {
   };
 }
 
+/** The error a service reports for an endpoint it was not wired to serve. */
+function unsupported(): never {
+  const err = new Error("unsupported") as any;
+  err.code = "unsupported";
+  throw err;
+}
+
 async function saveCredentialsP(service: SettingsService, record: Record<string, unknown>): Promise<SettingsSnapshot> {
-  if (typeof service.saveCredentials !== "function") {
-    const err = new Error("unsupported") as any;
-    err.code = "unsupported";
-    throw err;
-  }
+  if (typeof service.saveCredentials !== "function") unsupported();
   const channel = record.channel as string;
   const values = (record.values ?? {}) as Record<string, string>;
   return service.saveCredentials(channel, values);
+}
+
+async function onboardingStartP(service: SettingsService, record: Record<string, unknown>): Promise<OnboardingStatus> {
+  if (typeof service.onboardingStart !== "function") unsupported();
+  return service.onboardingStart(record.channel as string);
+}
+
+async function onboardingStatusP(service: SettingsService): Promise<OnboardingStatus> {
+  if (typeof service.onboardingStatus !== "function") unsupported();
+  return service.onboardingStatus();
+}
+
+async function onboardingCancelP(service: SettingsService): Promise<OnboardingStatus> {
+  if (typeof service.onboardingCancel !== "function") unsupported();
+  return service.onboardingCancel();
 }
 
 /** Endpoint segment accepted by a Connection RPC path (host-compatible). */

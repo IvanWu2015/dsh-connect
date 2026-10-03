@@ -174,6 +174,8 @@ Electron application* —— 该 profile 只允许由应用自身的载体管理
 
 **敏感项** —— `appSecret`、`verificationToken`、`encryptKey` 和 `feishu-credentials.json`。优先使用环境变量或一键开通；切勿将它们提交到版本控制。
 
+**创建应用。** 两个一键入口（1.0.0）：[设置面板](#设置面板)里的按钮；以及在终端里不带凭据启动插件，它会打印一条开通链接。两者都会把应用连同权限与事件预设一起建好、把凭据存进 DSH 凭据库；面板那条还会顺便启用渠道并把 `transport` 定为 `websocket`。CLI 那条在 `onboarding: false` 或 stdout 不是终端时会被跳过，因此无人应答的服务进程不会开始一个没人能完成的流程。Telegram 与钉钉没有这样的 API —— 面板对它们只给官方创建页面的链接。
+
 ### `telegram`（Telegram 通道）
 
 | 键 | 默认值 | 说明 |
@@ -222,14 +224,20 @@ Electron application* —— 该 profile 只允许由应用自身的载体管理
 
 `dsh-connect` 在 **设置 → dsh-connect** 下有自己的页面。它是一条渠道页签条 + 若干可折叠卡片：
 每张卡片由一个按钮做标题行，低频字段收在第二级的**高级选项**折叠里，保存/状态固定在滚动区底部。
+页签条本身也**钉在滚动区顶部**（`position: sticky`），内容从它下面滚过去，而不是把它带走。
+设置项**一行一个**：字段网格是单列，面板变宽时标签/控件对不会再回流成两三列。
 
 | 渠道与凭据 | 展开高级选项 |
 |---|---|
 | ![dsh-connect 设置面板：渠道页签条、展开的飞书卡片及其凭据字段，以及三张收起后仍显示凭据徽标的渠道卡片](docs/images/settings-overview-zh.png) | ![同一面板展开某渠道的「高级选项」折叠，露出回调端口与回调路径字段](docs/images/settings-advanced-zh.png) |
 
+| 飞书卡片：一键创建 | Telegram 卡片：官方入口链接 |
+|---|---|
+| ![飞书卡片上的一键创建按钮，此时面板已滚动、页签条仍钉在顶部](docs/images/settings-feishu-zh.png) | ![Telegram 卡片，给的是 BotFather 链接而不是创建按钮](docs/images/settings-manual-zh.png) |
+
 ![面板底部的公共默认卡片与固定保存条](docs/images/settings-defaults-zh.png)
 
-英文截图：[概览](docs/images/settings-overview-en.png) · [高级](docs/images/settings-advanced-en.png) · [公共默认](docs/images/settings-defaults-en.png)。
+英文截图：[概览](docs/images/settings-overview-en.png) · [高级](docs/images/settings-advanced-en.png) · [公共默认](docs/images/settings-defaults-en.png) · [一键创建](docs/images/settings-feishu-en.png) · [官方入口](docs/images/settings-manual-en.png)。
 
 > 截图取自一个凭据全是占位符的一次性 profile。上面没有任何真实密钥 —— 也不可能有：宿主会在
 > 值到达浏览器之前完成打码（见下文[面板回显与脱敏](#面板回显与脱敏)）。
@@ -238,6 +246,21 @@ Electron application* —— 该 profile 只允许由应用自身的载体管理
 **不会**收起其他卡片 —— 多张同时展开是合法状态。收起是**卸载**卡片主体而不是隐藏它，这之所
 以安全，是因为你刚输入但尚未保存的密钥存在面板自身的 state 里，而不在卡片里。勾选某渠道的
 启用框同样会展开它。
+
+飞书卡片上有一个「**一键创建并配置飞书机器人**」按钮（1.0.0）。它由宿主执行飞书官方的
+OAuth 2.0 设备授权流：按钮先给你一条在浏览器里打开的链接，应用在那里建好并预设好权限与接收
+消息的事件，凭据存进 DSH 凭据库，`feishu` 被写进 `channels` 且 `transport` 定为 `websocket`
+—— 不需要公网地址就能跑起来。**Telegram 与钉钉没有对应的官方 API**，所以它们的卡片里只放一
+个官方创建入口的链接（[@BotFather](https://t.me/BotFather) /
+[open-dev.dingtalk.com](https://open-dev.dingtalk.com/)）和一句「把拿到的凭据粘到下面的字段
+里」。这两个渠道没有任何自动化。
+
+结果是一份**逐条列出的事实**，不会合并成一句「完成」：应用已创建（带 `appId`）/ 凭据已入库 /
+渠道已启用 / **运行中**的渠道是否就地重载 / 事件订阅的结果 / 还剩什么要你去开放平台收尾。
+「凭据已写入凭据库」与「运行中的渠道没有重新加载」**永远是两行** —— 凭据存下了但活着的适配器
+还没采用，这是一个你需要知道的真实状态，重启 `dsh` 即可生效。事件订阅这一步按设计就是尽力而
+为：SDK 注明它可能只适用于开发者后台创建的应用，而那里多数配置改动要提交发布后才生效。本插
+件不代你发布，也绝不声称订阅已经生效。
 
 ## 用户设置
 

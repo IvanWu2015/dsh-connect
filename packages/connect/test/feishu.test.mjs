@@ -325,7 +325,16 @@ test("onboarding reports success when the credential store saves it instead", ()
     // The DSH store is the source of truth, so it alone is enough to survive a
     // restart — a failed legacy mirror must not raise a false alarm.
     assert.deepEqual(warnings, [t.onboardingEnter, t.onboardingSuccess(ONBOARDED.appId)]);
-    assert.deepEqual(saved, { channel: "feishu", values: ONBOARDED });
+    // Keyed by credential **ref**, not by config key: `CredentialStore.save`
+    // looks each value up by its ref, so the config-keyed map this used to
+    // assert matched nothing, wrote nothing, and still reported success — the
+    // exact silent failure the message above claims did not happen. Pinned
+    // against the real ref names (not a re-derivation) so a rename in the table
+    // has to be a deliberate two-sided change.
+    assert.deepEqual(saved, {
+      channel: "feishu",
+      values: { DSH_CONNECT_FEISHU_APP_ID: ONBOARDED.appId, DSH_CONNECT_FEISHU_APP_SECRET: ONBOARDED.appSecret },
+    });
   }));
 
 test("onboarding says the credentials were not saved when the store throws too", () =>

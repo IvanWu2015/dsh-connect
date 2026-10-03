@@ -62,6 +62,26 @@ export function saveCredentials(credentials: FeishuCredentials): boolean {
 }
 
 /**
+ * Extra hooks for callers that drive the flow themselves — the settings pane's
+ * one-click button, which needs the link *before* the flow resolves and needs
+ * the failure code to report. All optional, so the CLI path
+ * (`register()` → `onboardFeishu(logger, language)`) is unchanged.
+ */
+export interface OnboardHooks {
+  /** Called once, synchronously, with the device-authorization link — before polling starts. */
+  onQRCodeReady?: (info: { url: string; expireIn: number }) => void;
+  /** Called with the SDK error code just before a failed flow resolves `null`. */
+  onError?: (code: string) => void;
+  /**
+   * Aborts polling and invalidates the link. **Only ever pass a signal a human
+   * explicitly cancelled** — the link is single-use and single-person, so an
+   * incidental abort (an HTTP response closing, a component unmounting) burns
+   * the user's only chance and forces a whole new scan.
+   */
+  signal?: AbortSignal;
+}
+
+/**
  * Run the one-click onboarding flow. Resolves with the created app credentials,
  * or `null` when the user aborts / the flow fails. The returned link (also
  * printable) is valid for ~10 minutes and usable by exactly one person.
@@ -69,6 +89,7 @@ export function saveCredentials(credentials: FeishuCredentials): boolean {
 export async function onboardFeishu(
   logger?: { warn?: (...args: unknown[]) => void },
   language: Language = "zh",
+  hooks: OnboardHooks = {},
 ): Promise<FeishuCredentials | null> {
   const t = feishuMessages(language);
   try {
@@ -90,15 +111,21 @@ export async function onboardFeishu(
         events: { items: { tenant: ["im.message.receive_v1"] } },
         callbacks: { items: ["card.action.trigger"] },
       },
+      // `signal` here is the *cancel* signal only — see OnboardHooks.signal.
+      signal: hooks.signal,
       onQRCodeReady(info) {
         logger?.warn?.(t.onboardingLink(info.url));
         logger?.warn?.(t.onboardingLinkExpiry(Math.floor(info.expireIn / 60)));
+        hooks.onQRCodeReady?.(info);
       },
     });
     return { appId: result.client_id, appSecret: result.client_secret };
   } catch (error) {
     const code = (error as { code?: string })?.code ?? (error instanceof Error ? error.message : String(error));
     logger?.warn?.(t.onboardingFailed(code));
+    // The message was already logged; this hands the *code* to a caller that
+    // reports it to the pane, which cannot read the host log.
+    hooks.onError?.(code);
     return null;
   }
 }

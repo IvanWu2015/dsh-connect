@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { ADVANCED_KEYS, isAdvanced, initialOpenChannels, toggleInSet, snapshotIssues } from "../client/panel-state.mjs";
+import { ADVANCED_KEYS, isAdvanced, initialOpenChannels, toggleInSet, snapshotIssues, onboardingIssues } from "../client/panel-state.mjs";
 import { CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS } from "../lib/settings/settings-model.js";
 
 /**
@@ -123,4 +123,206 @@ test("an explicit empty warning list is respected, not treated as absent", () =>
   // `??` and not `||`: a caller that clears its warnings means it, and falling
   // back to `snap.warnings` would resurrect exactly the entry it just dropped.
   assert.deepEqual(snapshotIssues({ warnings: ["credentialsStoredNotApplied"] }, []), []);
+});
+
+// --- onboardingIssues ------------------------------------------------------
+//
+// One line per true fact about the one-click run. The pane renders these as the
+// save bar's problem list, so each case below is really an assertion about what
+// the user is told — and, just as often, about what they are *not* told.
+
+/** The shape a run that went cleanly end to end produces. */
+const created = (extra = {}) => ({
+  created: true,
+  appId: "cli_created",
+  credentialsStored: true,
+  legacyMirrorWritten: true,
+  applied: "yes",
+  subscription: { attempted: true, status: "applied", needsManualAction: false },
+  enableRequested: true,
+  ...extra,
+});
+
+/** Just the codes, in order — the readable half of every assertion here. */
+const codes = (issues) => issues.map((issue) => issue.code);
+
+test("a pane that never ran a flow reports nothing at all", () => {
+  assert.deepEqual(onboardingIssues(undefined), []);
+  assert.deepEqual(onboardingIssues(null), []);
+});
+
+test("a clean run reports its facts one per line", () => {
+  const issues = onboardingIssues(created());
+  assert.deepEqual(issues, [
+    { kind: "onboarding", code: "created", key: "onboarding:created", appId: "cli_created" },
+    { kind: "onboarding", code: "credentialsStored", key: "onboarding:credentialsStored" },
+    { kind: "onboarding", code: "enableRequested", key: "onboarding:enableRequested" },
+    { kind: "onboarding", code: "subscription.applied", key: "onboarding:subscription.applied" },
+  ]);
+  // Nothing to say about `applied` on a run that applied: the absence of the
+  // line is the report, and a "已生效" line here would be noise on every success.
+  assert.deepEqual(codes(issues).filter((c) => c === "notApplied" || c === "applyPending"), []);
+});
+
+test("every onboarding key is stable, free of indices, and names its code", () => {
+  const shapes = [
+    created(),
+    created({ applied: "no" }),
+    created({ applied: "pending" }),
+    created({ credentialsStored: false, legacyMirrorWritten: false }),
+    created({ enableRequested: false }),
+    created({ subscription: { attempted: true, status: "failed", reason: "x", needsManualAction: true } }),
+  ];
+  for (const shape of shapes) {
+    for (const issue of onboardingIssues(shape)) {
+      assert.equal(issue.kind, "onboarding");
+      assert.equal(issue.key, `onboarding:${issue.code}`, "the key must be derivable from the code");
+      assert.ok(!/\d/.test(issue.key), `unstable key ${issue.key}`);
+    }
+  }
+});
+
+test("a run that never created anything reports only how it ended", () => {
+  // The user's cancel, the device-code expiry, and a `registerApp` that threw.
+  // `created` stays false on all three and they share no other field, so the
+  // reason string is the only discriminator — and each needs its own wording.
+  const base = {
+    created: false,
+    credentialsStored: false,
+    legacyMirrorWritten: false,
+    applied: "pending",
+    subscription: { attempted: false, status: "not-attempted", needsManualAction: true },
+    enableRequested: false,
+  };
+
+  assert.deepEqual(onboardingIssues({ ...base, reason: "abort" }), [
+    { kind: "onboarding", code: "cancelled", key: "onboarding:cancelled", reason: "abort" },
+  ]);
+  assert.deepEqual(onboardingIssues({ ...base, reason: "expired_token" }), [
+    { kind: "onboarding", code: "expired", key: "onboarding:expired", reason: "expired_token" },
+  ]);
+  assert.deepEqual(onboardingIssues({ ...base, reason: "invalid_app_name" }), [
+    { kind: "onboarding", code: "createFailed", key: "onboarding:createFailed", reason: "invalid_app_name" },
+  ]);
+  // Even with nothing to report beyond the fact itself.
+  assert.deepEqual(onboardingIssues({ ...base }), [
+    { kind: "onboarding", code: "createFailed", key: "onboarding:createFailed" },
+  ]);
+});
+
+test("the credential lines report each store separately", () => {
+  assert.deepEqual(codes(onboardingIssues(created())),
+    ["created", "credentialsStored", "enableRequested", "subscription.applied"]);
+
+  // Store failed, mirror written. The mirror is what carries the run — saying
+  // so twice would read as two problems where there is one.
+  assert.deepEqual(codes(onboardingIssues(created({ credentialsStored: false, legacyMirrorWritten: true }))),
+    ["created", "credentialsNotStored", "enableRequested", "subscription.applied"]);
+
+  // Neither landed: the credentials now live only in this process.
+  assert.deepEqual(codes(onboardingIssues(created({ credentialsStored: false, legacyMirrorWritten: false }))),
+    ["created", "credentialsNotStored", "legacyMirrorFailed", "enableRequested", "subscription.applied"]);
+});
+
+test("the enable line reports the write, not a guess about the outcome", () => {
+  assert.ok(codes(onboardingIssues(created())).includes("enableRequested"));
+  const refused = codes(onboardingIssues(created({ enableRequested: false })));
+  assert.ok(refused.includes("enableFailed"));
+  assert.ok(!refused.includes("enableRequested"), "one line, not both halves of a dichotomy");
+});
+
+test("both halves of 已落盘 ≠ 已生效 are reported, as two lines", () => {
+  // The case this whole outcome type exists for: the secret is on disk and the
+  // running adapter never picked it up. Collapsing these into one line is the
+  // clean-success lie.
+  const issues = onboardingIssues(created({ applied: "no" }));
+  const seen = codes(issues);
+  assert.ok(seen.includes("credentialsStored"), "half one");
+  assert.ok(seen.includes("notApplied"), "half two");
+  assert.ok(!seen.includes("applyPending"), "not applied is not the same as pending");
+});
+
+test("`pending` and `yes` are distinct from `no`", () => {
+  const applied = (value) => codes(onboardingIssues(created({ applied: value })))
+    .filter((c) => c === "notApplied" || c === "applyPending");
+  // What a run that was cancelled or died after creating the app leaves behind.
+  assert.deepEqual(applied("pending"), ["applyPending"]);
+  // Only an explicit `no` claims the re-apply was asked for and failed.
+  assert.deepEqual(applied("no"), ["notApplied"]);
+  assert.deepEqual(applied("yes"), []);
+});
+
+test("the subscription reports four states, not two", () => {
+  const sub = (subscription) => onboardingIssues(created({ subscription }))
+    .filter((issue) => issue.code.startsWith("subscription."));
+
+  assert.deepEqual(sub({ attempted: false, status: "not-attempted", needsManualAction: true }), [
+    { kind: "onboarding", code: "subscription.notAttempted", key: "onboarding:subscription.notAttempted" },
+  ]);
+  assert.deepEqual(sub({ attempted: false, status: "skipped", needsManualAction: true }), [
+    { kind: "onboarding", code: "subscription.skipped", key: "onboarding:subscription.skipped" },
+  ]);
+  assert.deepEqual(sub({ attempted: true, status: "applied", needsManualAction: false }), [
+    { kind: "onboarding", code: "subscription.applied", key: "onboarding:subscription.applied" },
+  ]);
+  // The API's own code/msg, verbatim — rendered in a `<code>` beside the line.
+  assert.deepEqual(sub({ attempted: true, status: "failed", reason: "99991672 access denied", needsManualAction: true }), [
+    { kind: "onboarding", code: "subscription.failed", key: "onboarding:subscription.failed", reason: "99991672 access denied" },
+  ]);
+  assert.deepEqual(sub({ attempted: true, status: "failed", needsManualAction: true }), [
+    { kind: "onboarding", code: "subscription.failed", key: "onboarding:subscription.failed" },
+  ]);
+
+  // `not-attempted` ("the flow never got that far") must not borrow `skipped`'s
+  // key ("there was nothing to subscribe with") — different statements, and the
+  // pane keys its rows on this.
+  assert.notDeepEqual(sub({ status: "not-attempted" }), sub({ status: "skipped" }));
+});
+
+test("an unknown subscription status falls back to the one that claims least", () => {
+  for (const subscription of [undefined, {}, { attempted: false }]) {
+    const issues = onboardingIssues(created({ subscription }));
+    assert.deepEqual(codes(issues).filter((c) => c.startsWith("subscription.")), ["subscription.skipped"]);
+  }
+});
+
+test("needsManual is its own line, and only when work really is left over", () => {
+  assert.ok(codes(onboardingIssues(created({ subscription: { status: "skipped", needsManualAction: true } }))).includes("needsManual"));
+  assert.ok(codes(onboardingIssues(created({ subscription: { status: "failed", needsManualAction: true } }))).includes("needsManual"));
+  assert.ok(!codes(onboardingIssues(created())).includes("needsManual"));
+  // Strictly `true`: an absent flag is not a claim that the user has work to do.
+  assert.ok(!codes(onboardingIssues(created({ subscription: { status: "applied" } }))).includes("needsManual"));
+});
+
+test("a run that created an app and then went wrong reports every half", () => {
+  const issues = onboardingIssues({
+    created: true,
+    appId: "cli_created",
+    credentialsStored: false,
+    legacyMirrorWritten: false,
+    applied: "no",
+    enableRequested: false,
+    subscription: { attempted: true, status: "failed", reason: "99991672 access denied", needsManualAction: true },
+    reason: "boom",
+  });
+  assert.deepEqual(codes(issues), [
+    "created",
+    "credentialsNotStored",
+    "legacyMirrorFailed",
+    "enableFailed",
+    "subscription.failed",
+    "needsManual",
+    "notApplied",
+  ]);
+  // The app id is carried on its own line, and never the secret — the outcome
+  // has no field for one.
+  assert.equal(issues[0].appId, "cli_created");
+  assert.equal(JSON.stringify(issues).includes("appSecret"), false);
+  // `reason` is a *pre-creation* field: it is set by the flow error callback and
+  // by a throw, both of which leave `created` false and are reported by the
+  // three codes above. Once an app exists, each step reports its own result and
+  // the flow-level reason says nothing the lines do not. (With the real
+  // `saveCredentials` it cannot even be set: that function returns `false`
+  // rather than throwing, so no guarded step can reject the flow.)
+  assert.equal(JSON.stringify(issues).includes("boom"), false);
 });

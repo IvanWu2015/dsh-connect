@@ -1,17 +1,43 @@
 # 配置简化 + Web 设置 + 多合一重构（对齐 dsh-im）
 
-> **当前状态更新（2026-10-02，0.9.3）**：设置存储随 DSH 0.2 再次换代。面板的权威存储不再是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段（那是 0.9.0/0.9.1 的做法；DSH 0.2 已不再从这个文档读取插件设置），而是**当前 profile patch（`cordis.patch.yml`）中本插件的条目**，经 DSH 一方 `settings` 服务（`SettingsForms`）写入：热重载、原子写、文件锁、保留注释；取值顺序为 **schema 默认值 → 插件被组合进来时的配置 → profile patch 条目**。面板可编辑字段在 schema 里声明为 `volatile`，保存因此是就地 reconcile（运行中的适配器直接采用新值）而不是重挂载；写入会投影到已声明字段，未声明的键（凭据、`settingsStatePath`）既写不进去也不会被清掉，而被省略的已声明字段会被重置回继承值，所以每次写入都是完整的已声明段。0.2 之前留在 `settings.yaml` 里的段，会在升级后的第一次启动时被**合并**（不是替换）导入 patch 条目，一次性标记 `.dsh-connect-legacy-imported`（写在 profile 条目旁，锚在 `profileContext.patchPath`）记录结果。面板**写不进**密钥：保存会投影到已声明字段，而密钥键一个都不在其中，所以面板既不会把密钥写进 profile patch，也不会写进任何 JSON 状态文件——它们只进 DSH 凭据库。反过来，**手写**在条目或回退文件里的密钥也不会被面板的保存顺手删掉（不删用户自己的文档），但读取时一律剔除，绝不随快照下发到浏览器；面板只显示凭据库提供的掩码预览（appId 这类标识符本身不脱敏）。面板 UI 沿用 0.9.0 的**渠道 Tab 条 + 可折叠卡片**，低频字段收进二级「高级」折叠，保存/状态固定在底部。**0.9.3 把「失败」从一个被吞掉的分支变成一份报告**：`SettingsSnapshot` 增加 `warnings` / `credentialErrors` / `channelErrors`（非空才下发），面板经 `snapshotIssues()` 把它们渲染成保存条上方的一份清单，凭据库读不了的渠道显示琥珀色「凭据状态未知」徽标而不是「未配置凭据」；绑定文件、提醒文件、开通流程的凭据写入这三处写失败不再被 `catch` 吞掉，聊天里也会在会话恢复失败时收到通知，而不是只在日志里写一行。同一批里还改掉了一处纯属说错的文案：保存条下方的状态行原本写「配置存放在 settings.yaml，保存后立即生效」，而 0.9.2 起权威存储已经是 profile patch，现在如实写作 `cordis.patch.yml`。当前测试总数 **441 项全过**，DSH 依赖升到 `^0.2.0-rc.2`（peer `dsh-agent` / `dsh-llm` / `dsh-session`）。详见根 `CHANGELOG.md` 的 0.9.2 与 0.9.3 段。
+> **当前状态更新（2026-10-03，1.0.0）**：设置存储随 DSH 0.2 再次换代。面板的权威存储不再是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段（那是 0.9.0/0.9.1 的做法；DSH 0.2 已不再从这个文档读取插件设置），而是**当前 profile patch（`cordis.patch.yml`）中本插件的条目**，经 DSH 一方 `settings` 服务（`SettingsForms`）写入：热重载、原子写、文件锁、保留注释；取值顺序为 **schema 默认值 → 插件被组合进来时的配置 → profile patch 条目**。面板可编辑字段在 schema 里声明为 `volatile`，保存因此是就地 reconcile（运行中的适配器直接采用新值）而不是重挂载；写入会投影到已声明字段，未声明的键（凭据、`settingsStatePath`）既写不进去也不会被清掉，而被省略的已声明字段会被重置回继承值，所以每次写入都是完整的已声明段。0.2 之前留在 `settings.yaml` 里的段，会在升级后的第一次启动时被**合并**（不是替换）导入 patch 条目，一次性标记 `.dsh-connect-legacy-imported`（写在 profile 条目旁，锚在 `profileContext.patchPath`）记录结果。面板**写不进**密钥：保存会投影到已声明字段，而密钥键一个都不在其中，所以面板既不会把密钥写进 profile patch，也不会写进任何 JSON 状态文件——它们只进 DSH 凭据库。反过来，**手写**在条目或回退文件里的密钥也不会被面板的保存顺手删掉（不删用户自己的文档），但读取时一律剔除，绝不随快照下发到浏览器；面板只显示凭据库提供的掩码预览（appId 这类标识符本身不脱敏）。面板 UI 沿用 0.9.0 的**渠道 Tab 条 + 可折叠卡片**，低频字段收进二级「高级」折叠，保存/状态固定在底部；0.9.3 起「失败」不再是保存条上一个被吞掉的分支——`SettingsSnapshot` 的 `warnings` / `credentialErrors` / `channelErrors` 会经 `snapshotIssues()` 渲染成一份清单，凭据状态读不出来的渠道显示琥珀色「未知」徽标而不是「未配置凭据」。
 
-### 设置页现状（0.9.3 截图，DSH `0.2.0-rc.2`）
+**1.0.0 是三处改动。** ① **设置项一行一个**：字段块从 `repeat(auto-fill,minmax(200px,1fr))`（760px 的面板宽度下实际排成 3 列）改为单列 `minmax(0,1fr)`，一条 CSS 同时修好渠道卡片、高级折叠、公共默认三个使用点，「乱」的观感来自三列而非两列，改单列是对症的。② **顶部渠道页签条钉住**：`nav.ds-tabs` 从第一张卡片里提到面板根的**直属子节点**（`position:sticky` 只在「祖先是滚动容器的直接子节点」时才生效，底部保存条当初也是为此才挪出卡片的），并补上背景、下边线与 `z-index`。③ **一键创建并配置飞书机器人**：飞书卡片展开后多一个按钮，点一下就在**你自己的**飞书租户里建好自建应用、声明所需权限、把凭据写进 DSH 凭据库、把事件订阅方式设为长连接、把 `feishu` 启用进配置，并就地让运行中的适配器采用新凭据——**建完就能直接给这个机器人发消息**。整套流程跑在宿主进程里（`src/settings/feishu-onboarding.ts`），面板只经 `onboarding.start` / `onboarding.status` / `onboarding.cancel` 三个端点驱动和观察：`start` 立刻带着链接返回，流程随后继续活着，因此**页面刷新不会烧掉那条一次性、限一人的设备授权链接**（RPC 请求的 abort signal 绝不接进流程，只有面板上显式的「取消」会——SDK 的 `signal` 是真的会停轮询并让链接失效，不是 UI 假动作）。结果是**逐条事实**而不是一句结论：应用已建（带 appId）、凭据是否入库、是否写进配置、运行中的渠道是否真的重载、事件订阅四种状态各自单列一行；「凭据已保存」与「运行中的渠道没有重新加载」**永远分成两行**——这正是「已落盘 ≠ 已生效」用在一个会在用户账号里留下半成品的功能上。**Telegram / 钉钉没有官方建号接口**，卡片里只给官方入口链接（`t.me/BotFather`、`open-dev.dingtalk.com`）与一句「把拿到的 token 填到下面」，不假装能自动化。
 
-| 概览（渠道 Tab 条 + 卡片） | 高级折叠 |
+当前测试总数 **498 项全过**，DSH 依赖 `^0.2.0-rc.2`（peer `dsh-agent` / `dsh-llm` / `dsh-session`）。一键流程的边界——订阅 PATCH 可能拒绝本流程建出的应用、PATCH 成功**不等于**订阅已生效、不代发布、不适用于 CLI/headless、宿主中途重启会丢掉结果、**拿到链接 ≠ 成功**、明文旧版镜像仍在、取消是真的——在根 `CHANGELOG.md` 的 1.0.0 段逐条写明。
+
+### 设置页现状（1.0.0 截图，DSH `0.2.0-rc.2`）
+
+| 概览（渠道 Tab 条 + 卡片，字段单列） | 高级折叠（同一套单列网格） |
 |---|---|
 | <img src="../packages/connect/docs/images/settings-overview-zh.png" alt="设置页概览" width="420"> | <img src="../packages/connect/docs/images/settings-advanced-zh.png" alt="高级折叠" width="420"> |
+
+| 飞书卡片：一键创建按钮 | Telegram 卡片：官方入口链接 |
+|---|---|
+| <img src="../packages/connect/docs/images/settings-feishu-zh.png" alt="一键创建并配置飞书机器人" width="420"> | <img src="../packages/connect/docs/images/settings-manual-zh.png" alt="Telegram 官方入口链接" width="420"> |
 
 <img src="../packages/connect/docs/images/settings-defaults-zh.png" alt="默认值展示" width="420">
 
 > 英文文档/README 使用同目录下的 `-en` 变体；路径约定见 `docs/PUBLISHING.md` 第 2.4 节。
-> 截图取自干净环境（插件 `link:` 到当前工作树，profile 里所有凭据都是假占位符），拍摄于 `0.2.0-rc.2`：设置导航里的邻居条目此时已叫「内置插件」，面板头部也多了一个「打开配置文件」按钮，与 0.1.5 时期的旧图不同。
+> 截图取自干净环境（插件 `link:` 到当前工作树，profile 里所有凭据都是假占位符），拍摄于 `0.2.0-rc.2`：设置导航里的邻居条目此时已叫「内置插件」，面板头部也多了一个「打开配置文件」按钮，与 0.1.5 时期的旧图不同。后两张是**滚动后的位置**，所以顶部页签条是钉住的（正文从它下面滚过去）——这正是 1.0.0 的第二个改动。
+> **截图里没有「一键创建之后」的结果**：那需要真的在某个租户里建出一个应用，本组截图不做这件事（见 `CHANGELOG.md` 1.0.0 的实测边界）。结果行长什么样，见下面的「一键创建之后会看到什么」。
+
+### 一键创建之后会看到什么
+
+点击「一键创建并配置飞书机器人」后，面板**先**在卡片里给出一条链接（`onboard.link`：「请在浏览器打开下面的链接完成确认（页面里有二维码）」+ 链接正文 + 「链接有效期约 N 分钟，仅能使用一次。」），**再**在底部保存条上逐条列出流程的真实结果。每一条都是一个可以单独成立的事实，不合并成一句结论：
+
+| 结果行 | 含义 |
+|---|---|
+| `onboard.created` | 你的租户里确实建出了应用，附带 `appId` |
+| `onboard.credentialsStored` | 密钥进了 DSH 凭据库 |
+| `onboard.credentialsNotStored` | 密钥**没**进凭据库（此时会再看 `onboard.legacyMirrorFailed`） |
+| `onboard.enableRequested` / `onboard.enableFailed` | `feishu` 是否写进了配置 |
+| `onboard.notApplied` / `onboard.applyPending` | **凭据已落盘，但运行中的渠道没有就地重载**——重启 `dsh` 后确认 |
+| `onboard.subscription.*` | 事件订阅是 `applied` / `failed` / `skipped` / `notAttempted` 四态之一 |
+| `onboard.needsManual` | 需要人工去开放平台收尾的事项 |
+| `onboard.cancelled` / `onboard.expired` / `onboard.createFailed` | 三个终止态；`createFailed` 会原样带上 SDK 的 `code: msg` |
+
+「凭据已写入凭据库」与「运行中的渠道没有重新加载」**永远分成两行**——这就是「已落盘 ≠ 已生效」在一个会在你账号里留下半成品的功能上的具体写法。想把它改成一行「✅ 配置完成」，会同时撞上三道断言：宿主侧 `test/web-settings-roundtrip.test.mjs` 钉住 `credentialsStored: true` 与 `applied: "no"` 必须同时出现（半失败不许变成干净成功），`test/panel-state.test.mjs` 钉住 `onboardingIssues` 每个为真的事实各出一条，`test/client-bundle.test.mjs` 则直接断言底栏里那两行**都在**。
 
 ---
 
@@ -28,13 +54,13 @@
 
 **现在能拿到什么：**
 - 一份配置（`channels` + `channelDefaults` + N 个渠道块）启用任意渠道组合；渠道失败隔离、渠道级配置透传。
-- Web 可视化设置：`/dsh-connect` RPC（`settings.get/save/status` + `credentials.save`）+ 设置持久化（0.9.2 起为 profile patch 中本插件的条目；0.9.0/0.9.1 为 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段；更早是 JSON 状态文件）+ DSH 凭据库读写，配置与凭据**读写闭环**（round-trip 已验证）。
+- Web 可视化设置：`/dsh-connect` RPC（`settings.get/save/status` + `credentials.save` + 一键开通的 `onboarding.start/status/cancel`）+ 设置持久化（0.9.2 起为 profile patch 中本插件的条目；0.9.0/0.9.1 为 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段；更早是 JSON 状态文件）+ DSH 凭据库读写，配置与凭据**读写闭环**（round-trip 已验证）。
 - 凭据从配置挪到凭据库：面板写密钥 → 激活时 `injectSecrets` 注入各渠道适配器（非侵入，渠道适配器零改动）。
-- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；当前 `packages/connect` 单包 **441 项测试全过**（详见 `CHANGELOG.md` 0.9.3）。
+- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；当前 `packages/connect` 单包 **498 项测试全过**（详见 `CHANGELOG.md` 1.0.0）。
 
 **当时还差什么（两项均已完成，保留存档）：**
 1. ~~`dsh web` 内构建并渲染前端 `settings-client` 组件~~——已完成：`client/client.js` 由 `scripts/build-client.mjs` 构建，`test/client-bundle.test.mjs` 直接加载构建产物在 Node 里渲染并断言。
-2. ~~推送 v0.7.2~~——已解决：v0.7.2 及其后的 0.8.0 / 0.8.1 均已发布，当前版本为 0.9.3（见根 `CHANGELOG.md`）。
+2. ~~推送 v0.7.2~~——已解决：v0.7.2 及其后的 0.8.0 / 0.8.1 均已发布，当前版本为 1.0.0（见根 `CHANGELOG.md`）。
 
 ## 1. 重构前的现状：配置与安装复杂度
 
@@ -127,7 +153,7 @@
 
 ## 进展（实现中）
 
-> **历史存档**：以下是 `packages/connect-all/`（聚合包，方案 A）时期的按时间顺序记录，**该包已随 0.8.0 的单包化被删除**。因此本节所有 `packages/connect-all/...` 路径、`dsh-connect-all` 包名与安装命令都已不存在；下文出现的测试计数（**37 / 40 / 44 / 50 / 52 / 56 / 57**）只统计当时那套 connect-all 测试，既不是当前套件、也不可与它相加——当前是 `packages/connect` 单包 **441 项全过**（DSH `0.2.0-rc.2`，见 `CHANGELOG.md` 0.9.3）。文中「前端待联调」一类表述同样只反映当时状态。
+> **历史存档**：以下是 `packages/connect-all/`（聚合包，方案 A）时期的按时间顺序记录，**该包已随 0.8.0 的单包化被删除**。因此本节所有 `packages/connect-all/...` 路径、`dsh-connect-all` 包名与安装命令都已不存在；下文出现的测试计数（**37 / 40 / 44 / 50 / 52 / 56 / 57**）只统计当时那套 connect-all 测试，既不是当前套件、也不可与它相加——当前是 `packages/connect` 单包 **498 项全过**（DSH `0.2.0-rc.2`，见 `CHANGELOG.md` 1.0.0）。文中「前端待联调」一类表述同样只反映当时状态。
 
 ### 已完成：`dsh-connect-all` 聚合包（方案 A 骨架，已 build + 单测通过）
 - 新增 `packages/connect-all/` 单插件：一个 `dsh plugin add dsh-connect dsh-connect-all` 装齐核心 + 4 渠道。

@@ -9,6 +9,7 @@ import z from "@deepseek-ai/schemastery";
 import { FeishuAdapter, type FeishuConfig } from "./adapter.js";
 import { loadCredentials, onboardFeishu, saveCredentials } from "./onboard.js";
 import { feishuMessages } from "./i18n.js";
+import { CHANNEL_SECRET_KEYS } from "../../settings/credential-store.js";
 
 export { FeishuAdapter } from "./adapter.js";
 export type { FeishuConfig } from "./adapter.js";
@@ -127,9 +128,14 @@ export function register(
     let stored = false;
     if (options.credentialStore !== undefined) {
       try {
+        // Keyed by credential *ref* (`DSH_CONNECT_FEISHU_APP_ID`), not by config
+        // key: `CredentialStore.save` looks up each value by its ref, so a
+        // config-keyed map matches nothing, writes nothing — and still reports
+        // success. Derived from the table so the two spellings cannot drift.
+        const refs = CHANNEL_SECRET_KEYS.feishu;
         await options.credentialStore.save("feishu", {
-          appId: credentials.appId,
-          appSecret: credentials.appSecret,
+          [refs.appId]: credentials.appId,
+          [refs.appSecret]: credentials.appSecret,
         });
         stored = true;
       } catch (error) {

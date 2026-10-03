@@ -69,15 +69,22 @@ All channels share the same `dsh-connect` core: commands, `/menu`, notification 
 
 `dsh-connect` adds its own page under **Settings → dsh-connect**. It is a channel tab strip over
 collapsible cards: each card's title row is a button, low-frequency fields hide behind a second-level
-**Advanced** fold, and the save row is pinned to the bottom of the scroll area.
+**Advanced** fold, and the save row is pinned to the bottom of the scroll area. The tab strip is
+pinned too — `position: sticky` at the top of the scroll area, so content scrolls under it rather
+than carrying it away. One setting per row: the field grid is a single column, so the label/control
+pairs never reflow into two or three columns as the pane widens.
 
 | Channels & credentials | Advanced fold open |
 |---|---|
 | ![The dsh-connect settings pane: channel tab strip, the expanded Feishu card with its credential fields, and three collapsed channel cards still showing credential badges](packages/connect/docs/images/settings-overview-en.png) | ![The same pane with one channel's Advanced fold expanded, revealing the callback port and callback path fields](packages/connect/docs/images/settings-advanced-en.png) |
 
+| Feishu card: one-click create | Telegram card: official entry link |
+|---|---|
+| ![The Feishu card's one-click create button, with the tab strip still pinned at the top of a scrolled pane](packages/connect/docs/images/settings-feishu-en.png) | ![The Telegram card, which offers a link to BotFather instead of a create button](packages/connect/docs/images/settings-manual-en.png) |
+
 ![The shared-defaults card and pinned save row at the bottom of the pane](packages/connect/docs/images/settings-defaults-en.png)
 
-中文截图：[概览](packages/connect/docs/images/settings-overview-zh.png) · [高级](packages/connect/docs/images/settings-advanced-zh.png) · [公共默认](packages/connect/docs/images/settings-defaults-zh.png).
+中文截图：[概览](packages/connect/docs/images/settings-overview-zh.png) · [高级](packages/connect/docs/images/settings-advanced-zh.png) · [公共默认](packages/connect/docs/images/settings-defaults-zh.png) · [一键创建](packages/connect/docs/images/settings-feishu-zh.png) · [官方入口](packages/connect/docs/images/settings-manual-zh.png).
 
 > The shots come from a throwaway profile whose credentials are all placeholders. There is no real
 > secret in frame — there cannot be: the host masks values before they reach the browser (see
@@ -88,6 +95,25 @@ that card and scrolls it into view; it does **not** collapse the others — seve
 valid state. Collapsing *unmounts* the card body rather than hiding it, which is safe because a
 secret you typed but have not saved lives in the pane's own state, not in the card. Ticking a
 channel's enable box also expands it.
+
+The Feishu card carries a **Create and configure a Feishu bot in one click** button (1.0.0). It runs
+Feishu's official OAuth 2.0 device-authorization flow from the host: the button hands you a link to
+open in a browser, the app is created there with permissions and the message-receive event preset,
+the credentials go into the DSH credential store, and `feishu` is added to `channels` with
+`transport: websocket` so the bot is reachable without a public URL. **Telegram and DingTalk have no
+equivalent API**, so their cards show a link to the official creation page
+([@BotFather](https://t.me/BotFather) / [open-dev.dingtalk.com](https://open-dev.dingtalk.com/)) and
+an instruction to paste what it returns into the fields below — nothing about those two is
+automated, and the pane does not pretend otherwise.
+
+The result is reported as a list of separate facts, never a single "done": app created (with its
+`appId`) / credentials stored / channel enabled / whether the *running* channels reloaded in place /
+the event-subscription outcome / what is left for you to finish in the vendor console. Credentials
+stored and channel-not-reloaded are always two lines, because a saved credential that the live
+adapter has not picked up is a real state you need to know about — restart `dsh` to apply it. The
+subscription patch is best-effort by design: the SDK notes it may apply only to apps created in the
+developer console, and most configuration changes there need a published version before they take
+effect. `dsh-connect` never publishes on your behalf and never claims the subscription is live.
 
 ### Where settings live
 
@@ -275,7 +301,7 @@ Restart `dsh web` (Host plugins require a process restart to load), complete the
 | `dmMode` | `open` | DM policy: `open` / `allowlist` / `pair` / `disabled` (`disabled` = ignore DMs) |
 | `language` | `zh` | User-facing message language: `zh` (default) or `en` |
 
-> **One-click onboarding**: start the plugin without `appId`/`appSecret` and it prints an onboarding link (valid ~10 minutes). Scan it with Feishu (or click and confirm) and the bot app is created automatically with permissions and event subscriptions preset; credentials are saved to the DSH credential store. (Before 0.9.0 they went to `$DSH_HOME/.dsh-connect/feishu-credentials.json`, which nothing read back — an existing install is backfilled from that file once on boot, then it is unused.) The flow only starts when it can actually be completed: it is skipped when `onboarding: false` or stdout is not a terminal, so a headless service process cannot begin a QR scan nobody can answer.
+> **One-click onboarding**, two entry points. From the **Web settings pane** (1.0.0), press *Create and configure a Feishu bot in one click* — see [the settings pane](#the-settings-pane). From the **CLI**, start the plugin without `appId`/`appSecret` and it prints an onboarding link (valid ~10 minutes). Either way you open the link, confirm in Feishu, and the bot app is created automatically with permissions and event subscriptions preset; credentials are saved to the DSH credential store. (Before 0.9.0 they went to `$DSH_HOME/.dsh-connect/feishu-credentials.json`, which nothing read back — an existing install is backfilled from that file once on boot, then it is unused.) The CLI path only starts when it can actually be completed: it is skipped when `onboarding: false` or stdout is not a terminal, so a headless service process cannot begin a scan nobody can answer. That TTY gate is deliberate and unchanged — the pane button is the new entry point precisely because the pane has a human in front of it.
 
 ## How it works
 

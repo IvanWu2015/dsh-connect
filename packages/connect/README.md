@@ -190,6 +190,8 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under the plug
 
 **Sensitive items** — `appSecret`, `verificationToken`, `encryptKey`, and `feishu-credentials.json`. Prefer environment variables or one-click onboarding; keep them out of version control.
 
+**Creating the app.** Two one-click entry points (1.0.0): the button in the [settings pane](#the-settings-pane), and — from a terminal — starting the plugin with no credentials, which prints an onboarding link. Both create the app with its permissions and event preset and store the credentials in the DSH credential store; the pane additionally enables the channel and pins `transport: websocket`. The CLI path is skipped when `onboarding: false` or stdout is not a terminal, so a headless service never starts a flow nobody can answer. Telegram and DingTalk have no such API — the pane links to their official creation pages instead.
+
 ### `telegram` (Telegram channel)
 
 | Key | Default | Description |
@@ -239,15 +241,23 @@ Environment variables (`FEISHU_*`, `TELEGRAM_*`, `DINGTALK_*`, `DSH_CONNECT_STAT
 `dsh-connect` adds its own page under **Settings → dsh-connect**. It is a channel
 tab strip over collapsible cards: each card is headed by a button, its
 low-frequency fields sit behind a second-level **Advanced** fold, and
-Save/status stay pinned to the bottom of the scroll region.
+Save/status stay pinned to the bottom of the scroll region. The tab strip is
+pinned too — `position: sticky` at the top of the scroll region, so content
+scrolls under it rather than carrying it off-screen. Settings are one per row:
+the field grid is a single column, so the label/control pairs never reflow into
+two or three columns as the pane widens.
 
 | Channels & credentials | Advanced fields opened |
 |---|---|
 | ![dsh-connect settings pane: the channel tab strip, the Feishu card expanded with its credential fields, and three folded channel cards each showing a credentials badge](docs/images/settings-overview-zh.png) | ![the same pane with a channel's Advanced fold opened, revealing the callback port and path fields](docs/images/settings-advanced-zh.png) |
 
+| Feishu card: one-click create | Telegram card: official entry link |
+|---|---|
+| ![the Feishu card's one-click create button, the pane scrolled with the tab strip still pinned at the top](docs/images/settings-feishu-zh.png) | ![the Telegram card, which offers a BotFather link instead of a create button](docs/images/settings-manual-zh.png) |
+
 ![the common-defaults card and the pinned save bar at the bottom of the pane](docs/images/settings-defaults-zh.png)
 
-English captures: [overview](docs/images/settings-overview-en.png) · [advanced](docs/images/settings-advanced-en.png) · [defaults](docs/images/settings-defaults-en.png).
+English captures: [overview](docs/images/settings-overview-en.png) · [advanced](docs/images/settings-advanced-en.png) · [defaults](docs/images/settings-defaults-en.png) · [one-click create](docs/images/settings-feishu-en.png) · [official entry](docs/images/settings-manual-en.png).
 
 > Captured from a throwaway profile whose credentials are all placeholders. Nothing
 > above contains a real secret — and it could not, because the host masks every
@@ -259,6 +269,24 @@ others — several open at once is a legitimate state. Collapsing a card unmount
 its body rather than hiding it, which is safe because an unsaved secret you typed
 lives in the pane's own state, not in the card. Ticking a channel's enable box
 opens it too.
+
+The Feishu card carries a **Create and configure a Feishu bot in one click** button (1.0.0). The
+host runs Feishu's official OAuth 2.0 device-authorization flow: the button hands you a link to open
+in a browser, the app is created there with its permissions and message-receive event preset, the
+credentials go into the DSH credential store, and `feishu` is added to `channels` with
+`transport: websocket` — reachable without a public URL. **Telegram and DingTalk have no equivalent
+API**, so their cards show a link to the official creation page
+([@BotFather](https://t.me/BotFather) / [open-dev.dingtalk.com](https://open-dev.dingtalk.com/)) and
+an instruction to paste what it returns into the fields below. Nothing about those two is automated.
+
+The result is a list of separate facts in the save bar, never a single "done": app created (with its
+`appId`) / credentials stored / channel enabled / whether the *running* channels reloaded in place /
+the event-subscription outcome / what is left for you in the vendor console. Credentials-stored and
+channel-not-reloaded are always two lines — a saved credential the live adapter has not picked up is
+a state you need to know about, and restarting `dsh` applies it. The subscription patch is
+best-effort by design: the SDK notes it may apply only to apps created in the developer console, and
+most configuration changes there need a published version before they take effect. This plugin never
+publishes on your behalf and never claims the subscription is live.
 
 ## User settings
 

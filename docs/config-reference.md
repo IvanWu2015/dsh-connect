@@ -67,6 +67,14 @@
 | `threadIsolation` | 线程隔离 |
 | `language` | 渠道默认语言 |
 
+> **一键创建（1.0.0）**：设置页的飞书卡片里有一个「一键创建并配置飞书机器人」按钮，走飞书官方的 OAuth 2.0 设备授权流（`@larksuiteoapi/node-sdk` 的 `registerApp`）：点一下 → 在浏览器里确认 → 应用建好、权限（收发/读历史消息、`im.message.receive_v1` 事件）配好、凭据存进 DSH 凭据库，并把 `feishu` 写进 `channels`、把 `transport` 定为 `websocket`（长连接，不需要公网地址）。
+>
+> 它**不**替你做全部事情，面板会逐条列出真实结果：应用已创建 / 凭据已入库 / 渠道已启用 / 运行中的渠道是否就地重载 / 事件订阅是 `applied`、`failed`、`skipped` 还是 `not-attempted` / 还剩什么要人工去开放平台收尾。**「凭据已写入凭据库」和「运行中的渠道没有重新加载」是两行**，后者请重启 `dsh` 后确认。事件订阅的 PATCH 可能被平台拒绝（SDK 注明「仅支持更新开发者后台创建的自建应用」，而 `registerApp` 走的渠道 SDK 未说明），也可能返回 200 却未真正生效（多数项要「提交发布」并审核），所以这一步永远是尽力而为，`dsh-connect` 不代你发布。
+>
+> 这条路径只对**有真人在看的 Web 设置页**开放。CLI 启动路径（`dsh` 直接跑，以及没有 TTY 的 `dsh web`）仍然记录 `onboardingSkipped` 直接返回（TTY 闸门见 `channels/feishu/index.ts:110`），这是有意的，不要「修好」它。
+>
+> **Telegram 和钉钉没有对应的官方「创建机器人」API**，所以它们的卡片里只放一个指向官方创建入口的链接（`https://t.me/BotFather` / `https://open-dev.dingtalk.com/`）和一句「把拿到的凭据粘到下面的字段里」。这两个渠道的配置方式与以前完全一样，没有自动化的部分。
+
 ### `telegram`
 | 键 | 说明 |
 |---|---|
@@ -104,7 +112,11 @@
 
 **面板 UI**：渠道 Tab 条 + 可折叠卡片（低频字段收在二级「高级」折叠里，保存/状态固定在底部）；每个凭据字段旁边有一行只读的 `当前值：…` 掩码预览（`未配置` 表示空），掩码在宿主侧生成。钉钉的两个传输方式（webhook 推送 / stream 模式）互为互斥的凭据**组**（组内 all-of，组间 any-of）；`web` 渠道没有任何凭据，按定义即为「已配置」。
 
-<img src="../packages/connect/docs/images/settings-overview-zh.png" alt="dsh-connect Web 设置页：渠道 Tab 条 + 可折叠卡片" width="760">
+**1.0.0 起**：设置项一律**单列**（`grid-template-columns:minmax(0,1fr)`，一行一个，不再按宽度自动排 2–3 列），渠道 Tab 条 `position:sticky` 钉在滚动区顶部、正文从它下面滚过去，飞书卡片多了一个一键创建按钮（见上一节的 `feishu` 注）。
+
+<img src="../packages/connect/docs/images/settings-overview-zh.png" alt="dsh-connect Web 设置页：渠道 Tab 条 + 可折叠卡片，字段单列" width="760">
+
+<img src="../packages/connect/docs/images/settings-feishu-zh.png" alt="dsh-connect Web 设置页：飞书卡片的一键创建按钮（滚动后页签条仍钉在顶部）" width="760">
 
 <img src="../packages/connect/docs/images/settings-advanced-zh.png" alt="dsh-connect Web 设置页：二级「高级」折叠" width="760">
 

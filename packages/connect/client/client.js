@@ -49,7 +49,15 @@ var React = __toESM(require("react"), 1);
 
 // lib/settings/settings-rpc.js
 var SETTINGS_RPC_CHANNEL = "/dsh-connect";
-var SETTINGS_ENDPOINTS = Object.freeze(["settings.get", "settings.save", "credentials.save", "settings.status"]);
+var SETTINGS_ENDPOINTS = Object.freeze([
+  "settings.get",
+  "settings.save",
+  "credentials.save",
+  "settings.status",
+  "onboarding.start",
+  "onboarding.status",
+  "onboarding.cancel"
+]);
 var MAX_BODY_BYTES = 1024 * 1024;
 
 // lib/settings/rpc-client.js
@@ -257,6 +265,31 @@ var LOCALES = {
     credentialUnknown: "\u51ED\u636E\u72B6\u6001\u672A\u77E5",
     credentialUnknownHint: "\u65E0\u6CD5\u8BFB\u53D6\u5DF2\u5B58\u50A8\u7684\u51ED\u636E\uFF0C\u8BF7\u786E\u8BA4\u51ED\u636E\u5E93\u53EF\u8BBF\u95EE\u540E\u91CD\u8BD5\u3002",
     channelFailed: "\u6E20\u9053\u542F\u52A8\u5931\u8D25\uFF1A",
+    "onboard.create": "\u4E00\u952E\u521B\u5EFA\u5E76\u914D\u7F6E\u98DE\u4E66\u673A\u5668\u4EBA",
+    "onboard.create.hint": "\u81EA\u52A8\u521B\u5EFA\u4E00\u4E2A\u98DE\u4E66\u81EA\u5EFA\u5E94\u7528\u3001\u58F0\u660E\u6240\u9700\u6743\u9650\uFF0C\u628A\u51ED\u636E\u5B58\u5230\u672C\u5730\u5E76\u542F\u7528\u8FD9\u4E2A\u6E20\u9053\u3002\u70B9\u5B8C\u5728\u6D4F\u89C8\u5668\u91CC\u786E\u8BA4\u4E00\u6B21\u5373\u53EF\u3002",
+    "onboard.starting": "\u6B63\u5728\u7533\u8BF7\u2026",
+    "onboard.waiting": "\u7B49\u5F85\u5728\u98DE\u4E66\u4E2D\u786E\u8BA4\u2026",
+    "onboard.link": "\u8BF7\u5728\u6D4F\u89C8\u5668\u6253\u5F00\u4E0B\u9762\u7684\u94FE\u63A5\u5B8C\u6210\u786E\u8BA4\uFF08\u9875\u9762\u91CC\u6709\u4E8C\u7EF4\u7801\uFF09\uFF1A",
+    "onboard.linkExpiry": "\u94FE\u63A5\u6709\u6548\u671F\u7EA6 {minutes} \u5206\u949F\uFF0C\u4EC5\u80FD\u4F7F\u7528\u4E00\u6B21\u3002",
+    "onboard.cancel": "\u53D6\u6D88",
+    "onboard.manual.telegram": "Telegram \u6CA1\u6709\u521B\u5EFA\u673A\u5668\u4EBA\u7684\u63A5\u53E3\uFF1A\u8BF7\u5728 Telegram \u91CC\u627E @BotFather \u7533\u8BF7\u4E00\u4E2A\u673A\u5668\u4EBA\uFF0C\u518D\u628A\u62FF\u5230\u7684 Bot Token \u586B\u5230\u4E0B\u9762\u3002",
+    "onboard.manual.dingtalk": "\u9489\u9489\u673A\u5668\u4EBA\u9700\u8981\u5728\u9489\u9489\u5F00\u653E\u5E73\u53F0\u624B\u52A8\u521B\u5EFA\uFF0C\u518D\u628A\u62FF\u5230\u7684\u51ED\u636E\u586B\u5230\u4E0B\u9762\u3002",
+    "onboard.created": "\u5DF2\u521B\u5EFA\u5E94\u7528",
+    "onboard.credentialsStored": "\u51ED\u636E\u5DF2\u5199\u5165\u51ED\u636E\u5E93",
+    "onboard.credentialsNotStored": "\u51ED\u636E\u6CA1\u6709\u5199\u5165\u51ED\u636E\u5E93",
+    "onboard.legacyMirrorFailed": "\u65E7\u7248\u7684\u51ED\u636E\u6587\u4EF6\u4E5F\u6CA1\u6709\u5199\u5165",
+    "onboard.enableRequested": "\u5DF2\u5728\u914D\u7F6E\u91CC\u542F\u7528\u98DE\u4E66\u6E20\u9053",
+    "onboard.enableFailed": "\u6CA1\u80FD\u628A\u98DE\u4E66\u6E20\u9053\u5199\u8FDB\u914D\u7F6E",
+    "onboard.notApplied": "\u51ED\u636E\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u8FD0\u884C\u4E2D\u7684\u6E20\u9053\u6CA1\u80FD\u91CD\u65B0\u52A0\u8F7D\uFF0C\u8BF7\u91CD\u542F dsh \u540E\u786E\u8BA4\u3002",
+    "onboard.applyPending": "\u6D41\u7A0B\u6CA1\u6709\u8D70\u5B8C\uFF0C\u8FD0\u884C\u4E2D\u7684\u6E20\u9053\u5C1A\u672A\u91CD\u65B0\u52A0\u8F7D\uFF0C\u8BF7\u91CD\u542F dsh \u540E\u786E\u8BA4\u3002",
+    "onboard.needsManual": "\u4E8B\u4EF6\u8BA2\u9605\u65B9\u5F0F\u8FD8\u9700\u8981\u5230\u98DE\u4E66\u5F00\u653E\u5E73\u53F0\u624B\u52A8\u786E\u8BA4\u3002",
+    "onboard.cancelled": "\u5DF2\u53D6\u6D88\u521B\u5EFA",
+    "onboard.expired": "\u786E\u8BA4\u94FE\u63A5\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u70B9\u51FB\u521B\u5EFA\u3002",
+    "onboard.createFailed": "\u521B\u5EFA\u5931\u8D25",
+    "onboard.subscription.applied": "\u4E8B\u4EF6\u8BA2\u9605\u5DF2\u8BBE\u4E3A\u957F\u8FDE\u63A5",
+    "onboard.subscription.failed": "\u4E8B\u4EF6\u8BA2\u9605\u8BBE\u7F6E\u5931\u8D25",
+    "onboard.subscription.skipped": "\u6CA1\u6709\u53EF\u7528\u51ED\u636E\uFF0C\u672A\u8BBE\u7F6E\u4E8B\u4EF6\u8BA2\u9605",
+    "onboard.subscription.notAttempted": "\u672A\u80FD\u8D70\u5230\u8BBE\u7F6E\u4E8B\u4EF6\u8BA2\u9605\u8FD9\u4E00\u6B65",
     "w.credentialsStoredNotApplied": "\u51ED\u636E\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u8FD0\u884C\u4E2D\u7684\u6E20\u9053\u6CA1\u80FD\u91CD\u65B0\u52A0\u8F7D\uFF0C\u8BF7\u91CD\u542F dsh \u540E\u786E\u8BA4\u3002",
     "status.loading": "\u52A0\u8F7D\u4E2D\u2026",
     "status.idle": "\u5C31\u7EEA",
@@ -347,6 +380,31 @@ var LOCALES = {
     credentialUnknown: "Credential state unknown",
     credentialUnknownHint: "The stored credentials could not be read \u2014 check that the credential store is reachable, then try again.",
     channelFailed: "Channel failed to start:",
+    "onboard.create": "Create and configure a Feishu bot in one click",
+    "onboard.create.hint": "Creates a Feishu custom app, declares the permissions it needs, stores the credentials locally, and enables this channel. You confirm once in the browser and it is done.",
+    "onboard.starting": "Requesting\u2026",
+    "onboard.waiting": "Waiting for you to confirm in Feishu\u2026",
+    "onboard.link": "Open this link in a browser to confirm (the page shows a QR code):",
+    "onboard.linkExpiry": "The link is valid for about {minutes} minutes and works only once.",
+    "onboard.cancel": "Cancel",
+    "onboard.manual.telegram": "Telegram has no bot-creation API: ask @BotFather inside Telegram for a bot, then paste the Bot Token into the field below.",
+    "onboard.manual.dingtalk": "A DingTalk bot has to be created by hand on the DingTalk open platform; paste the credentials you get into the fields below.",
+    "onboard.created": "App created",
+    "onboard.credentialsStored": "Credentials written to the credential store",
+    "onboard.credentialsNotStored": "Credentials were not written to the credential store",
+    "onboard.legacyMirrorFailed": "The legacy credential file was not written either",
+    "onboard.enableRequested": "Feishu enabled in the config",
+    "onboard.enableFailed": "Feishu could not be written into the config",
+    "onboard.notApplied": "The credential was saved, but the running channels did not reload it \u2014 restart dsh to be sure.",
+    "onboard.applyPending": "The flow did not finish, so the running channels have not reloaded \u2014 restart dsh to be sure.",
+    "onboard.needsManual": "The event subscription mode still needs confirming by hand on the Feishu open platform.",
+    "onboard.cancelled": "Creation cancelled",
+    "onboard.expired": "The confirmation link expired \u2014 click create again.",
+    "onboard.createFailed": "Creation failed",
+    "onboard.subscription.applied": "Event subscription set to long connection",
+    "onboard.subscription.failed": "Setting the event subscription failed",
+    "onboard.subscription.skipped": "No usable credentials, so the event subscription was not set",
+    "onboard.subscription.notAttempted": "The flow never reached the event subscription step",
     "w.credentialsStoredNotApplied": "The credential was saved, but the running channels did not reload it \u2014 restart dsh to be sure.",
     "status.loading": "Loading\u2026",
     "status.idle": "Ready",
@@ -455,6 +513,33 @@ function snapshotIssues(snap, warnings) {
   }
   return issues;
 }
+function onboardingIssues(outcome) {
+  if (!outcome) return [];
+  const issues = [];
+  const push = (code, extra) => issues.push({
+    kind: "onboarding",
+    code,
+    key: `onboarding:${code}`,
+    ...extra?.reason === void 0 ? {} : { reason: extra.reason },
+    ...extra?.appId === void 0 ? {} : { appId: extra.appId }
+  });
+  if (!outcome.created) {
+    const code = outcome.reason === "abort" ? "cancelled" : outcome.reason === "expired_token" ? "expired" : "createFailed";
+    push(code, { reason: outcome.reason });
+    return issues;
+  }
+  push("created", { appId: outcome.appId });
+  push(outcome.credentialsStored ? "credentialsStored" : "credentialsNotStored");
+  if (!outcome.credentialsStored && !outcome.legacyMirrorWritten) push("legacyMirrorFailed");
+  push(outcome.enableRequested ? "enableRequested" : "enableFailed");
+  const subscription = outcome.subscription ?? {};
+  const subscriptionCode = subscription.status === "applied" ? "applied" : subscription.status === "failed" ? "failed" : subscription.status === "not-attempted" ? "notAttempted" : "skipped";
+  push(`subscription.${subscriptionCode}`, { reason: subscription.reason });
+  if (subscription.needsManualAction === true) push("needsManual");
+  if (outcome.applied === "no") push("notApplied");
+  else if (outcome.applied !== "yes") push("applyPending");
+  return issues;
+}
 
 // client/settings-client.mjs
 var name = "dsh-connect-settings";
@@ -469,7 +554,7 @@ var STYLE = `
 .dsh-connect-settings .ds-card{display:flex;flex-direction:column;gap:10px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg);padding:12px 14px}
 .dsh-connect-settings .ds-card-title{margin:0;font-size:13px;font-weight:600}
 .dsh-connect-settings .ds-note{margin:0;font-size:11px;line-height:1.5;color:var(--ds-muted)}
-.dsh-connect-settings .ds-tabs{display:flex;flex-wrap:wrap;gap:6px}
+.dsh-connect-settings .ds-tabs{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;background:var(--ds-bg);border-bottom:1px solid var(--ds-border)}
 .dsh-connect-settings .ds-tab{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--ds-border);border-radius:14px;background:transparent;color:var(--ds-text);font:inherit;font-size:12px;cursor:pointer}
 .dsh-connect-settings .ds-tab:hover{background:var(--ds-hover)}
 .dsh-connect-settings .ds-tab[aria-expanded=true]{border-color:var(--ds-accent);color:var(--ds-accent)}
@@ -485,7 +570,15 @@ var STYLE = `
 .dsh-connect-settings .ds-chevron{width:7px;height:7px;margin:-3px 4px 0 auto;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .15s ease;flex:none}
 .dsh-connect-settings [aria-expanded=true]>.ds-chevron,.dsh-connect-settings [aria-expanded=true] .ds-chevron{transform:rotate(-135deg);margin-top:2px}
 .dsh-connect-settings .ds-badge{flex:none;font-size:11px;font-weight:500;padding:1px 8px;border-radius:99px;background:var(--ds-bg);color:var(--ds-muted);border:1px solid var(--ds-border-2)}
-.dsh-connect-settings .ds-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px 14px}
+/* One field per row, deliberately. This was an auto-fill track of 200px
+   minimums, which at the pane's real width (708px inside the 760px cap) laid
+   out *three* columns of label-above-control fields \u2014 shorter, but each one
+   narrow enough that a hint wrapped to four lines and the eye had no single
+   path down the form. The 0 minimum rather than a bare 1fr is so a long
+   unbroken value can't push the track wider than its container (same reasoning
+   as the box-sizing reset). Three call sites share this rule: the channel
+   body, the advanced fold, and the defaults card. */
+.dsh-connect-settings .ds-fields{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 .dsh-connect-settings .ds-field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .dsh-connect-settings .ds-control{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ds-muted)}
 .dsh-connect-settings .ds-control.ds-check-field{flex-direction:row;align-items:center;gap:6px}
@@ -507,6 +600,15 @@ var STYLE = `
 .dsh-connect-settings .ds-btn{height:32px;padding:0 18px;border:0;border-radius:6px;background:var(--dsw-alias-button-primary-fill,var(--ds-accent));color:var(--dsw-alias-label-primary-foreground,#ffffff);font:inherit;font-weight:500;cursor:pointer}
 .dsh-connect-settings .ds-btn:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--ds-accent))}
 .dsh-connect-settings .ds-btn:disabled{opacity:.55;cursor:default}
+/* The one-click creation block, inside the channel card's body. A dashed box
+   rather than a solid one: it is a one-off action, not another settings group.
+   The link gets word-break:break-all for the same reason .ds-preview does \u2014 a
+   Feishu authorization URL is long, unbreakable, and would otherwise widen the
+   card and reintroduce the horizontal overflow this pane already fixed once. */
+.dsh-connect-settings .ds-onboard{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px dashed var(--ds-border-2);border-radius:8px}
+.dsh-connect-settings .ds-onboard-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.dsh-connect-settings .ds-onboard-btn{align-self:flex-start}
+.dsh-connect-settings .ds-onboard a{color:var(--ds-accent);word-break:break-all}
 .dsh-connect-settings .ds-status{font-size:12px;color:var(--ds-muted)}
 `;
 function injectStyles() {
@@ -593,7 +695,7 @@ function renderSecretField(ch, field, form, onChange, t) {
   );
 }
 function renderChannel(ch, ctx) {
-  const { form, creds, unknownCreds, t, open, advOverride, setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced } = ctx;
+  const { form, creds, unknownCreds, t, open, advOverride, setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced, onboarding, onOnboard, onOnboardCancel } = ctx;
   const name2 = tr(t, `channel.${ch}`, ch);
   const channelHint = optionalText(t, `channel.${ch}.hint`);
   const isOpen = open.has(ch);
@@ -664,6 +766,11 @@ function renderChannel(ch, ctx) {
         ...CHANNEL_SECRET_FIELDS[ch].map((field) => renderSecretField(ch, field, form, (value) => setField(ch, field, value), t)),
         ...common.map(configField)
       ),
+      // Inside the card's body, after the credentials the flow would fill in:
+      // the button belongs next to the fields it writes, and not behind the
+      // advanced fold, since it is the one thing on this pane a first-time user
+      // is looking for.
+      renderOnboarding(ch, { t, onboarding, onOnboard, onOnboardCancel }),
       advanced.length === 0 ? null : h(
         "div",
         { className: "ds-adv" },
@@ -681,6 +788,63 @@ function renderChannel(ch, ctx) {
         ),
         advOpen ? h("div", { className: "ds-fields", id: `ds-ch-${ch}-adv` }, ...advanced.map(configField)) : null
       )
+    ) : null
+  );
+}
+var MANUAL_CREATE_URL = {
+  telegram: "https://t.me/BotFather",
+  dingtalk: "https://open-dev.dingtalk.com/"
+};
+var ONBOARD_POLL_MS = 1500;
+var ONBOARD_POLL_LIMIT_MS = 16 * 60 * 1e3;
+var sleep = (ms) => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});
+function renderOnboarding(ch, ctx) {
+  const { t, onboarding, onOnboard, onOnboardCancel } = ctx;
+  const manual = MANUAL_CREATE_URL[ch];
+  if (manual) {
+    return h(
+      "div",
+      { className: "ds-onboard" },
+      h("p", { className: "ds-hint" }, tr(t, `onboard.manual.${ch}`, manual)),
+      h("a", { href: manual, target: "_blank", rel: "noreferrer noopener" }, manual)
+    );
+  }
+  if (ch !== "feishu") return null;
+  const busy = onboarding?.busy === true;
+  const link = onboarding?.link;
+  const pending = busy || onboarding?.phase === "waiting";
+  const label = busy && !link ? t("onboard.starting") : pending ? t("onboard.waiting") : t("onboard.create");
+  const minutes = Math.max(1, Math.round((link?.expiresInSeconds ?? 0) / 60));
+  return h(
+    "div",
+    { className: "ds-onboard" },
+    h("p", { className: "ds-hint" }, t("onboard.create.hint")),
+    h(
+      "div",
+      { className: "ds-onboard-row" },
+      h("button", {
+        type: "button",
+        // Deliberately not a bare `ds-btn`: the bundle test finds the save button
+        // as the first element whose className is exactly that, and a second one
+        // would make which button it finds depend on render order.
+        className: "ds-btn ds-onboard-btn",
+        disabled: pending,
+        onClick: onOnboard
+      }, label),
+      // A real cancel, not a UI gesture: the SDK's `registerApp` takes a signal,
+      // so this stops the polling and genuinely invalidates the link.
+      pending ? h("button", { type: "button", className: "ds-advanced-toggle", onClick: onOnboardCancel }, t("onboard.cancel")) : null
+    ),
+    link ? h(
+      "p",
+      { className: "ds-hint ds-onboard-link" },
+      h("span", null, t("onboard.link")),
+      " ",
+      h("a", { href: link.url, target: "_blank", rel: "noreferrer noopener" }, link.url),
+      " ",
+      h("span", null, tr(t, "onboard.linkExpiry", "").replace("{minutes}", String(minutes)))
     ) : null
   );
 }
@@ -706,6 +870,15 @@ function renderIssue(issue, t) {
       h("code", { className: "ds-issue-reason" }, issue.reason)
     );
   }
+  if (issue.kind === "onboarding") {
+    return h(
+      "li",
+      { className: "ds-issue", key: issue.key },
+      h("span", null, tr(t, `onboard.${issue.code}`, issue.code)),
+      issue.appId === void 0 ? null : h("code", { className: "ds-issue-reason" }, issue.appId),
+      issue.reason === void 0 ? null : h("code", { className: "ds-issue-reason" }, issue.reason)
+    );
+  }
   return h(
     "li",
     { className: "ds-issue", key: issue.key },
@@ -719,6 +892,7 @@ function ConnectSettingsTab({ rpcCall, t }) {
   const [openOverride, setOpenOverride] = React.useState(null);
   const [advOverride, setAdvOverride] = React.useState(null);
   const [notices, setNotices] = React.useState([]);
+  const [onboarding, setOnboarding] = React.useState(null);
   const rpc = (endpoint, payload) => rpcCall(endpoint, payload);
   React.useEffect(() => {
     let alive = true;
@@ -751,6 +925,36 @@ function ConnectSettingsTab({ rpcCall, t }) {
       setStatus("error");
     }
   };
+  const onOnboard = async () => {
+    setOnboarding({ busy: true });
+    try {
+      setOnboarding(await callRpc(rpc, "onboarding.start", { channel: "feishu" }));
+      const startedAt = Date.now();
+      for (; ; ) {
+        const now = await callRpc(rpc, "onboarding.status", {});
+        setOnboarding(now);
+        if (now?.phase !== "waiting") break;
+        if (Date.now() - startedAt > ONBOARD_POLL_LIMIT_MS) break;
+        await sleep(ONBOARD_POLL_MS);
+      }
+    } catch (error) {
+      setOnboarding({ phase: "failed", outcome: { created: false, reason: error?.message ?? String(error) } });
+    } finally {
+      try {
+        const snap = await loadSettings(rpc);
+        setForm(snapshotToForm(snap));
+        setCreds(snap.credentials ?? {});
+        setNotices(snapshotIssues(snap));
+      } catch {
+      }
+    }
+  };
+  const onOnboardCancel = async () => {
+    try {
+      setOnboarding(await callRpc(rpc, "onboarding.cancel", {}));
+    } catch {
+    }
+  };
   const setChannels = (ch, on) => {
     setForm((f) => ({ ...f, channels: on ? [...f.channels, ch] : f.channels.filter((x) => x !== ch) }));
     setOpenOverride(on && !open.has(ch) ? new Set(open).add(ch) : new Set(open));
@@ -777,6 +981,7 @@ function ConnectSettingsTab({ rpcCall, t }) {
   const unknownCreds = new Set(
     notices.filter((n) => n.kind === "credentialUnknown").map((n) => n.channel)
   );
+  const issues = [...notices, ...onboardingIssues(onboarding?.outcome)];
   const toggleOpen = (ch) => setOpenOverride(toggleInSet(open, ch));
   const toggleAdvanced = (ch) => setAdvOverride(toggleInSet(advOverride ?? /* @__PURE__ */ new Set(), ch));
   const focusChannel = (ch) => {
@@ -787,6 +992,33 @@ function ConnectSettingsTab({ rpcCall, t }) {
   return h(
     "div",
     { className: "dsh-connect-settings" },
+    // A tab strip, but not `role=tablist`: several channels can be open at
+    // once, so there is no single "selected" tab to report. These are buttons
+    // that open and jump to a channel, and `aria-expanded` says so honestly.
+    //
+    // A direct child of the root, and not inside the channels card where it
+    // used to live: `position:sticky` pins to the nearest scrollport only while
+    // the element's containing block is the scrolled box. Nested in a card it
+    // could never leave that card, so the strip scrolled away with the content
+    // — the same reason the footer below sits here. `top:0` lines up with the
+    // scroller's edge because the host's own scroller has no top padding.
+    h(
+      "nav",
+      { className: "ds-tabs", "aria-label": t("tabsAria") },
+      ...ALL_CHANNELS.map((ch) => h(
+        "button",
+        {
+          key: `tab-${ch}`,
+          type: "button",
+          className: "ds-tab",
+          "aria-expanded": open.has(ch),
+          "aria-controls": open.has(ch) ? `ds-ch-${ch}-body` : void 0,
+          onClick: () => focusChannel(ch)
+        },
+        h("span", { className: "ds-dot", "data-on": form.channels.includes(ch) ? "1" : "0" }),
+        tr(t, `channel.${ch}`, ch)
+      ))
+    ),
     h(
       "section",
       { className: "ds-card" },
@@ -794,26 +1026,6 @@ function ConnectSettingsTab({ rpcCall, t }) {
       // Explains the masking before the user meets a truncated value and wonders
       // whether their stored secret is corrupt.
       h("p", { className: "ds-note" }, t("previewNote")),
-      // A tab strip, but not `role=tablist`: several channels can be open at
-      // once, so there is no single "selected" tab to report. These are buttons
-      // that open and jump to a channel, and `aria-expanded` says so honestly.
-      h(
-        "nav",
-        { className: "ds-tabs", "aria-label": t("tabsAria") },
-        ...ALL_CHANNELS.map((ch) => h(
-          "button",
-          {
-            key: `tab-${ch}`,
-            type: "button",
-            className: "ds-tab",
-            "aria-expanded": open.has(ch),
-            "aria-controls": open.has(ch) ? `ds-ch-${ch}-body` : void 0,
-            onClick: () => focusChannel(ch)
-          },
-          h("span", { className: "ds-dot", "data-on": form.channels.includes(ch) ? "1" : "0" }),
-          tr(t, `channel.${ch}`, ch)
-        ))
-      ),
       ...ALL_CHANNELS.map((ch) => renderChannel(ch, {
         form,
         creds,
@@ -825,7 +1037,10 @@ function ConnectSettingsTab({ rpcCall, t }) {
         setField,
         setChannelConfig,
         toggleOpen,
-        toggleAdvanced
+        toggleAdvanced,
+        onboarding,
+        onOnboard,
+        onOnboardCancel
       }))
     ),
     h(
@@ -866,7 +1081,7 @@ function ConnectSettingsTab({ rpcCall, t }) {
       // answers to *this* save, and the bar is the one part of the pane that is
       // always on screen. A channel card can be folded, or scrolled past, and
       // 「已保存」 next to nothing else is the whole complaint.
-      notices.length === 0 ? null : h("ul", { className: "ds-issues" }, ...notices.map((issue) => renderIssue(issue, t))),
+      issues.length === 0 ? null : h("ul", { className: "ds-issues" }, ...issues.map((issue) => renderIssue(issue, t))),
       h("button", { className: "ds-btn", type: "button", onClick: onSave, disabled: status === "saving" }, t("save")),
       // Rendering `status` directly leaks the raw state ids (`idle`, `saving`)
       // into the UI; every state has a locale entry instead.

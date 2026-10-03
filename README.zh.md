@@ -69,14 +69,20 @@ examples/
 
 `dsh-connect` 在 **设置 → dsh-connect** 下有自己的页面。它是一条渠道页签条 + 若干可折叠卡片：
 每张卡片由一个按钮做标题行，低频字段收在第二级的**高级选项**折叠里，保存/状态固定在滚动区底部。
+页签条本身也**钉在滚动区顶部**（`position: sticky`），内容从它下面滚过去，而不是把它带走。
+设置项**一行一个**：字段网格是单列，面板变宽时标签/控件对不会再回流成两三列。
 
 | 渠道与凭据 | 展开高级选项 |
 |---|---|
 | ![dsh-connect 设置面板：渠道页签条、展开的飞书卡片及其凭据字段，以及三张收起后仍显示凭据徽标的渠道卡片](packages/connect/docs/images/settings-overview-zh.png) | ![同一面板展开某渠道的「高级选项」折叠，露出回调端口与回调路径字段](packages/connect/docs/images/settings-advanced-zh.png) |
 
+| 飞书卡片：一键创建 | Telegram 卡片：官方入口链接 |
+|---|---|
+| ![飞书卡片上的一键创建按钮，此时面板已滚动、页签条仍钉在顶部](packages/connect/docs/images/settings-feishu-zh.png) | ![Telegram 卡片，给的是 BotFather 链接而不是创建按钮](packages/connect/docs/images/settings-manual-zh.png) |
+
 ![面板底部的公共默认卡片与固定保存条](packages/connect/docs/images/settings-defaults-zh.png)
 
-English screenshots: [overview](packages/connect/docs/images/settings-overview-en.png) · [advanced](packages/connect/docs/images/settings-advanced-en.png) · [shared defaults](packages/connect/docs/images/settings-defaults-en.png).
+English screenshots: [overview](packages/connect/docs/images/settings-overview-en.png) · [advanced](packages/connect/docs/images/settings-advanced-en.png) · [shared defaults](packages/connect/docs/images/settings-defaults-en.png) · [one-click create](packages/connect/docs/images/settings-feishu-en.png) · [official entry](packages/connect/docs/images/settings-manual-en.png).
 
 > 截图取自一个凭据全是占位符的一次性 profile。上面没有任何真实密钥——也不可能有：宿主会在
 > 值到达浏览器之前完成打码（见下文[面板回显与脱敏](#面板回显与脱敏)）。
@@ -85,6 +91,21 @@ English screenshots: [overview](packages/connect/docs/images/settings-overview-e
 **不会**收起其他卡片——多张同时展开是合法状态。收起是**卸载**卡片主体而不是隐藏它，这之所
 以安全，是因为你刚输入但尚未保存的密钥存在面板自身的 state 里，而不在卡片里。勾选某渠道的
 启用框同样会展开它。
+
+飞书卡片上有一个「**一键创建并配置飞书机器人**」按钮（1.0.0）。它由宿主执行飞书官方的
+OAuth 2.0 设备授权流：按钮先给你一条在浏览器里打开的链接，应用在那里建好并预设好权限与
+接收消息的事件，凭据存进 DSH 凭据库，`feishu` 被写进 `channels` 且 `transport` 定为
+`websocket`——不需要公网地址就能跑起来。**Telegram 与钉钉没有对应的官方 API**，所以它们的
+卡片里只放一个官方创建入口的链接（[@BotFather](https://t.me/BotFather) /
+[open-dev.dingtalk.com](https://open-dev.dingtalk.com/)）和一句「把拿到的凭据粘到下面的字段
+里」——这两个渠道没有任何自动化，面板也不会假装有。
+
+结果是一份**逐条列出的事实**，不会合并成一句「完成」：应用已创建（带 `appId`）/ 凭据已入库 /
+渠道已启用 / **运行中**的渠道是否就地重载 / 事件订阅的结果 / 还剩什么要你去开放平台收尾。
+「凭据已写入凭据库」与「运行中的渠道没有重新加载」**永远是两行**——凭据存下了但活着的适配器
+还没采用，这是一个你需要知道的真实状态，重启 `dsh` 即可生效。事件订阅这一步按设计就是尽力
+而为：SDK 注明它可能只适用于开发者后台创建的应用，而那里多数配置改动要提交发布后才生效。
+`dsh-connect` 不代你发布，也绝不声称订阅已经生效。
 
 ### 设置存放位置
 
@@ -269,7 +290,7 @@ dsh plugin --profile web add dsh-connect
 | `dmMode` | `open` | 私聊策略：`open` / `allowlist` / `pair` / `disabled`（`disabled` = 忽略私聊） |
 | `language` | `zh` | 面向用户的消息语言：`zh`（默认）或 `en` |
 
-> **一键开通**：不带 `appId`/`appSecret` 启动插件，它会打印一个开通链接（约 10 分钟有效）。用飞书扫码（或点击并确认），机器人应用即自动创建，权限与事件订阅均已预设；**凭据保存到 DSH 凭据库**。（0.9.0 之前它们写进 `$DSH_HOME/.dsh-connect/feishu-credentials.json`，而没有任何代码读回该文件——已有安装会在启动时从这个文件回填一次，此后它不再被使用。）该流程只在确实能完成时才启动：`onboarding: false` 或 stdout 不是终端时会被跳过，因此一个无人应答的服务进程不会开始扫码。
+> **一键开通**，两个入口。**Web 设置面板**（1.0.0）：按「一键创建并配置飞书机器人」，见[设置面板](#设置面板)。**CLI**：不带 `appId`/`appSecret` 启动插件，它会打印一个开通链接（约 10 分钟有效）。两种方式都是你打开链接、在飞书里确认，机器人应用即自动创建，权限与事件订阅均已预设；**凭据保存到 DSH 凭据库**。（0.9.0 之前它们写进 `$DSH_HOME/.dsh-connect/feishu-credentials.json`，而没有任何代码读回该文件——已有安装会在启动时从这个文件回填一次，此后它不再被使用。）CLI 那条路径只在确实能完成时才启动：`onboarding: false` 或 stdout 不是终端时会被跳过，因此一个无人应答的服务进程不会开始扫码。这道 TTY 闸门是有意保留的——面板按钮之所以能作为新入口，正是因为面板前面确实坐着人。
 
 ## 工作原理
 

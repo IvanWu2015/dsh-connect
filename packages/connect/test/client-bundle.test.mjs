@@ -68,6 +68,11 @@ function reactStub(queued) {
     // Hook positions are per *render*: without this the second draw would start
     // at the next free slot and read `undefined` for the form.
     resetHooks: () => { hook = 0; },
+    // How many slots the last draw consumed. Reading a slot the seed does not
+    // supply yields `undefined` rather than an error — and a state added *in the
+    // middle* would silently hand the form to `status` and still render something
+    // — so the count is the only way to notice from here.
+    hooksUsed: () => hook,
   };
 }
 
@@ -165,6 +170,8 @@ function mount(lang, queued, rpcResponder) {
     queued,
     localeTable,
     slot,
+    /** How many hook slots the last `draw()` consumed — see `reactStub`. */
+    hooksUsed: () => stub.hooksUsed(),
     /** Render the component again from the current state values. */
     draw() {
       stub.resetHooks();
@@ -184,9 +191,13 @@ function render(lang, opts = {}) {
     // default: the fixture is a healthy one, and the branch that renders nothing
     // is what the "clean snapshot" test is about.
     opts.notices ?? [],
+    // The one-click run's own state, appended *after* `notices` so the six slots
+    // above keep their meanings. `null` is what the component starts with, so
+    // every render that does not opt in renders an idle Feishu card.
+    opts.onboarding ?? null,
   ], opts.rpc);
   const { tree, text, elements: els } = pane.draw();
-  return { tree, text, elements: els, localeTable: pane.localeTable, slot: pane.slot };
+  return { tree, text, elements: els, localeTable: pane.localeTable, slot: pane.slot, pane };
 }
 
 test("the bundle registers as the dsh-connect settings section", () => {
@@ -623,4 +634,237 @@ test("a warning raised by an earlier credential save survives a later one", asyn
   const lines = issueLines(view);
   assert.equal(lines.length, 1, `expected exactly the one warning, got ${JSON.stringify(lines.map((l) => visibleText(l).join("")))}`);
   assert.ok(visibleText(lines[0]).join("").includes(pane.localeTable.zh["w.credentialsStoredNotApplied"]));
+});
+
+// --- the one-click Feishu run ----------------------------------------------
+//
+// Three things are being pinned here. The hook contract (`onboarding` is the
+// *seventh* slot, and nothing may be inserted before it), the split between the
+// one channel that can really be automated and the two that cannot, and the
+// reporting rule the whole flow exists for: 已落盘 ≠ 已生效, as two lines.
+//
+// One thing is deliberately *not* here: no test starts a run whose polls keep
+// answering `waiting`, because that loop is bounded by the link's own lifetime
+// (16 minutes) and would hang the suite. The link-bearing renders below seed the
+// seventh slot directly instead, which is the same tree with no clock in it.
+
+/** The device-authorization URL, shaped like the one Feishu hands back. */
+const LINK = "https://open.feishu.cn/page/launcher?user_code=ABCD-EFGH&from=dsh";
+
+/** The card body, which is where the button belongs. */
+function feishuBody(view) {
+  return byId(view.elements, "ds-ch-feishu-body");
+}
+
+test("the one-click state is the seventh hook, and the six before it are undisturbed", () => {
+  const state = { busy: false, phase: "waiting", link: { url: LINK, expiresInSeconds: 600, expiresAt: 1 } };
+  const pane = mount("zh", [
+    snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials }, ALL_OPEN, ALL_OPEN, [], state,
+  ]);
+  const view = pane.draw();
+
+  // The stub feeds hook values in positionally, so a state inserted anywhere but
+  // the end would hand the form to `status`, the status to `creds`, and so on —
+  // silently, with the pane still rendering something. Counting the slots is the
+  // only way to notice that from out here; a missing one just reads `undefined`.
+  assert.equal(pane.hooksUsed(), 7, "the component reads a different number of hook slots than this file supplies");
+  assert.deepEqual(pane.queued[0], snapshotToForm(SNAPSHOT));
+  assert.equal(pane.queued[1], "idle");
+  assert.deepEqual(pane.queued[2], SNAPSHOT.credentials);
+  assert.deepEqual(pane.queued[5], [], "the notices slot moved");
+  assert.equal(pane.queued[6], state);
+  // And the seventh is really the one in use, rather than a slot nobody reads.
+  const button = elements(feishuBody(view).children).find((el) => hasClass(el, "ds-onboard-btn"));
+  assert.equal(visibleText(button).join(""), pane.localeTable.zh["onboard.waiting"]);
+});
+
+test("the Feishu card carries one start button, and the save bar still finds its own", () => {
+  const view = render("zh");
+  const L = view.localeTable.zh;
+  const body = feishuBody(view);
+
+  const buttons = elements(body.children).filter((el) => hasClass(el, "ds-onboard-btn"));
+  assert.equal(buttons.length, 1, "the Feishu body does not carry exactly one one-click button");
+  assert.equal(buttons[0].type, "button");
+  assert.equal(buttons[0].props.disabled, false, "an idle run must be startable");
+  assert.equal(visibleText(buttons[0]).join(""), L["onboard.create"]);
+  assert.ok(visibleText(body).join("").includes(L["onboard.create.hint"]), "the button has no explanation of what it will do");
+  // The button carries two classes on purpose: the save-bar finder matches
+  // `ds-btn` *exactly*, and two bare matches would make which button it finds
+  // depend on render order.
+  assert.equal(view.elements.filter((el) => el.props.className === "ds-btn").length, 1, "the save-bar finder is now ambiguous");
+  // Nothing to cancel, and nothing to open, before the click. The advanced fold
+  // is the body's only other button, and it must stay the only one: a cancel
+  // button next to a run that is not running is a button that does nothing.
+  assert.equal(elements(body.children).some((el) => el.type === "a"), false, "an idle card rendered a link");
+  assert.deepEqual(
+    elements(body.children)
+      .filter((el) => el.type === "button" && !hasClass(el, "ds-onboard-btn"))
+      .map((el) => el.props.className),
+    ["ds-advanced-toggle"],
+    "an idle card offered something other than the advanced fold",
+  );
+});
+
+test("the two channels with no creation API get the official page instead of a button", () => {
+  // Feishu is the only channel that can be automated: Telegram issues a bot
+  // inside a conversation with @BotFather and DingTalk only inside its own
+  // console. For those the honest thing is the entrance plus an instruction, so
+  // a button that cannot work must never appear on their cards.
+  const view = render("zh");
+  for (const [ch, url] of [["telegram", "https://t.me/BotFather"], ["dingtalk", "https://open-dev.dingtalk.com/"]]) {
+    const body = byId(view.elements, `ds-ch-${ch}-body`);
+    assert.equal(elements(body.children).some((el) => hasClass(el, "ds-onboard-btn")), false, `${ch} grew a one-click button`);
+    const link = elements(body.children).find((el) => el.type === "a" && el.props.href === url);
+    assert.ok(link, `${ch} has no link to its official creation page`);
+    assert.equal(link.props.rel, "noreferrer noopener", `${ch}'s outbound link leaks the opener/referrer`);
+    const text = visibleText(body).join("");
+    assert.ok(text.includes(url), `${ch}'s link target is not shown as text`);
+    assert.ok(text.includes(view.localeTable.zh[`onboard.manual.${ch}`]), `${ch} has no instruction to paste what it returns`);
+  }
+});
+
+test("a waiting run shows the link as plain text, and grows no QR node", () => {
+  const view = render("zh", {
+    onboarding: { busy: false, phase: "waiting", link: { url: LINK, expiresInSeconds: 600, expiresAt: 1 } },
+  });
+  const L = view.localeTable.zh;
+  const body = feishuBody(view);
+  const text = visibleText(body).join("");
+
+  assert.ok(text.includes(LINK), "the device-authorization URL is not rendered");
+  assert.ok(text.includes(L["onboard.link"]), "the URL is not introduced");
+  // The placeholder is substituted, not printed: `{minutes}` on screen would be
+  // the string the user is told to act on.
+  assert.ok(text.includes(L["onboard.linkExpiry"].replace("{minutes}", "10")), `no expiry sentence for a 10-minute link`);
+  const anchor = elements(body.children).find((el) => el.type === "a");
+  assert.ok(anchor && anchor.props.href === LINK, "the URL is not a link");
+  // The page it opens draws the QR itself. A second copy in the pane would be a
+  // second thing to keep right — and the pane has no QR library — so this is the
+  // reverse assertion that keeps one from growing here.
+  for (const el of elements(body.children)) {
+    assert.ok(!["img", "canvas", "svg", "video"].includes(el.type), `the link grew a <${el.type}> node`);
+  }
+  // Waiting is not a success: the button says so and cannot be pressed again,
+  // and the way out is a real cancel (the SDK takes a signal).
+  const button = elements(body.children).find((el) => hasClass(el, "ds-onboard-btn"));
+  assert.equal(visibleText(button).join(""), L["onboard.waiting"]);
+  assert.equal(button.props.disabled, true, "a run in flight is startable again");
+  const cancel = elements(body.children).find((el) => el.type === "button" && visibleText(el).join("") === L["onboard.cancel"]);
+  assert.ok(cancel, "a waiting run cannot be cancelled");
+});
+
+test("before the host answers, the button reports that it is starting", () => {
+  // The gap between the click and the first status reply. `link` is absent, so
+  // this is the one state where "starting" is the truthful word — and the state
+  // must not be a re-enabled button, or a second click opens a second link.
+  const view = render("zh", { onboarding: { busy: true } });
+  const button = elements(feishuBody(view).children).find((el) => hasClass(el, "ds-onboard-btn"));
+  assert.equal(visibleText(button).join(""), view.localeTable.zh["onboard.starting"]);
+  assert.equal(button.props.disabled, true);
+});
+
+test("clicking start drives the host, and the outcome reaches the save bar", async () => {
+  const calls = [];
+  const outcome = {
+    created: true,
+    appId: "cli_created",
+    credentialsStored: true,
+    legacyMirrorWritten: true,
+    // The half that matters: the secret is on disk, the running adapter never
+    // picked it up.
+    applied: "no",
+    subscription: { attempted: true, status: "failed", reason: "99991672 access denied", needsManualAction: true },
+    enableRequested: true,
+  };
+  const done = { phase: "done", channel: "feishu", outcome };
+  const rpc = async (endpoint, payload) => {
+    calls.push([endpoint, payload]);
+    if (endpoint === "onboarding.start") return { ok: true, value: { phase: "waiting", channel: "feishu", link: { url: LINK, expiresInSeconds: 600, expiresAt: 1 } } };
+    if (endpoint === "onboarding.status") return { ok: true, value: done };
+    return { ok: true, value: SNAPSHOT };
+  };
+
+  const pane = mount("zh", [snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials }, ALL_OPEN, ALL_OPEN, [], null], rpc);
+  const button = elements(feishuBody(pane.draw()).children).find((el) => hasClass(el, "ds-onboard-btn"));
+  await button.props.onClick();
+
+  // The sequence, not just "something was called": the first poll already
+  // answered with the terminal phase, so a loop that slept before its first
+  // query would have added 1.5s and a second `onboarding.status`. The trailing
+  // `settings.get` is the re-read that picks up `channelErrors` — the only place
+  // the reason a stored credential did not come up is written down.
+  assert.deepEqual(calls, [
+    ["onboarding.start", { channel: "feishu" }],
+    ["onboarding.status", {}],
+    ["settings.get", {}],
+  ]);
+  assert.equal(pane.queued[6], done, "the terminal status did not land in the seventh slot");
+
+  const view = pane.draw();
+  const L = pane.localeTable.zh;
+  const rendered = issueLines(view).map((line) => visibleText(line).join(""));
+  const has = (needle) => rendered.some((text) => text.includes(needle));
+
+  assert.equal(rendered.length, 6, `expected one line per true fact, got ${JSON.stringify(rendered)}`);
+  assert.ok(has(L["onboard.created"]) && has("cli_created"), `no creation line: ${JSON.stringify(rendered)}`);
+  // 已落盘 ≠ 已生效 — two lines, never collapsed into one 「已保存」.
+  assert.ok(has(L["onboard.credentialsStored"]), "the stored half is missing");
+  assert.ok(has(L["onboard.notApplied"]), "the not-in-effect half is missing");
+  assert.ok(has(L["onboard.enableRequested"]), "the enable line is missing");
+  // The API's own code, verbatim: it is the only part that names what to fix.
+  assert.ok(has(L["onboard.subscription.failed"]) && has("99991672 access denied"), "the subscription failure is missing its reason");
+  assert.ok(has(L["onboard.needsManual"]), "the work left to the user is not stated");
+
+  // And still where it was: the save bar, which is still the root's last child.
+  const footer = view.elements.find((el) => hasClass(el, "ds-footer"));
+  const list = view.elements.find((el) => hasClass(el, "ds-issues"));
+  assert.ok(elements(footer).includes(list), "the run's report is not in the save bar");
+  assert.equal(view.tree.children[view.tree.children.length - 1], footer, "the save bar is no longer pinning to the scroll region");
+});
+
+test("cancel reaches the host, and a cancelled run stops offering the dead link", async () => {
+  const calls = [];
+  const cancelled = { phase: "cancelled", channel: "feishu", outcome: { created: false, reason: "abort" } };
+  const rpc = async (endpoint, payload) => {
+    calls.push([endpoint, payload]);
+    if (endpoint === "onboarding.cancel") return { ok: true, value: cancelled };
+    return { ok: true, value: SNAPSHOT };
+  };
+
+  const pane = mount("zh", [
+    snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials }, ALL_OPEN, ALL_OPEN, [],
+    { busy: false, phase: "waiting", link: { url: LINK, expiresInSeconds: 600, expiresAt: 1 } },
+  ], rpc);
+  const body = feishuBody(pane.draw());
+  const cancel = elements(body.children).find((el) => el.type === "button" && visibleText(el).join("") === pane.localeTable.zh["onboard.cancel"]);
+  await cancel.props.onClick();
+
+  assert.deepEqual(calls, [["onboarding.cancel", {}]], "cancel is not a single call to the host");
+  assert.equal(pane.queued[6], cancelled);
+  // The link is retired with the run: a terminal phase means it is spent, and the
+  // pane renders it on presence alone — so a dead URL sitting next to 「已取消」
+  // would invite a scan of a link Feishu has already invalidated.
+  const after = feishuBody(pane.draw());
+  assert.equal(visibleText(after).join("").includes(LINK), false, "a cancelled run still shows its link");
+});
+
+test("a cancelled run and a failed one read differently, reason and all", () => {
+  const linesOf = (onboarding) => issueLines(render("zh", { onboarding })).map((line) => visibleText(line).join(""));
+  const L = (render("zh").localeTable).zh;
+
+  const cancelled = linesOf({ phase: "cancelled", outcome: { created: false, reason: "abort" } });
+  const failed = linesOf({ phase: "failed", outcome: { created: false, reason: "invalid_app_name" } });
+
+  assert.equal(cancelled.length, 1, `a cancelled run reports ${cancelled.length} lines`);
+  assert.equal(failed.length, 1, `a failed run reports ${failed.length} lines`);
+  assert.notEqual(cancelled[0], failed[0], "the user's cancel reads the same as a failure");
+  assert.ok(cancelled[0].includes(L["onboard.cancelled"]));
+  assert.ok(failed[0].includes(L["onboard.createFailed"]));
+  // The reason is an SDK code or a thrown message, and it is the only part that
+  // names what went wrong, so it is rendered verbatim rather than mapped.
+  assert.ok(cancelled[0].includes("abort"), `the host's reason was dropped: ${cancelled[0]}`);
+  assert.ok(failed[0].includes("invalid_app_name"), `the host's reason was dropped: ${failed[0]}`);
+  // A run that died before creating anything must not claim it created one.
+  assert.ok(!failed[0].includes(L["onboard.created"]), "a failed run claimed it created an app");
 });

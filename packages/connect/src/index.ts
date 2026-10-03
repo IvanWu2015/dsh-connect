@@ -37,13 +37,15 @@ import {
 import { importLegacySection } from "./settings/legacy-import.js";
 import { installSettingsRpc } from "./settings/settings-rpc.js";
 import { createSettingsService } from "./settings/settings-service.js";
+import { createFeishuOnboarding, enableFeishuConfig, type FeishuOnboardingRegistry } from "./settings/feishu-onboarding.js";
+import { setEventSubscription } from "./settings/app-config.js";
 import {
   CHANNEL_SECRET_KEYS,
   createCredentialStore,
   type CredentialStore,
   type CredentialsProvider,
 } from "./settings/credential-store.js";
-import { register as feishuRegister, loadCredentials } from "./channels/feishu/index.js";
+import { register as feishuRegister, loadCredentials, onboardFeishu, saveCredentials as saveFeishuCredentials } from "./channels/feishu/index.js";
 import { register as telegramRegister } from "./channels/telegram/index.js";
 import { register as dingtalkRegister } from "./channels/dingtalk/index.js";
 import { register as webRegister } from "./channels/web/index.js";
@@ -529,6 +531,10 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
   // exactly the projection `sectionOf` performs — the same one the write path
   // applies, so the fallback store cannot drift from the entry.
   const settingsSeed: Record<string, unknown> = { ...sectionOf(finalCfg) };
+  // A box rather than a `let`: the service takes the registry as a getter (its
+  // three `onboarding.*` endpoints forward to it) while the registry needs the
+  // service to save — see the block below, which fills this in.
+  const onboarding: { registry?: FeishuOnboardingRegistry } = {};
   const settingsService = createSettingsService({
     statePath: settingsStatePath,
     credentialStore,
@@ -544,6 +550,42 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
     // that is not running. Read after the reconcile above (`write`/the hook are
     // both awaited now), so this describes the config the user just saved.
     channelFailures: () => runtime.failures(),
+    // Read per call, so the registry below can be built after this service
+    // (it saves *through* it) without the service ever seeing a partial object.
+    onboarding: () => onboarding.registry,
+  });
+
+  // One-click Feishu bot creation, driven by the pane's button. The whole flow
+  // lives here rather than in the browser: the device-authorization link is
+  // issued minutes before the result, the credentials are only ever handled by
+  // the host, and the last two steps write config + credentials that the pane
+  // has no access to. See `settings/feishu-onboarding.ts` for why a single RPC
+  // call cannot span it — and for the rule that the HTTP request's abort signal
+  // must never reach the flow (a refresh would burn the single-use link).
+  onboarding.registry = createFeishuOnboarding({
+    // The same flow the CLI path uses, and the same fake in tests.
+    onboard: onboardFeishu,
+    credentialStore,
+    // Legacy plaintext mirror, matching `channels/feishu/index.ts` — older
+    // builds read it, and it is not the source of truth.
+    legacySave: (credentials) => saveFeishuCredentials(credentials),
+    // Best effort, reported verbatim. The API may refuse an app created through
+    // the bot-assistant flow, and a 200 does not mean the mode is live — so the
+    // outcome carries the four-state verdict and the API's own words.
+    applySubscription: (credentials) => setEventSubscription(credentials),
+    requestEnable: async () => {
+      // Read the section in force now, compose the complete write (see
+      // `enableFeishuConfig` — a fragment here is a deletion), then take the
+      // same `save` path a pane save takes, so the live plane's write/reconcile
+      // and the fallback file behave identically to a user's own save.
+      const current = sectionOf(materializeConfig(rawConfig)) as Record<string, unknown>;
+      await settingsService.save(enableFeishuConfig(current, CHANNELS));
+    },
+    // Re-apply the running adapters so the credentials just stored take effect
+    // now rather than at the next restart. A failure is `applied: "no"`.
+    reconcile,
+    language: cfg.language ?? "zh",
+    logger: ctx.logger,
   });
   if (typeof (ctx as { inject?: unknown }).inject === "function") {
     (ctx as Context).inject(["connection", "webServer"], (scopeCtx) => {

@@ -1,7 +1,7 @@
 /**
  * Which channel cards the settings pane shows open, which fields hide behind
- * each card's "advanced" fold, and how a snapshot's failure reports become the
- * list the pane renders.
+ * each card's "advanced" fold, and how a snapshot's failure reports — and a
+ * one-click onboarding run's outcome — become the list the pane renders.
  *
  * Dependency-free and separate from the React component for the same reason
  * `locale.mjs` is: these rules are the interesting part, they are pure, and a
@@ -88,5 +88,77 @@ export function snapshotIssues(snap, warnings) {
   for (const [channel, reason] of Object.entries(snap?.channelErrors ?? {})) {
     issues.push({ kind: 'channelFailed', channel, reason, key: `channelFailed:${channel}` });
   }
+  return issues;
+}
+
+/**
+ * Turn an onboarding outcome — what the one-click flow actually did — into the
+ * same render-ready list `snapshotIssues` builds for a snapshot.
+ *
+ * Kept separate from `snapshotIssues` because the two have different lifetimes.
+ * A snapshot describes the state of the world and the host re-derives it on every
+ * call, so the pane may replace its list wholesale; the outcome is a *report on
+ * one run* and has to survive the saves that follow it, which is why the pane
+ * derives these lines at render time instead of appending them to `notices`.
+ *
+ * Every fact that is true gets its own line and none of them are merged into a
+ * single 「已创建并配置完成」. The split that matters most is
+ * `credentialsStored` + `applied`: the secret is in the store, *and* the running
+ * adapters may yet have failed to pick it up. Reporting only the first is the lie
+ * this whole feature exists to stop telling — the user is on this page because
+ * their bot went silent, so 「已保存」 over a bot that is still silent is the one
+ * answer worse than an error.
+ *
+ * `key` carries no index, like `snapshotIssues`.
+ */
+export function onboardingIssues(outcome) {
+  // No flow has run — the ordinary case, and it must render nothing at all.
+  if (!outcome) return [];
+  const issues = [];
+  const push = (code, extra) => issues.push({
+    kind: 'onboarding',
+    code,
+    key: `onboarding:${code}`,
+    ...(extra?.reason === undefined ? {} : { reason: extra.reason }),
+    ...(extra?.appId === undefined ? {} : { appId: extra.appId }),
+  });
+
+  // Nothing was created, so the reason *is* the whole report. `created` stays
+  // false on every pre-creation exit — the user's cancel, the device-code
+  // expiry, and a `registerApp` that threw — and those three share no other
+  // field, so the reason string is the only discriminator available.
+  if (!outcome.created) {
+    const code = outcome.reason === "abort" ? "cancelled"
+      : outcome.reason === "expired_token" ? "expired"
+        : "createFailed";
+    push(code, { reason: outcome.reason });
+    return issues;
+  }
+
+  push("created", { appId: outcome.appId });
+  push(outcome.credentialsStored ? "credentialsStored" : "credentialsNotStored");
+  // The legacy mirror is the file the pre-credential-store versions read. Worth
+  // a line only when it is the *only* copy that failed to land: with the
+  // credential store written, a dead mirror changes nothing for this host.
+  if (!outcome.credentialsStored && !outcome.legacyMirrorWritten) push("legacyMirrorFailed");
+  push(outcome.enableRequested ? "enableRequested" : "enableFailed");
+
+  // Four states, not three: `not-attempted` means the flow never got this far,
+  // which is not the same statement as `skipped` ("there were no credentials to
+  // subscribe with") and must not borrow its wording.
+  const subscription = outcome.subscription ?? {};
+  const subscriptionCode = subscription.status === "applied" ? "applied"
+    : subscription.status === "failed" ? "failed"
+      : subscription.status === "not-attempted" ? "notAttempted"
+        : "skipped";
+  push(`subscription.${subscriptionCode}`, { reason: subscription.reason });
+  if (subscription.needsManualAction === true) push("needsManual");
+
+  // The second half of 「已落盘 ≠ 已生效」, on its own line. `pending` is its own
+  // case and not a shade of `yes`: it is what a flow that was cancelled or that
+  // died after creating the app leaves behind.
+  if (outcome.applied === "no") push("notApplied");
+  else if (outcome.applied !== "yes") push("applyPending");
+
   return issues;
 }

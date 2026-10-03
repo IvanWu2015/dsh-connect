@@ -20,13 +20,13 @@
 import * as React from 'react';
 
 import { SETTINGS_RPC_CHANNEL } from '../lib/settings/settings-rpc.js';
-import { loadSettings, saveSettings, saveCredentials } from '../lib/settings/rpc-client.js';
+import { loadSettings, saveSettings, saveCredentials, callRpc } from '../lib/settings/rpc-client.js';
 import { snapshotToForm, buildConfigSave, buildCredentialSaves, CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, coerceConfigValue } from '../lib/settings/settings-model.js';
 // Shared with the host, so the pane and the masking it displays can never
 // disagree about which keys are confidential.
 import { isMaskedSecret } from '../lib/settings/secret-disclosure.js';
 import { LOCALES, tr, optionalText } from './locale.mjs';
-import { initialOpenChannels, toggleInSet, isAdvanced, snapshotIssues } from './panel-state.mjs';
+import { initialOpenChannels, toggleInSet, isAdvanced, snapshotIssues, onboardingIssues } from './panel-state.mjs';
 
 export const name = 'dsh-connect-settings';
 export const inject = ['slots', 'connection', 'locale'];
@@ -49,8 +49,7 @@ const ALL_CHANNELS = Object.keys(CHANNEL_SECRET_FIELDS);
 // 1. The `box-sizing` reset. Neither this bundle nor the host shell ships a
 //    global one, so under the default `content-box` a `.ds-input` with
 //    `width:100%` is ~20px (padding + border) *wider* than the grid column it
-//    sits in, and paints over the neighbouring column's text. That overflow is
-//    what "文字跟窗口重叠" actually was.
+//    sits in. That overflow is what "文字跟窗口重叠" actually was.
 // 2. The host's theme tokens, with our old hex values as fallbacks. The host
 //    puts `--dsw-alias-*` on `body` / `body[data-ds-dark-theme]`, so inheriting
 //    them follows the user's in-app theme. A `prefers-color-scheme` block — what
@@ -62,7 +61,7 @@ const STYLE = `
 .dsh-connect-settings .ds-card{display:flex;flex-direction:column;gap:10px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg);padding:12px 14px}
 .dsh-connect-settings .ds-card-title{margin:0;font-size:13px;font-weight:600}
 .dsh-connect-settings .ds-note{margin:0;font-size:11px;line-height:1.5;color:var(--ds-muted)}
-.dsh-connect-settings .ds-tabs{display:flex;flex-wrap:wrap;gap:6px}
+.dsh-connect-settings .ds-tabs{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;background:var(--ds-bg);border-bottom:1px solid var(--ds-border)}
 .dsh-connect-settings .ds-tab{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--ds-border);border-radius:14px;background:transparent;color:var(--ds-text);font:inherit;font-size:12px;cursor:pointer}
 .dsh-connect-settings .ds-tab:hover{background:var(--ds-hover)}
 .dsh-connect-settings .ds-tab[aria-expanded=true]{border-color:var(--ds-accent);color:var(--ds-accent)}
@@ -78,7 +77,15 @@ const STYLE = `
 .dsh-connect-settings .ds-chevron{width:7px;height:7px;margin:-3px 4px 0 auto;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .15s ease;flex:none}
 .dsh-connect-settings [aria-expanded=true]>.ds-chevron,.dsh-connect-settings [aria-expanded=true] .ds-chevron{transform:rotate(-135deg);margin-top:2px}
 .dsh-connect-settings .ds-badge{flex:none;font-size:11px;font-weight:500;padding:1px 8px;border-radius:99px;background:var(--ds-bg);color:var(--ds-muted);border:1px solid var(--ds-border-2)}
-.dsh-connect-settings .ds-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px 14px}
+/* One field per row, deliberately. This was an auto-fill track of 200px
+   minimums, which at the pane's real width (708px inside the 760px cap) laid
+   out *three* columns of label-above-control fields — shorter, but each one
+   narrow enough that a hint wrapped to four lines and the eye had no single
+   path down the form. The 0 minimum rather than a bare 1fr is so a long
+   unbroken value can't push the track wider than its container (same reasoning
+   as the box-sizing reset). Three call sites share this rule: the channel
+   body, the advanced fold, and the defaults card. */
+.dsh-connect-settings .ds-fields{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 .dsh-connect-settings .ds-field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .dsh-connect-settings .ds-control{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ds-muted)}
 .dsh-connect-settings .ds-control.ds-check-field{flex-direction:row;align-items:center;gap:6px}
@@ -100,6 +107,15 @@ const STYLE = `
 .dsh-connect-settings .ds-btn{height:32px;padding:0 18px;border:0;border-radius:6px;background:var(--dsw-alias-button-primary-fill,var(--ds-accent));color:var(--dsw-alias-label-primary-foreground,#ffffff);font:inherit;font-weight:500;cursor:pointer}
 .dsh-connect-settings .ds-btn:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--ds-accent))}
 .dsh-connect-settings .ds-btn:disabled{opacity:.55;cursor:default}
+/* The one-click creation block, inside the channel card's body. A dashed box
+   rather than a solid one: it is a one-off action, not another settings group.
+   The link gets word-break:break-all for the same reason .ds-preview does — a
+   Feishu authorization URL is long, unbreakable, and would otherwise widen the
+   card and reintroduce the horizontal overflow this pane already fixed once. */
+.dsh-connect-settings .ds-onboard{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px dashed var(--ds-border-2);border-radius:8px}
+.dsh-connect-settings .ds-onboard-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.dsh-connect-settings .ds-onboard-btn{align-self:flex-start}
+.dsh-connect-settings .ds-onboard a{color:var(--ds-accent);word-break:break-all}
 .dsh-connect-settings .ds-status{font-size:12px;color:var(--ds-muted)}
 `;
 
@@ -178,7 +194,7 @@ function renderSecretField(ch, field, form, onChange, t) {
 // supplies hook values *positionally*, so every `useState` in the tree has to
 // live in `ConnectSettingsTab` in a fixed order. Nothing in here may call a hook.
 function renderChannel(ch, ctx) {
-  const { form, creds, unknownCreds, t, open, advOverride, setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced } = ctx;
+  const { form, creds, unknownCreds, t, open, advOverride, setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced, onboarding, onOnboard, onOnboardCancel } = ctx;
   const name = tr(t, `channel.${ch}`, ch);
   const channelHint = optionalText(t, `channel.${ch}.hint`);
   const isOpen = open.has(ch);
@@ -239,6 +255,11 @@ function renderChannel(ch, ctx) {
       h('div', { className: 'ds-fields' },
         ...CHANNEL_SECRET_FIELDS[ch].map((field) => renderSecretField(ch, field, form, (value) => setField(ch, field, value), t)),
         ...common.map(configField)),
+      // Inside the card's body, after the credentials the flow would fill in:
+      // the button belongs next to the fields it writes, and not behind the
+      // advanced fold, since it is the one thing on this pane a first-time user
+      // is looking for.
+      renderOnboarding(ch, { t, onboarding, onOnboard, onOnboardCancel }),
       advanced.length === 0 ? null : h('div', { className: 'ds-adv' },
         h('button', {
           type: 'button',
@@ -251,6 +272,74 @@ function renderChannel(ch, ctx) {
           h('span', { className: 'ds-chevron' })),
         advOpen ? h('div', { className: 'ds-fields', id: `ds-ch-${ch}-adv` }, ...advanced.map(configField)) : null),
     ) : null);
+}
+
+// The official creation pages for the two channels that have no bot-creation
+// API. Feishu is the one channel this pane can genuinely automate; Telegram only
+// issues a bot inside a conversation with @BotFather, and DingTalk only inside
+// its own console — so the honest thing to render for those two is the entrance
+// plus a "paste what you get below" instruction, not a button that cannot work.
+const MANUAL_CREATE_URL = {
+  telegram: 'https://t.me/BotFather',
+  dingtalk: 'https://open-dev.dingtalk.com/',
+};
+
+// How the pane watches a run it did not start. `start` answers as soon as the
+// device-authorization link exists (usually under a second); the flow itself
+// goes on living in the host process, so the pane polls until the phase is
+// terminal. The ceiling is the link's own lifetime plus slack, so a run the user
+// simply walks away from cannot leave a poll loop running forever.
+const ONBOARD_POLL_MS = 1500;
+const ONBOARD_POLL_LIMIT_MS = 16 * 60 * 1000;
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+// The one-click creation block inside a channel card's body.
+//
+// Hook-free, like everything else under `renderChannel`: the bundle test feeds
+// hook values positionally, so every `useState` in the tree lives in
+// `ConnectSettingsTab`.
+//
+// No QR code is rendered here, and no QR library may be added. The link opens
+// Feishu's own authorization page, which draws the QR itself — reimplementing
+// that would be a second, worse copy of a page the user is about to look at
+// anyway. The URL is plain selectable text for the same reason: it is the one
+// part of this interaction that has to survive being copied by hand, since the
+// page it points to may well be open on a different device.
+function renderOnboarding(ch, ctx) {
+  const { t, onboarding, onOnboard, onOnboardCancel } = ctx;
+  const manual = MANUAL_CREATE_URL[ch];
+  if (manual) {
+    return h('div', { className: 'ds-onboard' },
+      h('p', { className: 'ds-hint' }, tr(t, `onboard.manual.${ch}`, manual)),
+      h('a', { href: manual, target: '_blank', rel: 'noreferrer noopener' }, manual));
+  }
+  if (ch !== 'feishu') return null;
+  const busy = onboarding?.busy === true;
+  const link = onboarding?.link;
+  const pending = busy || onboarding?.phase === 'waiting';
+  const label = busy && !link ? t('onboard.starting') : pending ? t('onboard.waiting') : t('onboard.create');
+  const minutes = Math.max(1, Math.round((link?.expiresInSeconds ?? 0) / 60));
+  return h('div', { className: 'ds-onboard' },
+    h('p', { className: 'ds-hint' }, t('onboard.create.hint')),
+    h('div', { className: 'ds-onboard-row' },
+      h('button', {
+        type: 'button',
+        // Deliberately not a bare `ds-btn`: the bundle test finds the save button
+        // as the first element whose className is exactly that, and a second one
+        // would make which button it finds depend on render order.
+        className: 'ds-btn ds-onboard-btn',
+        disabled: pending,
+        onClick: onOnboard,
+      }, label),
+      // A real cancel, not a UI gesture: the SDK's `registerApp` takes a signal,
+      // so this stops the polling and genuinely invalidates the link.
+      pending ? h('button', { type: 'button', className: 'ds-advanced-toggle', onClick: onOnboardCancel }, t('onboard.cancel')) : null),
+    link ? h('p', { className: 'ds-hint ds-onboard-link' },
+      h('span', null, t('onboard.link')),
+      ' ',
+      h('a', { href: link.url, target: '_blank', rel: 'noreferrer noopener' }, link.url),
+      ' ',
+      h('span', null, tr(t, 'onboard.linkExpiry', '').replace('{minutes}', String(minutes)))) : null);
 }
 
 // One line of the save bar's problem list — see `snapshotIssues` in
@@ -274,6 +363,17 @@ function renderIssue(issue, t) {
       // locale would then have to guess at backwards would lose the answer.
       h('code', { className: 'ds-issue-reason' }, issue.reason));
   }
+  // What the one-click flow actually did, one line per true fact — see
+  // `onboardingIssues` in `panel-state.mjs`. The `appId` and the host's `reason`
+  // are rendered verbatim: the reason in particular is the only part that names
+  // what went wrong, and the pane has no way to map it to a code without
+  // guessing backwards.
+  if (issue.kind === 'onboarding') {
+    return h('li', { className: 'ds-issue', key: issue.key },
+      h('span', null, tr(t, `onboard.${issue.code}`, issue.code)),
+      issue.appId === undefined ? null : h('code', { className: 'ds-issue-reason' }, issue.appId),
+      issue.reason === undefined ? null : h('code', { className: 'ds-issue-reason' }, issue.reason));
+  }
   // A host warning. `w.<code>`: a code shipped without its locale entry prints
   // the code — searchable, and visibly untranslated — rather than `undefined`.
   return h('li', { className: 'ds-issue', key: issue.key },
@@ -293,6 +393,11 @@ export function ConnectSettingsTab({ rpcCall, t }) {
   // because the bundle test's stub supplies hook values positionally, so each
   // extra slot has to be threaded through every call site.
   const [notices, setNotices] = React.useState([]);
+  // The last slot, appended after `notices` so `queued[0..5]` keep their
+  // meanings for the bundle test, which supplies hook values positionally. The
+  // one-click run's own state — the authorization link and the `waiting` phase —
+  // has to survive the polls that follow it, so it cannot live in a local.
+  const [onboarding, setOnboarding] = React.useState(null);
   const rpc = (endpoint, payload) => rpcCall(endpoint, payload);
 
   React.useEffect(() => {
@@ -332,6 +437,43 @@ export function ConnectSettingsTab({ rpcCall, t }) {
       setNotices(snapshotIssues(snap, [...warnings]));
       setStatus('saved');
     } catch { setStatus('error'); }
+  };
+
+  // Start a one-click run, then watch it. The polling life is in this handler
+  // rather than in a `useEffect` for two reasons: the test stub runs no effects,
+  // and the run is bounded by a click — there is nothing to keep watching once
+  // the flow is over or the user cancels.
+  const onOnboard = async () => {
+    setOnboarding({ busy: true });
+    try {
+      setOnboarding(await callRpc(rpc, 'onboarding.start', { channel: 'feishu' }));
+      // Query first, then sleep: a run that finished before the pane ever polled
+      // (or a host that answers without a phase at all) returns here without
+      // waiting a tick.
+      const startedAt = Date.now();
+      for (;;) {
+        const now = await callRpc(rpc, 'onboarding.status', {});
+        setOnboarding(now);
+        if (now?.phase !== 'waiting') break;
+        if (Date.now() - startedAt > ONBOARD_POLL_LIMIT_MS) break;
+        await sleep(ONBOARD_POLL_MS);
+      }
+    } catch (error) {
+      setOnboarding({ phase: 'failed', outcome: { created: false, reason: error?.message ?? String(error) } });
+    } finally {
+      // Re-read rather than trust the outcome: the host deliberately keeps the
+      // reconcile failure out of the outcome, so the reason a saved credential
+      // did not come up exists only in the fresh snapshot's `channelErrors`.
+      try {
+        const snap = await loadSettings(rpc);
+        setForm(snapshotToForm(snap));
+        setCreds(snap.credentials ?? {});
+        setNotices(snapshotIssues(snap));
+      } catch { /* the outcome lines still say what happened */ }
+    }
+  };
+  const onOnboardCancel = async () => {
+    try { setOnboarding(await callRpc(rpc, 'onboarding.cancel', {})); } catch { /* the poll notices on its own */ }
   };
 
   const setChannels = (ch, on) => {
@@ -379,6 +521,12 @@ export function ConnectSettingsTab({ rpcCall, t }) {
   const unknownCreds = new Set(
     notices.filter((n) => n.kind === 'credentialUnknown').map((n) => n.channel),
   );
+  // The one-click run's report is *derived* here rather than pushed into
+  // `notices`: a later save replaces that list wholesale (the host re-derives
+  // the state of the world on every call), which would erase the only record of
+  // what the creation flow did. Its lines therefore sit alongside the snapshot's,
+  // not inside them, and they persist until the user acts again.
+  const issues = [...notices, ...onboardingIssues(onboarding?.outcome)];
 
   const toggleOpen = (ch) => setOpenOverride(toggleInSet(open, ch));
   // Advanced folds default to closed for every channel, so an empty set is the
@@ -395,29 +543,37 @@ export function ConnectSettingsTab({ rpcCall, t }) {
   };
 
   return h('div', { className: 'dsh-connect-settings' },
+    // A tab strip, but not `role=tablist`: several channels can be open at
+    // once, so there is no single "selected" tab to report. These are buttons
+    // that open and jump to a channel, and `aria-expanded` says so honestly.
+    //
+    // A direct child of the root, and not inside the channels card where it
+    // used to live: `position:sticky` pins to the nearest scrollport only while
+    // the element's containing block is the scrolled box. Nested in a card it
+    // could never leave that card, so the strip scrolled away with the content
+    // — the same reason the footer below sits here. `top:0` lines up with the
+    // scroller's edge because the host's own scroller has no top padding.
+    h('nav', { className: 'ds-tabs', 'aria-label': t('tabsAria') },
+      ...ALL_CHANNELS.map((ch) => h('button', {
+        key: `tab-${ch}`,
+        type: 'button',
+        className: 'ds-tab',
+        'aria-expanded': open.has(ch),
+        'aria-controls': open.has(ch) ? `ds-ch-${ch}-body` : undefined,
+        onClick: () => focusChannel(ch),
+      },
+        h('span', { className: 'ds-dot', 'data-on': form.channels.includes(ch) ? '1' : '0' }),
+        tr(t, `channel.${ch}`, ch)))),
     h('section', { className: 'ds-card' },
       h('h4', { className: 'ds-card-title' }, t('channels')),
       // Explains the masking before the user meets a truncated value and wonders
       // whether their stored secret is corrupt.
       h('p', { className: 'ds-note' }, t('previewNote')),
-      // A tab strip, but not `role=tablist`: several channels can be open at
-      // once, so there is no single "selected" tab to report. These are buttons
-      // that open and jump to a channel, and `aria-expanded` says so honestly.
-      h('nav', { className: 'ds-tabs', 'aria-label': t('tabsAria') },
-        ...ALL_CHANNELS.map((ch) => h('button', {
-          key: `tab-${ch}`,
-          type: 'button',
-          className: 'ds-tab',
-          'aria-expanded': open.has(ch),
-          'aria-controls': open.has(ch) ? `ds-ch-${ch}-body` : undefined,
-          onClick: () => focusChannel(ch),
-        },
-          h('span', { className: 'ds-dot', 'data-on': form.channels.includes(ch) ? '1' : '0' }),
-          tr(t, `channel.${ch}`, ch)))),
       // One card per built-in channel: enable toggle + cred badge + secret + config fields.
       ...ALL_CHANNELS.map((ch) => renderChannel(ch, {
         form, creds, unknownCreds, t, open, advOverride,
         setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced,
+        onboarding, onOnboard, onOnboardCancel,
       }))),
     h('section', { className: 'ds-card' },
       h('h4', { className: 'ds-card-title' }, t('defaults')),
@@ -444,7 +600,7 @@ export function ConnectSettingsTab({ rpcCall, t }) {
       // answers to *this* save, and the bar is the one part of the pane that is
       // always on screen. A channel card can be folded, or scrolled past, and
       // 「已保存」 next to nothing else is the whole complaint.
-      notices.length === 0 ? null : h('ul', { className: 'ds-issues' }, ...notices.map((issue) => renderIssue(issue, t))),
+      issues.length === 0 ? null : h('ul', { className: 'ds-issues' }, ...issues.map((issue) => renderIssue(issue, t))),
       h('button', { className: 'ds-btn', type: 'button', onClick: onSave, disabled: status === 'saving' }, t('save')),
       // Rendering `status` directly leaks the raw state ids (`idle`, `saving`)
       // into the UI; every state has a locale entry instead.

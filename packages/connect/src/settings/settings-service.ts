@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { CHANNELS, type ChannelName } from "./channels.js";
 import type { SettingsService, SettingsSnapshot, SettingsWarningCode } from "./settings-rpc.js";
+import type { FeishuOnboardingRegistry, OnboardingStatus } from "./feishu-onboarding.js";
 import { CHANNEL_SECRET_KEYS, type CredentialStore } from "./credential-store.js";
 import { maskSecret } from "./secret-disclosure.js";
 import type { LiveConnectSection } from "./namespace.js";
@@ -83,6 +84,18 @@ export interface SettingsServiceOptions {
    * this stays a statement about the *current* state and not a growing history.
    */
   channelFailures?: () => Record<string, string>;
+  /**
+   * The one-click Feishu bot creation registry, if this host has one. Optional,
+   * and like {@link live} a **getter, not a value**: the registry needs
+   * `save()` — the enable step is a settings write, and it must take the exact
+   * same path as a pane save (a partial write here would be a deletion) — while
+   * this service is what `save()` belongs to. So the host assigns the registry
+   * after building the service, and the getter is read per call.
+   *
+   * Absent (or resolving to `undefined`) means the three `onboarding.*` RPC
+   * endpoints answer `unsupported` rather than pretending.
+   */
+  onboarding?: () => FeishuOnboardingRegistry | undefined;
 }
 
 function logError(msg: string) {
@@ -209,6 +222,23 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
       log(`failed to read the channel runtime failures: ${String(error)}`);
       return {};
     }
+  }
+
+  /**
+   * Resolve the onboarding registry, or refuse. The getter is read per call
+   * because the host assigns the registry *after* building this service (the
+   * registry's enable step saves through `save()` below); a host that never
+   * assigns one gets the same `unsupported` the RPC layer reports for a missing
+   * method, rather than a half-working stub.
+   */
+  function requireOnboarding(): FeishuOnboardingRegistry {
+    const registry = options.onboarding?.();
+    if (registry === undefined) {
+      const err = new Error("unsupported") as Error & { code?: string };
+      err.code = "unsupported";
+      throw err;
+    }
+    return registry;
   }
 
   async function snapshot(
@@ -340,5 +370,16 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
       persist(next);
       return snapshot(next);
     },
+    // The three onboarding endpoints exist only when this host has a registry.
+    // A pane that calls them against one without gets `unsupported` from the
+    // RPC layer's own `typeof` check — the same answer as any other optional
+    // method — instead of a stub that half-answers.
+    ...(options.onboarding === undefined
+      ? {}
+      : {
+          onboardingStart: (channel: string): Promise<OnboardingStatus> => requireOnboarding().start(channel),
+          onboardingStatus: (): Promise<OnboardingStatus> => requireOnboarding().status(),
+          onboardingCancel: (): Promise<OnboardingStatus> => requireOnboarding().cancel(),
+        }),
   };
 }
