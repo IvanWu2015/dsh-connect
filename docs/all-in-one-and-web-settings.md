@@ -1,8 +1,8 @@
 # 配置简化 + Web 设置 + 多合一重构（对齐 dsh-im）
 
-> **当前状态更新（2026-10-02，0.9.2）**：设置存储随 DSH 0.2 再次换代。面板的权威存储不再是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段（那是 0.9.0/0.9.1 的做法；DSH 0.2 已不再从这个文档读取插件设置），而是**当前 profile patch（`cordis.patch.yml`）中本插件的条目**，经 DSH 一方 `settings` 服务（`SettingsForms`）写入：热重载、原子写、文件锁、保留注释；取值顺序为 **schema 默认值 → 插件被组合进来时的配置 → profile patch 条目**。面板可编辑字段在 schema 里声明为 `volatile`，保存因此是就地 reconcile（运行中的适配器直接采用新值）而不是重挂载；写入会投影到已声明字段，未声明的键（凭据、`settingsStatePath`）既写不进去也不会被清掉，而被省略的已声明字段会被重置回继承值，所以每次写入都是完整的已声明段。0.2 之前留在 `settings.yaml` 里的段，会在升级后的第一次启动时被**合并**（不是替换）导入 patch 条目，一次性标记 `.dsh-connect-legacy-imported`（写在 profile 条目旁，锚在 `profileContext.patchPath`）记录结果。面板**写不进**密钥：保存会投影到已声明字段，而密钥键一个都不在其中，所以面板既不会把密钥写进 profile patch，也不会写进任何 JSON 状态文件——它们只进 DSH 凭据库。反过来，**手写**在条目或回退文件里的密钥也不会被面板的保存顺手删掉（不删用户自己的文档），但读取时一律剔除，绝不随快照下发到浏览器；面板只显示凭据库提供的掩码预览（appId 这类标识符本身不脱敏）。面板 UI 沿用 0.9.0 的**渠道 Tab 条 + 可折叠卡片**，低频字段收进二级「高级」折叠，保存/状态固定在底部。当前测试总数 **408 项全过**，DSH 依赖升到 `^0.2.0-rc.2`（peer `dsh-agent` / `dsh-llm` / `dsh-session`）。详见根 `CHANGELOG.md` 的 0.9.2 段。
+> **当前状态更新（2026-10-02，0.9.3）**：设置存储随 DSH 0.2 再次换代。面板的权威存储不再是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段（那是 0.9.0/0.9.1 的做法；DSH 0.2 已不再从这个文档读取插件设置），而是**当前 profile patch（`cordis.patch.yml`）中本插件的条目**，经 DSH 一方 `settings` 服务（`SettingsForms`）写入：热重载、原子写、文件锁、保留注释；取值顺序为 **schema 默认值 → 插件被组合进来时的配置 → profile patch 条目**。面板可编辑字段在 schema 里声明为 `volatile`，保存因此是就地 reconcile（运行中的适配器直接采用新值）而不是重挂载；写入会投影到已声明字段，未声明的键（凭据、`settingsStatePath`）既写不进去也不会被清掉，而被省略的已声明字段会被重置回继承值，所以每次写入都是完整的已声明段。0.2 之前留在 `settings.yaml` 里的段，会在升级后的第一次启动时被**合并**（不是替换）导入 patch 条目，一次性标记 `.dsh-connect-legacy-imported`（写在 profile 条目旁，锚在 `profileContext.patchPath`）记录结果。面板**写不进**密钥：保存会投影到已声明字段，而密钥键一个都不在其中，所以面板既不会把密钥写进 profile patch，也不会写进任何 JSON 状态文件——它们只进 DSH 凭据库。反过来，**手写**在条目或回退文件里的密钥也不会被面板的保存顺手删掉（不删用户自己的文档），但读取时一律剔除，绝不随快照下发到浏览器；面板只显示凭据库提供的掩码预览（appId 这类标识符本身不脱敏）。面板 UI 沿用 0.9.0 的**渠道 Tab 条 + 可折叠卡片**，低频字段收进二级「高级」折叠，保存/状态固定在底部。**0.9.3 把「失败」从一个被吞掉的分支变成一份报告**：`SettingsSnapshot` 增加 `warnings` / `credentialErrors` / `channelErrors`（非空才下发），面板经 `snapshotIssues()` 把它们渲染成保存条上方的一份清单，凭据库读不了的渠道显示琥珀色「凭据状态未知」徽标而不是「未配置凭据」；绑定文件、提醒文件、开通流程的凭据写入这三处写失败不再被 `catch` 吞掉，聊天里也会在会话恢复失败时收到通知，而不是只在日志里写一行。同一批里还改掉了一处纯属说错的文案：保存条下方的状态行原本写「配置存放在 settings.yaml，保存后立即生效」，而 0.9.2 起权威存储已经是 profile patch，现在如实写作 `cordis.patch.yml`。当前测试总数 **441 项全过**，DSH 依赖升到 `^0.2.0-rc.2`（peer `dsh-agent` / `dsh-llm` / `dsh-session`）。详见根 `CHANGELOG.md` 的 0.9.2 与 0.9.3 段。
 
-### 设置页现状（0.9.0 截图）
+### 设置页现状（0.9.3 截图，DSH `0.2.0-rc.2`）
 
 | 概览（渠道 Tab 条 + 卡片） | 高级折叠 |
 |---|---|
@@ -11,6 +11,7 @@
 <img src="../packages/connect/docs/images/settings-defaults-zh.png" alt="默认值展示" width="420">
 
 > 英文文档/README 使用同目录下的 `-en` 变体；路径约定见 `docs/PUBLISHING.md` 第 2.4 节。
+> 截图取自干净环境（插件 `link:` 到当前工作树，profile 里所有凭据都是假占位符），拍摄于 `0.2.0-rc.2`：设置导航里的邻居条目此时已叫「内置插件」，面板头部也多了一个「打开配置文件」按钮，与 0.1.5 时期的旧图不同。
 
 ---
 
@@ -29,11 +30,11 @@
 - 一份配置（`channels` + `channelDefaults` + N 个渠道块）启用任意渠道组合；渠道失败隔离、渠道级配置透传。
 - Web 可视化设置：`/dsh-connect` RPC（`settings.get/save/status` + `credentials.save`）+ 设置持久化（0.9.2 起为 profile patch 中本插件的条目；0.9.0/0.9.1 为 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段；更早是 JSON 状态文件）+ DSH 凭据库读写，配置与凭据**读写闭环**（round-trip 已验证）。
 - 凭据从配置挪到凭据库：面板写密钥 → 激活时 `injectSecrets` 注入各渠道适配器（非侵入，渠道适配器零改动）。
-- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；当前 `packages/connect` 单包 **408 项测试全过**（详见 `CHANGELOG.md` 0.9.2）。
+- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；当前 `packages/connect` 单包 **441 项测试全过**（详见 `CHANGELOG.md` 0.9.3）。
 
 **当时还差什么（两项均已完成，保留存档）：**
 1. ~~`dsh web` 内构建并渲染前端 `settings-client` 组件~~——已完成：`client/client.js` 由 `scripts/build-client.mjs` 构建，`test/client-bundle.test.mjs` 直接加载构建产物在 Node 里渲染并断言。
-2. ~~推送 v0.7.2~~——已解决：v0.7.2 及其后的 0.8.0 / 0.8.1 均已发布，当前版本为 0.9.2（见根 `CHANGELOG.md`）。
+2. ~~推送 v0.7.2~~——已解决：v0.7.2 及其后的 0.8.0 / 0.8.1 均已发布，当前版本为 0.9.3（见根 `CHANGELOG.md`）。
 
 ## 1. 重构前的现状：配置与安装复杂度
 
@@ -126,7 +127,7 @@
 
 ## 进展（实现中）
 
-> **历史存档**：以下是 `packages/connect-all/`（聚合包，方案 A）时期的按时间顺序记录，**该包已随 0.8.0 的单包化被删除**。因此本节所有 `packages/connect-all/...` 路径、`dsh-connect-all` 包名与安装命令都已不存在；下文出现的测试计数（**37 / 40 / 44 / 50 / 52 / 56 / 57**）只统计当时那套 connect-all 测试，既不是当前套件、也不可与它相加——当前是 `packages/connect` 单包 **408 项全过**（DSH `0.2.0-rc.2`，见 `CHANGELOG.md` 0.9.2）。文中「前端待联调」一类表述同样只反映当时状态。
+> **历史存档**：以下是 `packages/connect-all/`（聚合包，方案 A）时期的按时间顺序记录，**该包已随 0.8.0 的单包化被删除**。因此本节所有 `packages/connect-all/...` 路径、`dsh-connect-all` 包名与安装命令都已不存在；下文出现的测试计数（**37 / 40 / 44 / 50 / 52 / 56 / 57**）只统计当时那套 connect-all 测试，既不是当前套件、也不可与它相加——当前是 `packages/connect` 单包 **441 项全过**（DSH `0.2.0-rc.2`，见 `CHANGELOG.md` 0.9.3）。文中「前端待联调」一类表述同样只反映当时状态。
 
 ### 已完成：`dsh-connect-all` 聚合包（方案 A 骨架，已 build + 单测通过）
 - 新增 `packages/connect-all/` 单插件：一个 `dsh plugin add dsh-connect dsh-connect-all` 装齐核心 + 4 渠道。

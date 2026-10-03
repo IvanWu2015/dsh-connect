@@ -4,7 +4,7 @@ English | [中文](ENHANCEMENTS_SUMMARY.zh.md)
 
 > **历史说明**：本文档记录 **v0.6.2** 这一轮的修复。此后本仓库已合并为**唯一的 `dsh-connect` 包**——下文提到的各分包（`dsh-connect-feishu`、`dsh-connect-telegram`、`dsh-connect-dingtalk`、`dsh-connect-web`）与 `packages/connect-*/test/` 拆分目录已不存在；这些通道现在是 `dsh-connect` 单个插件的子键（`feishu:` / `telegram:` / `dingtalk:` / `web:`）。
 >
-> 下文中另有两点已被**取代**，不可当作当前行为：`feishu-credentials.json`（权限 `0600`）不再是开通流程保存凭据的地方——**DSH 凭据库**才是唯一事实来源，该 JSON 文件仅作为尽力而为的旧版镜像保留；私有 JSON 状态文件也不再是 Web 面板的存储。此后面板存储又换过两代：0.9.0/0.9.1 写的是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段，**0.9.2** 改写入**当前 profile patch（`cordis.patch.yml`）中本插件的条目**，经 DSH 第一方 `settings` 服务，密钥仍只进凭据库——并且会在升级时把旧 `settings.yaml` 段一次性导入。当前版本为 **0.9.2**——见根 `CHANGELOG.md`。下文其余内容仍是 0.6.2 那一轮的准确记录。
+> 下文中另有两点已被**取代**，不可当作当前行为：`feishu-credentials.json`（权限 `0600`）不再是开通流程保存凭据的地方——**DSH 凭据库**才是唯一事实来源，该 JSON 文件仅作为尽力而为的旧版镜像保留；私有 JSON 状态文件也不再是 Web 面板的存储。此后面板存储又换过两代：0.9.0/0.9.1 写的是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段，**0.9.2** 改写入**当前 profile patch（`cordis.patch.yml`）中本插件的条目**，经 DSH 第一方 `settings` 服务，密钥仍只进凭据库——并且会在升级时把旧 `settings.yaml` 段一次性导入。当前版本为 **0.9.3**——见根 `CHANGELOG.md`。下文其余内容仍是 0.6.2 那一轮的准确记录。
 
 ## 📋 概述
 

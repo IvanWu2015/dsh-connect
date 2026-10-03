@@ -293,4 +293,4 @@ Feishu and Web **both read this file**, so they see exactly the same history.
 ---
 
 **Updated**: 2026-10-02  
-**Version**: v0.9.2
+**Version**: v0.9.3

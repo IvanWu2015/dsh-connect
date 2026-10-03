@@ -41,7 +41,7 @@ version is the signal that the bridge needs another migration.
 
 DSH refuses to load a plugin whose range does not cover it, so a stale range is
 at least loud: installing `0.9.0` on `0.2.0-rc.2` is rejected with *"may cause
-crashes or data loss"* before anything runs. `0.9.2` is the version that covers
+crashes or data loss"* before anything runs. `0.9.3` is the version that covers
 `0.2.0-rc.2`; see [Upgrading from 0.9.0](#upgrading-from-090).
 
 The plugin runs on the DSH **Host plane** (process-level singleton services), not inside an agent preset.
@@ -290,6 +290,17 @@ resets a declared field that an update *omits* to its inherited value, so a save
 always writes the complete declared section. Undeclared keys you hand-wrote in
 that entry are preserved across a pane save, untouched.
 
+**Consequence worth knowing: pressing Save pins the channel list.** `channels` is
+a declared field, so the section a save writes names every channel that was in
+the form at that moment — and there is no way to unpin it from the pane, because
+an omitted field does not clear but *inherits*. If you have saved at least once,
+a channel added by a newer release will not be enabled for you until you tick it
+and save again (or delete the `channels` key from
+`~/.dsh/profiles/<profile>/cordis.patch.yml` by hand). The pane cannot tell the
+difference between "the user chose this list" and "the user has not looked since
+the list changed", and it will not guess on your behalf: a save that wrote only
+what you edited would reset every other field to its inherited value.
+
 **The pane never writes credentials.** A profile patch is a plain document users
 are invited to paste into bug reports, so a secret you type into the pane goes to
 the DSH credential store (`ctx.credentials`) instead — which is also where
@@ -329,6 +340,26 @@ come from `client/locale.mjs`, which ships `zh` and `en`. A test asserts both
 languages cover exactly the same key set — the host resolves a missing key by
 silently falling back to the other language, so an untranslated string shows up
 as mixed-language text rather than as an error.
+
+### When a save has something to report
+
+`已保存` / `Saved` means the write landed, and nothing more. When there is
+something else to say, the save bar grows a list above the button — it is the
+only part of the pane that is always on screen, and a channel card can be folded
+or scrolled past, which is exactly when a bare "Saved" next to nothing else
+misleads.
+
+| Line | What it means |
+|---|---|
+| *<channel>* · `Credential state unknown` | The credential store could not be **read** for that channel — usually a permission problem or a malformed store. This is not `not configured`: a secret may well be stored. Do not retype it until you have checked the store, which is why the badge on that channel's card turns amber rather than red. |
+| *<channel>* · `Channel failed to start:` plus the adapter's own message | The adapter's `start()` threw. The message is passed through verbatim, because it is the only part that names the credential or option actually at fault. |
+| `The credential was saved, but the running channels did not reload it — restart dsh to be sure.` | The save partially applied: the secret is in the credential store, but the reconcile that hands it to the running adapters failed, so the bot keeps using the old one until a restart. |
+
+Warnings accumulate across the several calls one Save makes (config first, then
+each channel's credentials); the error lines are re-derived from the world on
+every call. A warning is about the call that raised it, so it would otherwise be
+erased by the next channel's save — and the one that mattered is the one you
+would lose.
 
 ### Credential groups
 
@@ -415,10 +446,13 @@ Logs come from the DSH host logger (run `dsh web` in a terminal); plugin message
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Installing `dsh-connect@0.9.0` on DSH `0.2.0-rc.2` is refused: *"`dsh-connect@0.9.0` 与 DSH `0.2.0-rc.2` 不兼容 … 运行它可能导致崩溃或数据丢失"* | Not a bug and not a warning to click past: DSH's compatibility gate rejects any plugin whose declared peer range does not cover the running host, and `0.9.0` predates the `0.2.0` line. Install **`0.9.2`** (or newer), whose peers require `^0.2.0-rc.2`. |
+| Installing `dsh-connect@0.9.0` on DSH `0.2.0-rc.2` is refused: *"`dsh-connect@0.9.0` 与 DSH `0.2.0-rc.2` 不兼容 … 运行它可能导致崩溃或数据丢失"* | Not a bug and not a warning to click past: DSH's compatibility gate rejects any plugin whose declared peer range does not cover the running host, and `0.9.0` predates the `0.2.0` line. Install **`0.9.3`** (or newer), whose peers require `^0.2.0-rc.2`. |
 | In the Desktop app you cannot find where to install a plugin — the entry seems to have gone after a restart | The install surface is the **Plugins panel in the sidebar** (first in the panel list), not Settings; Settings only lists plugins, read-only. See [Installing in the Desktop app](#installing-in-the-desktop-app). If the panel opens but says *this deployment runs without a manageable profile*, the host did not expose its plugin manager, so the page is inert — restart the app. And **Settings → dsh-connect** can only exist once the plugin is installed and loaded, so after a refused install there is legitimately nothing to find. |
 | `connect-feishu: adapter init failed` / `start failed` | Bad credentials, app not published, or network blocked. Check `appId`/`appSecret`, re-run onboarding, verify the bot is online in the Feishu console. |
-| `connect: resume of <id> failed, creating fresh session` | The persisted session could not be resumed (missing workdir, persistence issue). Check `workDir` and `~/.dsh/sessions`. |
+| `connect: resume of <id> failed, creating fresh session` | The persisted session could not be resumed (missing workdir, persistence issue). Check `workDir` and `~/.dsh/sessions`. **The chat is told too**, since `0.9.3`: you get 「无法恢复上次的会话，已为你开启一个新会话继续」 with the reason, because the log is the one place a chat user never looks and a reply that arrives with no memory of the conversation looks like the bot forgetting rather than a session that moved. The old session is not lost — it is still in the session store and still openable in the Web GUI. |
+| `connect: binding store writes to <file> are working again` / `… cannot persist bindings …` | The binding file could not be written, so **existing chats will not be resumed after a restart** and each will start a new session. Reported once when the write breaks and once when it recovers — on its own it is a disk or permission problem, but if you see it *and* the resume notice above, the two are the same cause. |
+| `connect: summary card could not be delivered …` / `connect: stats card could not be delivered …` | The turn finished but its result card did not reach the chat, so the streaming card stays on its last frame. Usually a bot-API or permission problem on the channel side; the answer itself is in the session and visible in the Web GUI. |
+| A reminder was accepted but never fired | Fixed in **0.9.3**: the store's write failure was swallowed, so 「已设置」 could be sent for a reminder that would not survive a restart. The confirmation now carries a second line saying so. Upgrade. |
 | The bot answers every message with a raw `agent-presets: preset "…" not found` line, and nothing reaches the agent | A stale `agent-presets.default` in `$DSH_HOME/settings.yaml` names an id no installed build ships. Fixed in **0.9.0**, which retries `standard` and logs the decision rather than failing the turn; on an older build, set the key to a shipped id (`standard`). |
 | Session-locked notices | Another client (Feishu or Web) holds the write lock. Use `/unlock` or wait for the lock timeout. |
 | Model switch in the Web GUI appears ignored | Fixed in **0.9.0**: the plugin no longer pins a static default model over the Web GUI's session selection. Upgrade, then restart `dsh web`. |
