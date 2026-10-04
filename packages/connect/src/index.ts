@@ -258,32 +258,49 @@ export const inject = ["agents", "sessions", "agentDefaultModel", "credentials"]
  * selector (`channels`), shared `channelDefaults`, per-channel config, and the
  * web-settings state path. Each channel's own `Config` schema is also exported
  * (as `feishu.Config`, etc.) for reference; the merged entry validates loosely.
+ *
+ * Two families of key carry `.volatile()`, and *only* these two:
+ *
+ * - the **general settings** below (`language`, `workDir`, `allowUsers`, …) —
+ *   the values the pane's 通用设置 view edits, which the chat commands set;
+ * - the **pane fields** spread from `paneConfigFields()` at the bottom.
+ *
+ * `.volatile()` is what makes a field hot-committable: the loader replaces the
+ * reference in place when the profile entry changes, and `sectionOf` is what
+ * projects it back out on a write. A general key left non-volatile would still
+ * be *stored* by `replace()` — and then silently dropped by the next write,
+ * because only volatile paths survive the reset. Keep the two lists in step.
+ *
+ * The declaration stays end-to-end on the leaves; no container is volatile (a
+ * volatile container would copy `appSecret` into the profile). `stateDir`,
+ * `visionModel` and `settingsStatePath` are deliberately *not* volatile: they
+ * are advanced or non-scalar, and the pane does not offer them.
  */
 export const Config = z.object({
   /** Agent preset id composed into each bound session; omit for the roster default. */
-  agentPreset: z.string(),
+  agentPreset: z.string().volatile(),
   /** Absolute working directory per agent; defaults to the process cwd. */
-  workDir: z.string(),
+  workDir: z.string().volatile(),
   /** Optional workspace directories offered by the `/dir` chooser. */
-  workspaces: z.array(z.string()),
+  workspaces: z.array(z.string()).volatile(),
   /** Vision-capable model used to describe images when the main model can't see them. */
   visionModel: z.object({ provider: z.string(), model: z.string() }),
   /** User-facing message language: `zh` (default) or `en`. */
-  language: z.union([z.const("zh"), z.const("en")]),
+  language: z.union([z.const("zh"), z.const("en")]).volatile(),
   /** Sender allowlist; empty = all senders allowed. */
-  allowUsers: z.array(z.string()),
+  allowUsers: z.array(z.string()).volatile(),
   /** Chat allowlist; empty = all chats allowed. */
-  allowChats: z.array(z.string()),
+  allowChats: z.array(z.string()).volatile(),
   /** Directory for the bindings.json routing store. */
   stateDir: z.string(),
   /** Automatically create a Web mirror for new sessions (default: true). */
-  autoMirror: z.boolean(),
+  autoMirror: z.boolean().volatile(),
   /** Liveness heartbeat interval ms for the streaming card; 0 disables it (default: 60000). */
-  streamHeartbeatMs: z.number(),
+  streamHeartbeatMs: z.number().volatile(),
   /** Default notification level for streaming replies. Default 'result' (final answer only) keeps cards short. */
-  notifyLevel: z.union([z.const("full"), z.const("important"), z.const("result")]),
+  notifyLevel: z.union([z.const("full"), z.const("important"), z.const("result")]).volatile(),
   /** Proactive progress-notice interval ms when a turn stays silent (default: 300000 = 5 min; 0 disables). */
-  progressTimeoutMs: z.number(),
+  progressTimeoutMs: z.number().volatile(),
   /**
    * Channels to activate, shared `channelDefaults`, and the per-channel options
    * the settings pane edits. Spread from `paneConfigFields()` rather than
@@ -553,6 +570,24 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
     // Read per call, so the registry below can be built after this service
     // (it saves *through* it) without the service ever seeing a partial object.
     onboarding: () => onboarding.registry,
+    // The DSH-wide default model, for the pane's read-only row. Deliberately a
+    // read: `agentDefaultModel.saveSelection()` exists (the `/model` and
+    // `/reasoning` chat commands drive it) but that selection is shared with
+    // every other session and plugin, so a settings pane writing it would move
+    // other people's runs as a side effect of editing this bridge. Resolved
+    // through `ctx.get` because property access is fiber-scoped and rejected
+    // from a callback; a missing service yields no row rather than an empty one.
+    agentModel: () => {
+      const service = ctx.get("agentDefaultModel") as
+        | { currentSelection?: () => { provider?: string; model?: string } }
+        | undefined;
+      return service?.currentSelection?.();
+    },
+    // Keys a `dsh.shared.config.json` on this machine overrides, so the pane can
+    // say why editing them would appear to do nothing. Read from the service
+    // instance rather than re-reading the file: the merge that decides the
+    // answer lives in its constructor, and a second read could disagree.
+    sharedOverrideKeys: () => connect.sharedOverrideKeys(),
   });
 
   // One-click Feishu bot creation, driven by the pane's button. The whole flow

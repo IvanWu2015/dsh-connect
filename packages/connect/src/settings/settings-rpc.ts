@@ -123,6 +123,20 @@ export interface SettingsSnapshot {
    * because it is the only part that identifies *which* credential is wrong.
    */
   channelErrors?: Record<string, string>;
+  /**
+   * The DSH-wide default model, for the pane's read-only display row. Absent
+   * when the host could not answer (no `agentDefaultModel` service, nothing
+   * selected), in which case the pane omits the row — an empty control would
+   * imply the user could set it here, and they cannot: the selection belongs to
+   * DSH and changing it would move every other session with it.
+   */
+  agentModel?: { provider: string; model: string };
+  /**
+   * General-settings keys a `dsh.shared.config.json` on this machine overrides.
+   * Absent when there is no shared config (the common case), so the rows render
+   * as ordinary editable fields with no provenance note.
+   */
+  sharedOverrideKeys?: string[];
 }
 
 /**

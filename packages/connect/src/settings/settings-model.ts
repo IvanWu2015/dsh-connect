@@ -17,14 +17,14 @@ export const CHANNEL_SECRET_FIELDS = Object.fromEntries(
 ) as Record<ChannelName, string[]>;
 
 /**
- * A non-secret, user-editable per-channel config field. `kind` drives how the
- * pane renders the control and how `coerceConfigValue` normalizes the raw input
- * (text → string, number → finite number, boolean → false on empty, select →
- * one of `options`).
+ * A non-secret, user-editable config field. `kind` drives how the pane renders
+ * the control and how `coerceConfigValue` normalizes the raw input (text →
+ * string, number → finite number, boolean → false on empty, select → one of
+ * `options`, list → a non-empty `string[]`).
  */
 export interface ConfigField {
   key: string;
-  kind: 'text' | 'number' | 'boolean' | 'select';
+  kind: 'text' | 'number' | 'boolean' | 'select' | 'list';
   options?: string[];
   /** Human label; defaults to the key if absent. */
   label?: string;
@@ -62,8 +62,55 @@ export const CHANNEL_CONFIG_FIELDS = {
 /** Channel-agnostic keys applied to every channel that doesn't set its own. */
 export const CHANNEL_DEFAULT_FIELDS: readonly ConfigField[] = [
   { key: 'language', kind: 'select', options: ['zh', 'en'], label: 'language' },
-  { key: 'notifyLevel', kind: 'select', options: ['full', 'important', 'result'], label: 'notifyLevel' },
 ];
+
+/**
+ * The plugin-wide defaults the pane edits outside any channel (通用设置) — the
+ * same values the chat commands set. Grouped for rendering; `GENERAL_FIELDS` is
+ * the flat view used by the projection and form code, which don't group.
+ *
+ * Every one of these is resolved once when the plugin starts and copied into
+ * each runner as it is created, so a pane edit reaches the profile but is only
+ * picked up by a **restart**. The pane says so on every row rather than
+ * implying an immediacy it cannot deliver. `workDir`, `language` and
+ * `autoMirror` can additionally be overridden by `dsh.shared.config.json`; the
+ * pane notes that too, but only where it actually applies.
+ */
+export const GENERAL_FIELD_GROUPS: readonly { title: string; fields: readonly ConfigField[] }[] = [
+  {
+    title: 'g.group.locale',
+    fields: [
+      { key: 'language', kind: 'select', options: ['zh', 'en'], label: 'language' },
+      { key: 'notifyLevel', kind: 'select', options: ['full', 'important', 'result'], label: 'notifyLevel' },
+      { key: 'progressTimeoutMs', kind: 'number', label: 'progressTimeoutMs' },
+    ],
+  },
+  {
+    title: 'g.group.workspace',
+    fields: [
+      { key: 'workDir', kind: 'text', label: 'workDir' },
+      { key: 'workspaces', kind: 'list', label: 'workspaces' },
+    ],
+  },
+  {
+    title: 'g.group.access',
+    fields: [
+      { key: 'allowUsers', kind: 'list', label: 'allowUsers' },
+      { key: 'allowChats', kind: 'list', label: 'allowChats' },
+    ],
+  },
+  {
+    title: 'g.group.agent',
+    fields: [
+      { key: 'agentPreset', kind: 'text', label: 'agentPreset' },
+      { key: 'autoMirror', kind: 'boolean', label: 'autoMirror' },
+      { key: 'streamHeartbeatMs', kind: 'number', label: 'streamHeartbeatMs' },
+    ],
+  },
+];
+
+/** Flat view of the general settings fields, for projection and form code. */
+export const GENERAL_FIELDS: readonly ConfigField[] = GENERAL_FIELD_GROUPS.flatMap((g) => g.fields);
 
 /** Normalize a raw form input for a field `kind` (empty → undefined = not saved). */
 export function coerceConfigValue(kind: ConfigField['kind'], raw: unknown): unknown {
@@ -77,6 +124,22 @@ export function coerceConfigValue(kind: ConfigField['kind'], raw: unknown): unkn
       return typeof raw === 'boolean' ? raw : raw === true || raw === 'true';
     case 'select':
       return String(raw);
+    case 'list': {
+      // A `string[]` field (`workspaces`/`allowUsers`/`allowChats`). The raw
+      // input is a textarea, so one entry per line — commas are also accepted
+      // so a pasted `a, b, c` does what the user means rather than becoming a
+      // single absurd path.
+      const items = (Array.isArray(raw) ? raw : String(raw).split(/[\n,]/))
+        .map((s) => String(s).trim())
+        .filter((s) => s.length > 0);
+      // Empty means "unset", i.e. drop the key — deliberately not `[]`. These
+      // are `z.array` keys, and an absent volatile array already resolves to
+      // `[]` on the way in (`namespace.ts`), so projecting one back out would
+      // only stamp `workspaces: []` / `allowUsers: []` noise into every profile
+      // that ever saved while leaving them blank. Clearing to inherited is also
+      // exactly what the user means by emptying the box.
+      return items.length > 0 ? items : undefined;
+    }
     default:
       return String(raw);
   }
@@ -103,6 +166,36 @@ export interface SettingsForm {
    * to save would overwrite a working secret with its own mask.
    */
   secretPreviews: Record<string, Record<string, string>>;
+  /**
+   * Values for the general (plugin-wide) keys, keyed per `GENERAL_FIELDS`.
+   * Flat rather than grouped — the grouping is a rendering concern. These are
+   * written to the *top level* of the section, beside `channels`, because they
+   * are the same keys the chat commands set (`/notice`, `/model`, …), not
+   * per-channel options.
+   */
+  general: Record<string, unknown>;
+  /**
+   * General keys whose current value actually comes from `dsh.shared.config.json`
+   * and therefore shadows whatever the profile holds. The pane prints a
+   * provenance note on those rows and only those.
+   *
+   * A list rather than a boolean, and carried on the form rather than read at
+   * render time: the pane already holds exactly one snapshot-derived object, and
+   * a separate "just the snapshot, for this one flag" slot would be the ninth
+   * hook — one more than the client bundle's stub is set up to feed. Empty on a
+   * clean install, where there is no shared config, so the note simply never
+   * appears.
+   */
+  sharedOverrideKeys: string[];
+  /**
+   * The DSH-owned default model, carried for a read-only display row. It is
+   * *not* part of this form's config and must never reach a save payload: it
+   * belongs to DSH, and the pane deliberately has no write path for it (see
+   * the note on `renderModelRow` in the client). Absent when the host could
+   * not read a selection, in which case the pane omits the row rather than
+   * rendering an empty control.
+   */
+  agentModel?: { provider: string; model: string };
   settingsStatePath?: string;
   /** True when the section lives in the settings namespace: a save is immediate and durable. */
   live: boolean;
@@ -124,10 +217,28 @@ export function snapshotToForm(snapshot: SettingsSnapshot): SettingsForm {
   for (const ch of Object.keys(CHANNEL_CONFIG_FIELDS) as ChannelName[]) {
     channelConfigs[ch] = (config[ch] ?? {}) as Record<string, unknown>;
   }
+  // Seeded by field table rather than by copying the whole top-level config:
+  // `config` also holds keys this pane does not edit (`stateDir`, `visionModel`,
+  // …), and the form is what a save sends back — anything seeded here is
+  // something the pane would then be responsible for preserving.
+  const general: Record<string, unknown> = {};
+  for (const field of GENERAL_FIELDS) {
+    const value = config[field.key];
+    if (value === undefined) continue;
+    // Arrays are copied so the form never aliases the snapshot it was built
+    // from: `setGeneral` mutates the form in place, which would otherwise edit
+    // the snapshot the host handed us.
+    general[field.key] = Array.isArray(value) ? [...value] : value;
+  }
   return {
     channels,
     channelDefaults: (config.channelDefaults ?? {}) as Record<string, unknown>,
     channelConfigs,
+    general,
+    // Copied, like `general`'s arrays: the form is mutated in place by the
+    // setters, and aliasing the snapshot here would edit the host's own object.
+    sharedOverrideKeys: [...(snapshot.sharedOverrideKeys ?? [])],
+    ...(snapshot.agentModel ? { agentModel: snapshot.agentModel } : {}),
     // Deliberately empty even though `secretPreviews` carries something: an
     // input is a place to *type a new* secret, and prefilling it with the mask
     // would either overwrite the stored secret with its own preview on save, or
@@ -166,6 +277,17 @@ export function buildConfigSave(form: SettingsForm): Record<string, unknown> {
   for (const [ch, cfg] of Object.entries(form.channelConfigs ?? {})) {
     const clean = stripEmpty(cfg ?? {});
     if (Object.keys(clean).length > 0) config[ch] = clean;
+  }
+  // General keys sit at the top level beside `channels` — they are plugin-wide
+  // defaults, not per-channel options. Emitted only when set: an empty list is
+  // skipped, not written as `[]` (see `coerceConfigValue`), which keeps a
+  // profile that never configured them free of empty-array noise. `agentModel`
+  // is deliberately absent: it belongs to DSH, and this pane does not write it.
+  for (const field of GENERAL_FIELDS) {
+    const value = form.general?.[field.key];
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    config[field.key] = value;
   }
   if (form.settingsStatePath) config.settingsStatePath = form.settingsStatePath;
   return config;

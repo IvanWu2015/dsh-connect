@@ -147,9 +147,41 @@ var CHANNEL_CONFIG_FIELDS = {
   ]
 };
 var CHANNEL_DEFAULT_FIELDS = [
-  { key: "language", kind: "select", options: ["zh", "en"], label: "language" },
-  { key: "notifyLevel", kind: "select", options: ["full", "important", "result"], label: "notifyLevel" }
+  { key: "language", kind: "select", options: ["zh", "en"], label: "language" }
 ];
+var GENERAL_FIELD_GROUPS = [
+  {
+    title: "g.group.locale",
+    fields: [
+      { key: "language", kind: "select", options: ["zh", "en"], label: "language" },
+      { key: "notifyLevel", kind: "select", options: ["full", "important", "result"], label: "notifyLevel" },
+      { key: "progressTimeoutMs", kind: "number", label: "progressTimeoutMs" }
+    ]
+  },
+  {
+    title: "g.group.workspace",
+    fields: [
+      { key: "workDir", kind: "text", label: "workDir" },
+      { key: "workspaces", kind: "list", label: "workspaces" }
+    ]
+  },
+  {
+    title: "g.group.access",
+    fields: [
+      { key: "allowUsers", kind: "list", label: "allowUsers" },
+      { key: "allowChats", kind: "list", label: "allowChats" }
+    ]
+  },
+  {
+    title: "g.group.agent",
+    fields: [
+      { key: "agentPreset", kind: "text", label: "agentPreset" },
+      { key: "autoMirror", kind: "boolean", label: "autoMirror" },
+      { key: "streamHeartbeatMs", kind: "number", label: "streamHeartbeatMs" }
+    ]
+  }
+];
+var GENERAL_FIELDS = GENERAL_FIELD_GROUPS.flatMap((g) => g.fields);
 function coerceConfigValue(kind, raw) {
   if (raw === void 0 || raw === null || raw === "")
     return void 0;
@@ -162,6 +194,10 @@ function coerceConfigValue(kind, raw) {
       return typeof raw === "boolean" ? raw : raw === true || raw === "true";
     case "select":
       return String(raw);
+    case "list": {
+      const items = (Array.isArray(raw) ? raw : String(raw).split(/[\n,]/)).map((s) => String(s).trim()).filter((s) => s.length > 0);
+      return items.length > 0 ? items : void 0;
+    }
     default:
       return String(raw);
   }
@@ -173,10 +209,22 @@ function snapshotToForm(snapshot) {
   for (const ch of Object.keys(CHANNEL_CONFIG_FIELDS)) {
     channelConfigs[ch] = config[ch] ?? {};
   }
+  const general = {};
+  for (const field of GENERAL_FIELDS) {
+    const value = config[field.key];
+    if (value === void 0)
+      continue;
+    general[field.key] = Array.isArray(value) ? [...value] : value;
+  }
   return {
     channels,
     channelDefaults: config.channelDefaults ?? {},
     channelConfigs,
+    general,
+    // Copied, like `general`'s arrays: the form is mutated in place by the
+    // setters, and aliasing the snapshot here would edit the host's own object.
+    sharedOverrideKeys: [...snapshot.sharedOverrideKeys ?? []],
+    ...snapshot.agentModel ? { agentModel: snapshot.agentModel } : {},
     // Deliberately empty even though `secretPreviews` carries something: an
     // input is a place to *type a new* secret, and prefilling it with the mask
     // would either overwrite the stored secret with its own preview on save, or
@@ -205,6 +253,14 @@ function buildConfigSave(form) {
     const clean = stripEmpty(cfg ?? {});
     if (Object.keys(clean).length > 0)
       config[ch] = clean;
+  }
+  for (const field of GENERAL_FIELDS) {
+    const value = form.general?.[field.key];
+    if (value === void 0 || value === null)
+      continue;
+    if (Array.isArray(value) && value.length === 0)
+      continue;
+    config[field.key] = value;
   }
   if (form.settingsStatePath)
     config.settingsStatePath = form.settingsStatePath;
@@ -262,6 +318,9 @@ var LOCALES = {
     collapse: "\u6536\u8D77",
     advanced: "\u9AD8\u7EA7\u9009\u9879",
     tabsAria: "\u6E20\u9053\u5207\u6362",
+    navAria: "\u8BBE\u7F6E\u5206\u533A",
+    "view.general": "\u901A\u7528\u8BBE\u7F6E",
+    "view.channels": "\u673A\u5668\u4EBA\u6E20\u9053",
     credentialUnknown: "\u51ED\u636E\u72B6\u6001\u672A\u77E5",
     credentialUnknownHint: "\u65E0\u6CD5\u8BFB\u53D6\u5DF2\u5B58\u50A8\u7684\u51ED\u636E\uFF0C\u8BF7\u786E\u8BA4\u51ED\u636E\u5E93\u53EF\u8BBF\u95EE\u540E\u91CD\u8BD5\u3002",
     channelFailed: "\u6E20\u9053\u542F\u52A8\u5931\u8D25\uFF1A",
@@ -324,8 +383,36 @@ var LOCALES = {
     "f.defaultAt.hint": "\u7FA4\u6D88\u606F\u9ED8\u8BA4 @ \u7684\u6210\u5458\uFF0C\u591A\u4E2A\u7528\u9017\u53F7\u5206\u9694\u3002",
     "f.pollIntervalMs": "\u8F6E\u8BE2\u95F4\u9694\uFF08\u6BEB\u79D2\uFF09",
     "f.pollIntervalMs.hint": "\u7F51\u9875\u6E20\u9053\u68C0\u67E5\u65B0\u6D88\u606F\u7684\u95F4\u9694\uFF0C\u9ED8\u8BA4 1000\u3002",
-    "f.notifyLevel": "\u901A\u77E5\u7EA7\u522B",
-    "f.notifyLevel.hint": "\u63A7\u5236\u673A\u5668\u4EBA\u628A\u591A\u5C11\u8FC7\u7A0B\u4FE1\u606F\u53D1\u5230\u804A\u5929\u91CC\u3002",
+    // General settings. These resolve once when the plugin starts and there is
+    // no hot reload, so every hint says so — a control that silently does
+    // nothing until a restart is worse than one that says it will.
+    "g.group.locale": "\u8BED\u8A00\u4E0E\u63D0\u9192",
+    "g.group.workspace": "\u5DE5\u4F5C\u76EE\u5F55",
+    "g.group.access": "\u8BBF\u95EE\u63A7\u5236",
+    "g.group.agent": "\u667A\u80FD\u4F53",
+    "g.language": "\u8BED\u8A00",
+    "g.language.hint": "\u673A\u5668\u4EBA\u56DE\u590D\u7528\u6237\u4F7F\u7528\u7684\u8BED\u8A00\uFF0C\u5BF9\u6240\u6709\u6E20\u9053\u751F\u6548\uFF08\u6E20\u9053\u5361\u7247\u91CC\u7684\u300C\u56DE\u590D\u8BED\u8A00\u300D\u53EF\u5355\u72EC\u8986\u76D6\uFF09\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.notifyLevel": "\u901A\u77E5\u7EA7\u522B",
+    "g.notifyLevel.hint": "\u63A7\u5236\u673A\u5668\u4EBA\u628A\u591A\u5C11\u8FC7\u7A0B\u4FE1\u606F\u53D1\u5230\u804A\u5929\u91CC\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.progressTimeoutMs": "\u8FDB\u5EA6\u63D0\u9192\u8D85\u65F6\uFF08\u6BEB\u79D2\uFF09",
+    "g.progressTimeoutMs.hint": "\u4EFB\u52A1\u8D85\u8FC7\u8FD9\u4E2A\u65F6\u957F\u6CA1\u6709\u8F93\u51FA\u65F6\uFF0C\u7ED9\u7528\u6237\u53D1\u4E00\u6761\u8FDB\u5EA6\u63D0\u9192\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.workDir": "\u9ED8\u8BA4\u5DE5\u4F5C\u76EE\u5F55",
+    "g.workDir.hint": "\u673A\u5668\u4EBA\u65B0\u5EFA\u4F1A\u8BDD\u65F6\u4F7F\u7528\u7684\u76EE\u5F55\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.workspaces": "\u989D\u5916\u5DE5\u4F5C\u533A",
+    "g.workspaces.hint": "\u6BCF\u884C\u4E00\u4E2A\u76EE\u5F55\u3002\u8FD9\u91CC\u7684\u5185\u5BB9\u4F1A\u4E0E dsh.shared.config.json \u91CC\u7684 additionalWorkspaces \u5408\u5E76\uFF0C\u800C\u4E0D\u662F\u66FF\u6362\u5B83\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.allowUsers": "\u5141\u8BB8\u7684\u7528\u6237",
+    "g.allowUsers.hint": "\u6BCF\u884C\u4E00\u4E2A\u7528\u6237\u6807\u8BC6\uFF1B\u7559\u7A7A\u8868\u793A\u4E0D\u9650\u5236\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.allowChats": "\u5141\u8BB8\u7684\u4F1A\u8BDD",
+    "g.allowChats.hint": "\u6BCF\u884C\u4E00\u4E2A\u4F1A\u8BDD ID\uFF1B\u7559\u7A7A\u8868\u793A\u4E0D\u9650\u5236\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.agentPreset": "\u667A\u80FD\u4F53\u9884\u8BBE",
+    "g.agentPreset.hint": "\u65B0\u5EFA\u4F1A\u8BDD\u9ED8\u8BA4\u4F7F\u7528\u7684\u9884\u8BBE\u540D\u79F0\uFF1B\u7559\u7A7A\u8868\u793A\u6CBF\u7528 DSH \u7684\u9ED8\u8BA4\u503C\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.autoMirror": "\u81EA\u52A8\u955C\u50CF\u4F1A\u8BDD",
+    "g.autoMirror.hint": "\u628A\u673A\u5668\u4EBA\u53D1\u8D77\u7684\u4F1A\u8BDD\u4E5F\u663E\u793A\u5728 DSH \u7F51\u9875\u754C\u9762\u91CC\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.streamHeartbeatMs": "\u6D41\u5F0F\u5FC3\u8DF3\uFF08\u6BEB\u79D2\uFF09",
+    "g.streamHeartbeatMs.hint": "\u6D41\u5F0F\u56DE\u590D\u671F\u95F4\u5411\u804A\u5929\u53D1\u9001\u5FC3\u8DF3\u7684\u95F4\u9694\uFF0C\u907F\u514D\u957F\u4EFB\u52A1\u770B\u8D77\u6765\u50CF\u5361\u4F4F\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.sharedOverride": "\u5F53\u524D\u53D6\u503C\u6765\u81EA dsh.shared.config.json\uFF0C\u6B64\u5904\u7684\u4FEE\u6539\u4E0D\u4F1A\u751F\u6548\u3002",
+    "g.model": "\u9ED8\u8BA4\u6A21\u578B",
+    "g.model.note": "\u6B64\u503C\u7531 DSH \u7BA1\u7406\uFF0C\u8BF7\u5728 DSH \u91CC\u5207\u6362\u3002",
     "s.feishu.appId": "App ID",
     "s.feishu.appId.hint": "\u5F00\u653E\u5E73\u53F0\u300C\u51ED\u8BC1\u4E0E\u57FA\u7840\u4FE1\u606F\u300D\u4E2D\u7684 App ID\uFF0C\u975E\u673A\u5BC6\uFF0C\u5B8C\u6574\u663E\u793A\u3002",
     "s.feishu.appSecret": "App Secret",
@@ -377,6 +464,9 @@ var LOCALES = {
     collapse: "Collapse",
     advanced: "Advanced",
     tabsAria: "Channel switcher",
+    navAria: "Settings sections",
+    "view.general": "General",
+    "view.channels": "Bot channels",
     credentialUnknown: "Credential state unknown",
     credentialUnknownHint: "The stored credentials could not be read \u2014 check that the credential store is reachable, then try again.",
     channelFailed: "Channel failed to start:",
@@ -439,8 +529,36 @@ var LOCALES = {
     "f.defaultAt.hint": "Members to @ by default on group messages, comma-separated.",
     "f.pollIntervalMs": "Poll interval (ms)",
     "f.pollIntervalMs.hint": "How often the web channel checks for new messages; defaults to 1000.",
-    "f.notifyLevel": "Notify level",
-    "f.notifyLevel.hint": "How much of the working process the bot posts into the chat.",
+    // General settings. These resolve once when the plugin starts and there is
+    // no hot reload, so every hint says so — a control that silently does
+    // nothing until a restart is worse than one that says it will.
+    "g.group.locale": "Language & notices",
+    "g.group.workspace": "Working directories",
+    "g.group.access": "Access control",
+    "g.group.agent": "Agent",
+    "g.language": "Language",
+    "g.language.hint": "The language the bot replies to users in, for every channel (a channel card\u2019s \u201CReply language\u201D overrides it). A change takes effect after dsh restarts.",
+    "g.notifyLevel": "Notify level",
+    "g.notifyLevel.hint": "How much of the working process the bot posts into the chat. A change takes effect after dsh restarts.",
+    "g.progressTimeoutMs": "Progress timeout (ms)",
+    "g.progressTimeoutMs.hint": "How long a task may go without output before the user gets a progress notice. A change takes effect after dsh restarts.",
+    "g.workDir": "Default working directory",
+    "g.workDir.hint": "The directory the bot uses for new sessions. A change takes effect after dsh restarts.",
+    "g.workspaces": "Additional workspaces",
+    "g.workspaces.hint": "One directory per line. These are merged with additionalWorkspaces from dsh.shared.config.json rather than replacing it. A change takes effect after dsh restarts.",
+    "g.allowUsers": "Allowed users",
+    "g.allowUsers.hint": "One user id per line; leave empty to allow everyone. A change takes effect after dsh restarts.",
+    "g.allowChats": "Allowed chats",
+    "g.allowChats.hint": "One chat id per line; leave empty to allow every chat. A change takes effect after dsh restarts.",
+    "g.agentPreset": "Agent preset",
+    "g.agentPreset.hint": "The preset new sessions use by default; leave empty for the DSH default. A change takes effect after dsh restarts.",
+    "g.autoMirror": "Mirror sessions",
+    "g.autoMirror.hint": "Also show bot-created sessions in the DSH web UI. A change takes effect after dsh restarts.",
+    "g.streamHeartbeatMs": "Stream heartbeat (ms)",
+    "g.streamHeartbeatMs.hint": "How often a heartbeat is posted into the chat while a reply streams, so a long task does not look stuck. A change takes effect after dsh restarts.",
+    "g.sharedOverride": "The current value comes from dsh.shared.config.json \u2014 editing it here has no effect.",
+    "g.model": "Default model",
+    "g.model.note": "DSH owns this value \u2014 switch it inside DSH.",
     "s.feishu.appId": "App ID",
     "s.feishu.appId.hint": "The App ID from the open platform\u2019s credentials page. Not a secret \u2014 shown in full.",
     "s.feishu.appSecret": "App Secret",
@@ -481,6 +599,8 @@ function optionalText(t, key) {
 }
 
 // client/panel-state.mjs
+var PANE_VIEWS = ["general", "channels"];
+var DEFAULT_VIEW = "channels";
 var ADVANCED_KEYS = {
   feishu: ["webhookPort", "webhookPath"],
   telegram: ["pollingTimeoutSeconds", "baseUrl"],
@@ -550,11 +670,23 @@ var h = React.createElement;
 var ALL_CHANNELS = Object.keys(CHANNEL_SECRET_FIELDS);
 var STYLE = `
 .dsh-connect-settings,.dsh-connect-settings *,.dsh-connect-settings *::before,.dsh-connect-settings *::after{box-sizing:border-box}
-.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);--ds-warn:var(--dsw-alias-state-error-primary,#b45309);display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);--ds-warn:var(--dsw-alias-state-error-primary,#b45309);--ds-nav-h:39px;display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 .dsh-connect-settings .ds-card{display:flex;flex-direction:column;gap:10px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg);padding:12px 14px}
 .dsh-connect-settings .ds-card-title{margin:0;font-size:13px;font-weight:600}
 .dsh-connect-settings .ds-note{margin:0;font-size:11px;line-height:1.5;color:var(--ds-muted)}
-.dsh-connect-settings .ds-tabs{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;background:var(--ds-bg);border-bottom:1px solid var(--ds-border)}
+/* The primary navigation, and the reason the channel tab strip below pins to
+   var(--ds-nav-h) rather than 0. Both strips are sticky, and a control the user
+   asked to keep on screen must not slide *under* another one \u2014 with both at
+   top:0 the channel tabs became invisible the moment the pane scrolled, which is
+   the exact complaint the sticky strip was added to fix. Two levels, two
+   offsets, one declared height. */
+.dsh-connect-settings .ds-nav{position:sticky;top:0;z-index:3;display:flex;flex-wrap:wrap;gap:2px;padding:0 0 6px;background:var(--ds-bg);border-bottom:1px solid var(--ds-border)}
+.dsh-connect-settings .ds-nav-item{height:32px;padding:0 12px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--ds-muted);font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+.dsh-connect-settings .ds-nav-item:hover{color:var(--ds-text)}
+/* aria-current, not role="tab": these are links between two views, and the
+   document has no tablist to belong to. */
+.dsh-connect-settings .ds-nav-item[aria-current=page]{color:var(--ds-accent);border-bottom-color:var(--ds-accent)}
+.dsh-connect-settings .ds-tabs{position:sticky;top:var(--ds-nav-h);z-index:2;display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;background:var(--ds-bg);border-bottom:1px solid var(--ds-border)}
 .dsh-connect-settings .ds-tab{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--ds-border);border-radius:14px;background:transparent;color:var(--ds-text);font:inherit;font-size:12px;cursor:pointer}
 .dsh-connect-settings .ds-tab:hover{background:var(--ds-hover)}
 .dsh-connect-settings .ds-tab[aria-expanded=true]{border-color:var(--ds-accent);color:var(--ds-accent)}
@@ -588,6 +720,14 @@ var STYLE = `
 .dsh-connect-settings .ds-check{flex:none;width:16px;height:16px;accent-color:var(--ds-accent)}
 .dsh-connect-settings .ds-input{height:30px;width:100%;min-width:0;padding:0 9px;border:1px solid var(--ds-border-2);border-radius:6px;background:var(--ds-bg);color:var(--ds-text);font:inherit}
 .dsh-connect-settings select.ds-input{cursor:pointer}
+/* A list field (workspaces/allowUsers/allowChats) is a textarea, one entry per
+   line. .ds-input fixes a 30px height that a textarea cannot use, so this rule
+   overrides both the height and the vertical padding. */
+.dsh-connect-settings .ds-list{min-height:60px;height:auto;padding:6px 9px;line-height:1.5;resize:vertical}
+/* The read-only model row \u2014 text, never a control. It is a value this pane
+   deliberately cannot write (see renderModelRow), so it must not look
+   editable. */
+.dsh-connect-settings .ds-readonly{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--ds-text);word-break:break-all}
 .dsh-connect-settings .ds-input:focus{outline:none;border-color:var(--ds-accent);box-shadow:0 0 0 2px rgba(59,130,246,.25);box-shadow:0 0 0 2px color-mix(in srgb,var(--ds-accent) 25%,transparent)}
 .dsh-connect-settings .ds-adv{display:flex;flex-direction:column;gap:8px}
 .dsh-connect-settings .ds-advanced-toggle{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px dashed var(--ds-border-2);border-radius:99px;background:transparent;color:var(--ds-muted);font:inherit;font-size:11px;cursor:pointer}
@@ -619,9 +759,10 @@ function injectStyles() {
   el.textContent = STYLE;
   document.head.appendChild(el);
 }
-function renderConfigField(field, value, onChange, t) {
-  const label = tr(t, `f.${field.key}`, field.label ?? field.key);
-  const hint = optionalText(t, `f.${field.key}.hint`);
+function renderConfigField(field, value, onChange, t, options = {}) {
+  const ns = options.ns ?? "f";
+  const label = tr(t, `${ns}.${field.key}`, field.label ?? field.key);
+  const hint = optionalText(t, `${ns}.${field.key}.hint`);
   let control;
   if (field.kind === "boolean") {
     control = h(
@@ -649,6 +790,13 @@ function renderConfigField(field, value, onChange, t) {
       label + " ",
       h("input", { className: "ds-input", type: "number", value: value ?? "", onChange: (e) => onChange(e.target.value) })
     );
+  } else if (field.kind === "list") {
+    control = h(
+      "label",
+      { className: "ds-control" },
+      label + " ",
+      h("textarea", { className: "ds-input ds-list", value: Array.isArray(value) ? value.join("\n") : "", onChange: (e) => onChange(e.target.value) })
+    );
   } else {
     control = h(
       "label",
@@ -660,6 +808,7 @@ function renderConfigField(field, value, onChange, t) {
   return h(
     "div",
     { className: "ds-field", key: `cfg-${field.key}` },
+    options.note ? h("p", { className: "ds-note" }, options.note) : null,
     control,
     hint ? h("p", { className: "ds-hint" }, hint) : null
   );
@@ -760,17 +909,20 @@ function renderChannel(ch, ctx) {
       "div",
       { className: "ds-channel-body", id: `ds-ch-${ch}-body` },
       channelHint ? h("p", { className: "ds-note" }, channelHint) : null,
+      // First in the body, *above* the credential fields, because of the
+      // complaint that started this: a user works through every field by hand
+      // and only then discovers the button that would have filled them all in.
+      // DOM order is visual order — moving this below the fields again undoes
+      // the fix. (For telegram and dingtalk the same reasoning holds in
+      // reverse: their text says "paste what you got below", so the text has to
+      // come before the fields it points at.)
+      renderOnboarding(ch, { t, onboarding, onOnboard, onOnboardCancel }),
       h(
         "div",
         { className: "ds-fields" },
         ...CHANNEL_SECRET_FIELDS[ch].map((field) => renderSecretField(ch, field, form, (value) => setField(ch, field, value), t)),
         ...common.map(configField)
       ),
-      // Inside the card's body, after the credentials the flow would fill in:
-      // the button belongs next to the fields it writes, and not behind the
-      // advanced fold, since it is the one thing on this pane a first-time user
-      // is looking for.
-      renderOnboarding(ch, { t, onboarding, onOnboard, onOnboardCancel }),
       advanced.length === 0 ? null : h(
         "div",
         { className: "ds-adv" },
@@ -885,6 +1037,53 @@ function renderIssue(issue, t) {
     h("span", null, tr(t, `w.${issue.code}`, issue.code))
   );
 }
+var MODEL_GROUP = "g.group.agent";
+function renderModelRow(t, agentModel) {
+  return h(
+    "div",
+    { className: "ds-field", key: "cfg-agentModel" },
+    h("label", { className: "ds-control" }, tr(t, "g.model", "Default model")),
+    // Plain text, never an input: it must not look like something to type into.
+    h("p", { className: "ds-readonly" }, `${agentModel.provider} / ${agentModel.model}`),
+    h("p", { className: "ds-note" }, tr(t, "g.model.note", ""))
+  );
+}
+function renderGeneralCard(group, ctx) {
+  const { form, t, setGeneral } = ctx;
+  const overridden = new Set(form.sharedOverrideKeys ?? []);
+  return h(
+    "section",
+    { className: "ds-card", key: group.title },
+    h("h4", { className: "ds-card-title" }, tr(t, group.title, group.title)),
+    h(
+      "div",
+      { className: "ds-fields" },
+      ...group.fields.map((field) => renderConfigField(
+        field,
+        form.general?.[field.key],
+        (raw) => setGeneral(field.key, raw),
+        t,
+        {
+          ns: "g",
+          // Shown only where the shared config really does override the profile
+          // value. A blanket caveat would be false on every row it does not
+          // apply to, and a warning that is usually wrong is one the user learns
+          // to scroll past. `workspaces` is absent from this list on purpose:
+          // the shared config *merges* there instead of overriding, so an edit
+          // genuinely does take effect — its hint says as much instead.
+          note: overridden.has(field.key) ? tr(t, "g.sharedOverride", "") : void 0
+        }
+      )),
+      // Only on the agent card, and only when the host could read a selection at
+      // all: an empty read-only row would say "there is no model", which is a
+      // different and false statement from "the pane could not read one".
+      group.title === MODEL_GROUP && form.agentModel ? renderModelRow(t, form.agentModel) : null
+    )
+  );
+}
+function renderGeneralView(ctx) {
+  return GENERAL_FIELD_GROUPS.map((group) => renderGeneralCard(group, ctx));
+}
 function ConnectSettingsTab({ rpcCall, t }) {
   const [form, setForm] = React.useState(null);
   const [status, setStatus] = React.useState("loading");
@@ -893,6 +1092,7 @@ function ConnectSettingsTab({ rpcCall, t }) {
   const [advOverride, setAdvOverride] = React.useState(null);
   const [notices, setNotices] = React.useState([]);
   const [onboarding, setOnboarding] = React.useState(null);
+  const [viewOverride, setViewOverride] = React.useState(null);
   const rpc = (endpoint, payload) => rpcCall(endpoint, payload);
   React.useEffect(() => {
     let alive = true;
@@ -976,12 +1176,21 @@ function ConnectSettingsTab({ rpcCall, t }) {
     else defaults[key] = value;
     return { ...f, channelDefaults: defaults };
   });
+  const setGeneral = (key, raw) => setForm((f) => {
+    const descriptor = GENERAL_FIELDS.find((x) => x.key === key);
+    const value = coerceConfigValue(descriptor?.kind ?? "text", raw);
+    const general = { ...f.general ?? {} };
+    if (value === void 0) delete general[key];
+    else general[key] = value;
+    return { ...f, general };
+  });
   if (!form) return h("div", { className: "dsh-connect-settings" }, t("loading"));
   const open = openOverride ?? initialOpenChannels(form.channels, ALL_CHANNELS);
   const unknownCreds = new Set(
     notices.filter((n) => n.kind === "credentialUnknown").map((n) => n.channel)
   );
   const issues = [...notices, ...onboardingIssues(onboarding?.outcome)];
+  const view = viewOverride ?? DEFAULT_VIEW;
   const toggleOpen = (ch) => setOpenOverride(toggleInSet(open, ch));
   const toggleAdvanced = (ch) => setAdvOverride(toggleInSet(advOverride ?? /* @__PURE__ */ new Set(), ch));
   const focusChannel = (ch) => {
@@ -992,88 +1201,117 @@ function ConnectSettingsTab({ rpcCall, t }) {
   return h(
     "div",
     { className: "dsh-connect-settings" },
-    // A tab strip, but not `role=tablist`: several channels can be open at
-    // once, so there is no single "selected" tab to report. These are buttons
-    // that open and jump to a channel, and `aria-expanded` says so honestly.
+    // The primary navigation: 通用设置 → 机器人渠道, in `PANE_VIEWS` order.
     //
-    // A direct child of the root, and not inside the channels card where it
-    // used to live: `position:sticky` pins to the nearest scrollport only while
-    // the element's containing block is the scrolled box. Nested in a card it
-    // could never leave that card, so the strip scrolled away with the content
-    // — the same reason the footer below sits here. `top:0` lines up with the
-    // scroller's edge because the host's own scroller has no top padding.
+    // `aria-current=page`, never `role="tab"`: these are links between two
+    // views and there is no tablist in the document for a tab to belong to.
+    // (The channel strip below is a different thing — it *is* a tab strip,
+    // which is why it keeps `ds-tab` and this must not borrow that class.)
+    //
+    // A direct child of the root, like the two strips below and for the same
+    // sticky reason. It is also the reason `.ds-tabs` pins to `var(--ds-nav-h)`
+    // rather than 0: both strips are sticky, and a control the user asked to
+    // keep on screen must not slide underneath another one.
     h(
       "nav",
-      { className: "ds-tabs", "aria-label": t("tabsAria") },
-      ...ALL_CHANNELS.map((ch) => h(
-        "button",
-        {
-          key: `tab-${ch}`,
-          type: "button",
-          className: "ds-tab",
-          "aria-expanded": open.has(ch),
-          "aria-controls": open.has(ch) ? `ds-ch-${ch}-body` : void 0,
-          onClick: () => focusChannel(ch)
-        },
-        h("span", { className: "ds-dot", "data-on": form.channels.includes(ch) ? "1" : "0" }),
-        tr(t, `channel.${ch}`, ch)
-      ))
+      { className: "ds-nav", "aria-label": t("navAria") },
+      ...PANE_VIEWS.map((name2) => h("button", {
+        key: `view-${name2}`,
+        type: "button",
+        className: "ds-nav-item",
+        "aria-current": view === name2 ? "page" : void 0,
+        onClick: () => setViewOverride(name2)
+      }, tr(t, `view.${name2}`, name2)))
     ),
-    h(
-      "section",
-      { className: "ds-card" },
-      h("h4", { className: "ds-card-title" }, t("channels")),
-      // Explains the masking before the user meets a truncated value and wonders
-      // whether their stored secret is corrupt.
-      h("p", { className: "ds-note" }, t("previewNote")),
-      ...ALL_CHANNELS.map((ch) => renderChannel(ch, {
-        form,
-        creds,
-        unknownCreds,
-        t,
-        open,
-        advOverride,
-        setChannels,
-        setField,
-        setChannelConfig,
-        toggleOpen,
-        toggleAdvanced,
-        onboarding,
-        onOnboard,
-        onOnboardCancel
-      }))
-    ),
-    h(
-      "section",
-      { className: "ds-card" },
-      h("h4", { className: "ds-card-title" }, t("defaults")),
-      h("p", { className: "ds-note" }, t("defaultsHint")),
+    // The two views are mutually exclusive: the hidden one is *not rendered*,
+    // not hidden in CSS. Both are tall, and mounting both would put every
+    // control of both in the DOM at once for no benefit.
+    view === "general" ? renderGeneralView({ form, t, setGeneral }) : [
+      // A tab strip, but not `role=tablist`: several channels can be open at
+      // once, so there is no single "selected" tab to report. These are
+      // buttons that open and jump to a channel, and `aria-expanded` says so.
+      //
+      // A direct child of the root, and not inside the channels card where it
+      // used to live: `position:sticky` pins to the nearest scrollport only
+      // while the element's containing block is the scrolled box. Nested in a
+      // card it could never leave that card, so the strip scrolled away with
+      // the content — the same reason the footer below sits here.
       h(
-        "div",
-        { className: "ds-fields" },
-        ...CHANNEL_DEFAULT_FIELDS.map((field) => renderConfigField(field, form.channelDefaults?.[field.key], (raw) => setDefault(field.key, raw), t)),
-        // Only meaningful on the fallback plane: it names the file the pane
-        // persists to. With the namespace live that path is not consulted (and
-        // is not part of the section), so showing an editable field for it would
-        // silently swallow edits.
-        form.live ? null : h(
-          "div",
-          { className: "ds-field" },
-          h(
-            "label",
-            { className: "ds-control" },
-            t("statePath"),
-            h("input", { className: "ds-input", value: form.settingsStatePath ?? "", onChange: (e) => setForm((f) => ({ ...f, settingsStatePath: e.target.value })) })
-          ),
-          h("p", { className: "ds-hint" }, t("statePathHint"))
-        )
+        "nav",
+        { className: "ds-tabs", "aria-label": t("tabsAria") },
+        ...ALL_CHANNELS.map((ch) => h(
+          "button",
+          {
+            key: `tab-${ch}`,
+            type: "button",
+            className: "ds-tab",
+            "aria-expanded": open.has(ch),
+            "aria-controls": open.has(ch) ? `ds-ch-${ch}-body` : void 0,
+            onClick: () => focusChannel(ch)
+          },
+          h("span", { className: "ds-dot", "data-on": form.channels.includes(ch) ? "1" : "0" }),
+          tr(t, `channel.${ch}`, ch)
+        ))
       ),
-      h("div", { className: "ds-status" }, form.live ? t("livePlane") : t("filePlane"))
-    ),
+      h(
+        "section",
+        { className: "ds-card" },
+        h("h4", { className: "ds-card-title" }, t("channels")),
+        // Explains the masking before the user meets a truncated value and
+        // wonders whether their stored secret is corrupt.
+        h("p", { className: "ds-note" }, t("previewNote")),
+        ...ALL_CHANNELS.map((ch) => renderChannel(ch, {
+          form,
+          creds,
+          unknownCreds,
+          t,
+          open,
+          advOverride,
+          setChannels,
+          setField,
+          setChannelConfig,
+          toggleOpen,
+          toggleAdvanced,
+          onboarding,
+          onOnboard,
+          onOnboardCancel
+        }))
+      ),
+      h(
+        "section",
+        { className: "ds-card" },
+        h("h4", { className: "ds-card-title" }, t("defaults")),
+        h("p", { className: "ds-note" }, t("defaultsHint")),
+        h(
+          "div",
+          { className: "ds-fields" },
+          ...CHANNEL_DEFAULT_FIELDS.map((field) => renderConfigField(field, form.channelDefaults?.[field.key], (raw) => setDefault(field.key, raw), t)),
+          // Only meaningful on the fallback plane: it names the file the pane
+          // persists to. With the namespace live that path is not consulted
+          // (and is not part of the section), so showing an editable field for
+          // it would silently swallow edits.
+          form.live ? null : h(
+            "div",
+            { className: "ds-field" },
+            h(
+              "label",
+              { className: "ds-control" },
+              t("statePath"),
+              h("input", { className: "ds-input", value: form.settingsStatePath ?? "", onChange: (e) => setForm((f) => ({ ...f, settingsStatePath: e.target.value })) })
+            ),
+            h("p", { className: "ds-hint" }, t("statePathHint"))
+          )
+        ),
+        h("div", { className: "ds-status" }, form.live ? t("livePlane") : t("filePlane"))
+      )
+    ],
     // Last child of the root, not of a card: `position:sticky` pins to the
     // nearest scrollport only while its containing block is the scrolled box.
     // Nested in the defaults card it could never move outside that card, so it
     // pinned to nothing and Save scrolled away with the channel list.
+    //
+    // Shared by both views, deliberately: 通用设置 has to be saveable too, and
+    // it is the same save — one payload, one button, whichever view is open.
     h(
       "div",
       { className: "ds-footer" },

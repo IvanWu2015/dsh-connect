@@ -1,30 +1,37 @@
 # 配置简化 + Web 设置 + 多合一重构（对齐 dsh-im）
 
-> **当前状态更新（2026-10-03，1.0.0）**：设置存储随 DSH 0.2 再次换代。面板的权威存储不再是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段（那是 0.9.0/0.9.1 的做法；DSH 0.2 已不再从这个文档读取插件设置），而是**当前 profile patch（`cordis.patch.yml`）中本插件的条目**，经 DSH 一方 `settings` 服务（`SettingsForms`）写入：热重载、原子写、文件锁、保留注释；取值顺序为 **schema 默认值 → 插件被组合进来时的配置 → profile patch 条目**。面板可编辑字段在 schema 里声明为 `volatile`，保存因此是就地 reconcile（运行中的适配器直接采用新值）而不是重挂载；写入会投影到已声明字段，未声明的键（凭据、`settingsStatePath`）既写不进去也不会被清掉，而被省略的已声明字段会被重置回继承值，所以每次写入都是完整的已声明段。0.2 之前留在 `settings.yaml` 里的段，会在升级后的第一次启动时被**合并**（不是替换）导入 patch 条目，一次性标记 `.dsh-connect-legacy-imported`（写在 profile 条目旁，锚在 `profileContext.patchPath`）记录结果。面板**写不进**密钥：保存会投影到已声明字段，而密钥键一个都不在其中，所以面板既不会把密钥写进 profile patch，也不会写进任何 JSON 状态文件——它们只进 DSH 凭据库。反过来，**手写**在条目或回退文件里的密钥也不会被面板的保存顺手删掉（不删用户自己的文档），但读取时一律剔除，绝不随快照下发到浏览器；面板只显示凭据库提供的掩码预览（appId 这类标识符本身不脱敏）。面板 UI 沿用 0.9.0 的**渠道 Tab 条 + 可折叠卡片**，低频字段收进二级「高级」折叠，保存/状态固定在底部；0.9.3 起「失败」不再是保存条上一个被吞掉的分支——`SettingsSnapshot` 的 `warnings` / `credentialErrors` / `channelErrors` 会经 `snapshotIssues()` 渲染成一份清单，凭据状态读不出来的渠道显示琥珀色「未知」徽标而不是「未配置凭据」。
+> **当前状态更新（2026-10-03，1.0.0）**：设置存储随 DSH 0.2 再次换代。面板的权威存储不再是 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段（那是 0.9.0/0.9.1 的做法；DSH 0.2 已不再从这个文档读取插件设置），而是**当前 profile patch（`cordis.patch.yml`）中本插件的条目**，经 DSH 一方 `settings` 服务（`SettingsForms`）写入：热重载、原子写、文件锁、保留注释；取值顺序为 **schema 默认值 → 插件被组合进来时的配置 → profile patch 条目**。面板可编辑字段在 schema 里声明为 `volatile`，保存因此是就地 reconcile（运行中的适配器直接采用新值）而不是重挂载；写入会投影到已声明字段，未声明的键（凭据、`settingsStatePath`）既写不进去也不会被清掉，而被省略的已声明字段会被重置回继承值，所以每次写入都是完整的已声明段。0.2 之前留在 `settings.yaml` 里的段，会在升级后的第一次启动时被**合并**（不是替换）导入 patch 条目，一次性标记 `.dsh-connect-legacy-imported`（写在 profile 条目旁，锚在 `profileContext.patchPath`）记录结果。面板**写不进**密钥：保存会投影到已声明字段，而密钥键一个都不在其中，所以面板既不会把密钥写进 profile patch，也不会写进任何 JSON 状态文件——它们只进 DSH 凭据库。反过来，**手写**在条目或回退文件里的密钥也不会被面板的保存顺手删掉（不删用户自己的文档），但读取时一律剔除，绝不随快照下发到浏览器；面板只显示凭据库提供的掩码预览（appId 这类标识符本身不脱敏）。面板 UI 沿用 0.9.0 的**渠道 Tab 条 + 可折叠卡片**，低频字段收进二级「高级」折叠，保存/状态固定在底部；0.9.3 起「失败」不再是保存条上一个被吞掉的分支——`SettingsSnapshot` 的 `warnings` / `credentialErrors` / `channelErrors` 会经 `snapshotIssues()` 渲染成一份清单，凭据状态读不出来的渠道显示琥珀色「未知」徽标而不是「未配置凭据」。（这一段描述的是 1.0.0 的形态；1.0.2 起面板顶部多了一条**主导航**、并新增了**通用设置**视图——见下一段。）
 
 **1.0.0 是三处改动。** ① **设置项一行一个**：字段块从 `repeat(auto-fill,minmax(200px,1fr))`（760px 的面板宽度下实际排成 3 列）改为单列 `minmax(0,1fr)`，一条 CSS 同时修好渠道卡片、高级折叠、公共默认三个使用点，「乱」的观感来自三列而非两列，改单列是对症的。② **顶部渠道页签条钉住**：`nav.ds-tabs` 从第一张卡片里提到面板根的**直属子节点**（`position:sticky` 只在「祖先是滚动容器的直接子节点」时才生效，底部保存条当初也是为此才挪出卡片的），并补上背景、下边线与 `z-index`。③ **一键创建并配置飞书机器人**：飞书卡片展开后多一个按钮，点一下就在**你自己的**飞书租户里建好自建应用、声明所需权限、把凭据写进 DSH 凭据库、把事件订阅方式设为长连接、把 `feishu` 启用进配置，并就地让运行中的适配器采用新凭据——**建完就能直接给这个机器人发消息**。整套流程跑在宿主进程里（`src/settings/feishu-onboarding.ts`），面板只经 `onboarding.start` / `onboarding.status` / `onboarding.cancel` 三个端点驱动和观察：`start` 立刻带着链接返回，流程随后继续活着，因此**页面刷新不会烧掉那条一次性、限一人的设备授权链接**（RPC 请求的 abort signal 绝不接进流程，只有面板上显式的「取消」会——SDK 的 `signal` 是真的会停轮询并让链接失效，不是 UI 假动作）。结果是**逐条事实**而不是一句结论：应用已建（带 appId）、凭据是否入库、是否写进配置、运行中的渠道是否真的重载、事件订阅四种状态各自单列一行；「凭据已保存」与「运行中的渠道没有重新加载」**永远分成两行**——这正是「已落盘 ≠ 已生效」用在一个会在用户账号里留下半成品的功能上。**Telegram / 钉钉没有官方建号接口**，卡片里只给官方入口链接（`t.me/BotFather`、`open-dev.dingtalk.com`）与一句「把拿到的 token 填到下面」，不假装能自动化。
 
-当前测试总数 **498 项全过**，DSH 依赖 `^0.2.0-rc.2`（peer `dsh-agent` / `dsh-llm` / `dsh-session`）。一键流程的边界——订阅 PATCH 可能拒绝本流程建出的应用、PATCH 成功**不等于**订阅已生效、不代发布、不适用于 CLI/headless、宿主中途重启会丢掉结果、**拿到链接 ≠ 成功**、明文旧版镜像仍在、取消是真的——在根 `CHANGELOG.md` 的 1.0.0 段逐条写明。
+**1.0.2 把设置页分成了两级。** ① **顶部主导航**：面板最上面是一条主导航，`通用设置` 在前、`机器人渠道` 在后；两个视图互斥渲染（切换时另一侧整棵不渲染），底部保存条两视图共用——通用设置也必须能保存，走的是同一个保存缝。打开时**默认停在「机器人渠道」**，因为一键创建按钮在那里、应该零点击可达，而导航顺序仍是通用设置在前；两条是刻意分开的，不是 bug。② **通用设置**：把原先只能用聊天命令改的全局值搬进了面板——语言、通知级别、进度提醒、默认工作目录、额外工作区、允许的用户 / 允许的群、智能体预设、会话镜像、流式心跳，共四组十项。**这些值没有热加载**：`ConnectService.config` 只在加载时解析一次，`AgentRunner` 构造时就把其中几项拷进了实例字段，所以每一项的说明都写着「修改后需重启 dsh 才生效」——面板不会假装改了立刻生效（代价是诚实写出来的，不是漏掉的）。若仓库根存在 `dsh.shared.config.json` 且它压过了某个键（`workDir` / `language` / `autoMirror`），该字段上方会多出一条来源提示，说明此处修改不会生效——**只在真被覆盖时才出现**，干净安装（没有共享配置文件）看到的就是普通可编辑项。`workspaces` 例外：共享配置对它是**追加合并**而非覆盖，面板的修改确实有效，所以它带的是静态说明（「这里的内容会与 `additionalWorkspaces` 合并，而不是替换它」），不是那条来源提示。③ **一键创建按钮提到飞书卡片正文最顶部**：原先它排在 App ID / App Secret **之后**，用户逐项填完才看见——现在展开卡片第一眼就是它。Telegram / 钉钉的官方入口块同样上移，理由一样。④ **模型一行只读**：默认模型显示为一行不可编辑的文本，注明「此值由 DSH 管理，请在 DSH 里切换」。DSH 的 `saveSelection()` 确实存在也确实可写（`/model`、`/reasoning` 命令就在用），但面板改写会顺带影响别的会话，所以**刻意不做写入口**；读不到当前选择时整行不渲染——降级成一行空的只读文本同样是撒谎。⑤ 顺带删掉了渠道默认里的 `channelDefaults.notifyLevel`：已核实它从未被任何代码读取（渠道适配器读的是 `config.language`，全局 `notifyLevel` 来自顶层配置），真正的全局 `notifyLevel` 移入了通用设置。旧 profile 里存过这个键的，会在下一次保存时被投影掉——它本来就不参与任何行为，但「配置文件一个字节都不会变」不成立，如实写在这里。
 
-### 设置页现状（1.0.0 截图，DSH `0.2.0-rc.2`）
+当前测试总数 **538 项全过**（27 个套件，1.0.0 时为 499），DSH 依赖 `^0.2.0-rc.2`（peer `dsh-agent` / `dsh-llm` / `dsh-session`）。一键流程的边界——订阅 PATCH 可能拒绝本流程建出的应用、PATCH 成功**不等于**订阅已生效、不代发布、不适用于 CLI/headless、宿主中途重启会丢掉结果、**拿到链接 ≠ 成功**、明文旧版镜像仍在、取消是真的——在根 `CHANGELOG.md` 的 1.0.0 段逐条写明。
 
-| 概览（渠道 Tab 条 + 卡片，字段单列） | 高级折叠（同一套单列网格） |
+### 设置页现状（1.0.2 截图，DSH `0.2.0-rc.2`）
+
+| 落地视图：机器人渠道（主导航 + 页签条 + 飞书卡片，正文第一眼就是一键创建按钮） | 通用设置：语言 / 提醒 + 工作目录 |
 |---|---|
-| <img src="../packages/connect/docs/images/settings-overview-zh.png" alt="设置页概览" width="420"> | <img src="../packages/connect/docs/images/settings-advanced-zh.png" alt="高级折叠" width="420"> |
+| <img src="../packages/connect/docs/images/settings-overview-zh.png" alt="设置页落地在机器人渠道：顶部主导航、渠道页签条，飞书卡片正文最上方是一键创建按钮" width="420"> | <img src="../packages/connect/docs/images/settings-general-zh.png" alt="通用设置视图：语言与提醒、工作目录两张卡片，每项都注明重启后生效" width="420"> |
 
-| 飞书卡片：一键创建按钮 | Telegram 卡片：官方入口链接 |
+| 通用设置：默认模型只读一行 | 飞书卡片：凭据字段（一键按钮已在上方） |
 |---|---|
-| <img src="../packages/connect/docs/images/settings-feishu-zh.png" alt="一键创建并配置飞书机器人" width="420"> | <img src="../packages/connect/docs/images/settings-manual-zh.png" alt="Telegram 官方入口链接" width="420"> |
+| <img src="../packages/connect/docs/images/settings-general-agent-zh.png" alt="通用设置里的默认模型：只读文本，注明此值由 DSH 管理" width="420"> | <img src="../packages/connect/docs/images/settings-feishu-zh.png" alt="飞书卡片的 App ID / App Secret 等凭据字段" width="420"> |
 
-<img src="../packages/connect/docs/images/settings-defaults-zh.png" alt="默认值展示" width="420">
+| 高级折叠（同一套单列网格） | Telegram 卡片：官方入口链接 |
+|---|---|
+| <img src="../packages/connect/docs/images/settings-advanced-zh.png" alt="高级折叠" width="420"> | <img src="../packages/connect/docs/images/settings-manual-zh.png" alt="Telegram 官方入口链接" width="420"> |
+
+<img src="../packages/connect/docs/images/settings-defaults-zh.png" alt="渠道公共默认卡片" width="420">
 
 > 英文文档/README 使用同目录下的 `-en` 变体；路径约定见 `docs/PUBLISHING.md` 第 2.4 节。
-> 截图取自干净环境（插件 `link:` 到当前工作树，profile 里所有凭据都是假占位符），拍摄于 `0.2.0-rc.2`：设置导航里的邻居条目此时已叫「内置插件」，面板头部也多了一个「打开配置文件」按钮，与 0.1.5 时期的旧图不同。后两张是**滚动后的位置**，所以顶部页签条是钉住的（正文从它下面滚过去）——这正是 1.0.0 的第二个改动。
+> 截图取自干净环境（插件 `link:` 到当前工作树，profile 里所有凭据都是假占位符），拍摄于 `0.2.0-rc.2`：设置导航里的邻居条目此时已叫「内置插件」，面板头部也多了一个「打开配置文件」按钮，与 0.1.5 时期的旧图不同。后四张是**滚动后的位置**，所以顶部主导航与它下面的页签条都是钉住的（正文从它们下面滚过去），两层各自写着 `top` 偏移——这正是「页签条不能钻到主导航底下」那条要求的实现方式。
+> **第一张同时是 1.0.2 的第三个改动的证据**：飞书卡片正文顶端就是「一键创建并配置飞书机器人」，App ID / App Secret 排在它**下面**。
 > **截图里没有「一键创建之后」的结果**：那需要真的在某个租户里建出一个应用，本组截图不做这件事（见 `CHANGELOG.md` 1.0.0 的实测边界）。结果行长什么样，见下面的「一键创建之后会看到什么」。
 
 ### 一键创建之后会看到什么
 
-点击「一键创建并配置飞书机器人」后，面板**先**在卡片里给出一条链接（`onboard.link`：「请在浏览器打开下面的链接完成确认（页面里有二维码）」+ 链接正文 + 「链接有效期约 N 分钟，仅能使用一次。」），**再**在底部保存条上逐条列出流程的真实结果。每一条都是一个可以单独成立的事实，不合并成一句结论：
+按钮位于飞书卡片正文的**最顶部**（0.9.3 / 1.0.0 时它排在凭据字段之后，1.0.2 上移），展开卡片即可见。点击后，面板**先**在卡片里给出一条链接（`onboard.link`：「请在浏览器打开下面的链接完成确认（页面里有二维码）」+ 链接正文 + 「链接有效期约 N 分钟，仅能使用一次。」），**再**在底部保存条上逐条列出流程的真实结果。每一条都是一个可以单独成立的事实，不合并成一句结论：
 
 | 结果行 | 含义 |
 |---|---|
@@ -56,11 +63,11 @@
 - 一份配置（`channels` + `channelDefaults` + N 个渠道块）启用任意渠道组合；渠道失败隔离、渠道级配置透传。
 - Web 可视化设置：`/dsh-connect` RPC（`settings.get/save/status` + `credentials.save` + 一键开通的 `onboarding.start/status/cancel`）+ 设置持久化（0.9.2 起为 profile patch 中本插件的条目；0.9.0/0.9.1 为 `$DSH_HOME/settings.yaml` 的 `dsh-connect` 段；更早是 JSON 状态文件）+ DSH 凭据库读写，配置与凭据**读写闭环**（round-trip 已验证）。
 - 凭据从配置挪到凭据库：面板写密钥 → 激活时 `injectSecrets` 注入各渠道适配器（非侵入，渠道适配器零改动）。
-- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；当前 `packages/connect` 单包 **498 项测试全过**（详见 `CHANGELOG.md` 1.0.0）。
+- 一键发布：`files` 含 client/examples、`prepack` 自动重建、入口解析 OK；当前 `packages/connect` 单包 **538 项测试全过**（详见 `CHANGELOG.md` 1.0.2）。
 
 **当时还差什么（两项均已完成，保留存档）：**
 1. ~~`dsh web` 内构建并渲染前端 `settings-client` 组件~~——已完成：`client/client.js` 由 `scripts/build-client.mjs` 构建，`test/client-bundle.test.mjs` 直接加载构建产物在 Node 里渲染并断言。
-2. ~~推送 v0.7.2~~——已解决：v0.7.2 及其后的 0.8.0 / 0.8.1 均已发布，当前版本为 1.0.0（见根 `CHANGELOG.md`）。
+2. ~~推送 v0.7.2~~——已解决：v0.7.2 及其后的 0.8.0 / 0.8.1 均已发布，当前版本为 **1.0.2**（1.0.1 只修订文档，把 pnpm 12 的两个安装陷阱写进 README 与发布指南；1.0.2 改了设置页布局、新增通用设置、并修好版本号脚本会写坏 `package.json` 的缺陷——见根 `CHANGELOG.md` 两段）。
 
 ## 1. 重构前的现状：配置与安装复杂度
 
@@ -153,7 +160,7 @@
 
 ## 进展（实现中）
 
-> **历史存档**：以下是 `packages/connect-all/`（聚合包，方案 A）时期的按时间顺序记录，**该包已随 0.8.0 的单包化被删除**。因此本节所有 `packages/connect-all/...` 路径、`dsh-connect-all` 包名与安装命令都已不存在；下文出现的测试计数（**37 / 40 / 44 / 50 / 52 / 56 / 57**）只统计当时那套 connect-all 测试，既不是当前套件、也不可与它相加——当前是 `packages/connect` 单包 **498 项全过**（DSH `0.2.0-rc.2`，见 `CHANGELOG.md` 1.0.0）。文中「前端待联调」一类表述同样只反映当时状态。
+> **历史存档**：以下是 `packages/connect-all/`（聚合包，方案 A）时期的按时间顺序记录，**该包已随 0.8.0 的单包化被删除**。因此本节所有 `packages/connect-all/...` 路径、`dsh-connect-all` 包名与安装命令都已不存在；下文出现的测试计数（**37 / 40 / 44 / 50 / 52 / 56 / 57**）只统计当时那套 connect-all 测试，既不是当前套件、也不可与它相加——当前是 `packages/connect` 单包 **538 项全过**（DSH `0.2.0-rc.2`，见 `CHANGELOG.md` 1.0.2）。文中「前端待联调」一类表述同样只反映当时状态。
 
 ### 已完成：`dsh-connect-all` 聚合包（方案 A 骨架，已 build + 单测通过）
 - 新增 `packages/connect-all/` 单插件：一个 `dsh plugin add dsh-connect dsh-connect-all` 装齐核心 + 4 渠道。

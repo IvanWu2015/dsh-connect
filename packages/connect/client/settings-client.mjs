@@ -21,12 +21,12 @@ import * as React from 'react';
 
 import { SETTINGS_RPC_CHANNEL } from '../lib/settings/settings-rpc.js';
 import { loadSettings, saveSettings, saveCredentials, callRpc } from '../lib/settings/rpc-client.js';
-import { snapshotToForm, buildConfigSave, buildCredentialSaves, CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, coerceConfigValue } from '../lib/settings/settings-model.js';
+import { snapshotToForm, buildConfigSave, buildCredentialSaves, CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, GENERAL_FIELD_GROUPS, GENERAL_FIELDS, coerceConfigValue } from '../lib/settings/settings-model.js';
 // Shared with the host, so the pane and the masking it displays can never
 // disagree about which keys are confidential.
 import { isMaskedSecret } from '../lib/settings/secret-disclosure.js';
 import { LOCALES, tr, optionalText } from './locale.mjs';
-import { initialOpenChannels, toggleInSet, isAdvanced, snapshotIssues, onboardingIssues } from './panel-state.mjs';
+import { initialOpenChannels, toggleInSet, isAdvanced, snapshotIssues, onboardingIssues, PANE_VIEWS, DEFAULT_VIEW } from './panel-state.mjs';
 
 export const name = 'dsh-connect-settings';
 export const inject = ['slots', 'connection', 'locale'];
@@ -57,11 +57,23 @@ const ALL_CHANNELS = Object.keys(CHANNEL_SECRET_FIELDS);
 //    on a light shell for anyone whose OS is dark. Do not bring it back.
 const STYLE = `
 .dsh-connect-settings,.dsh-connect-settings *,.dsh-connect-settings *::before,.dsh-connect-settings *::after{box-sizing:border-box}
-.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);--ds-warn:var(--dsw-alias-state-error-primary,#b45309);display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);--ds-warn:var(--dsw-alias-state-error-primary,#b45309);--ds-nav-h:39px;display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 .dsh-connect-settings .ds-card{display:flex;flex-direction:column;gap:10px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg);padding:12px 14px}
 .dsh-connect-settings .ds-card-title{margin:0;font-size:13px;font-weight:600}
 .dsh-connect-settings .ds-note{margin:0;font-size:11px;line-height:1.5;color:var(--ds-muted)}
-.dsh-connect-settings .ds-tabs{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;background:var(--ds-bg);border-bottom:1px solid var(--ds-border)}
+/* The primary navigation, and the reason the channel tab strip below pins to
+   var(--ds-nav-h) rather than 0. Both strips are sticky, and a control the user
+   asked to keep on screen must not slide *under* another one — with both at
+   top:0 the channel tabs became invisible the moment the pane scrolled, which is
+   the exact complaint the sticky strip was added to fix. Two levels, two
+   offsets, one declared height. */
+.dsh-connect-settings .ds-nav{position:sticky;top:0;z-index:3;display:flex;flex-wrap:wrap;gap:2px;padding:0 0 6px;background:var(--ds-bg);border-bottom:1px solid var(--ds-border)}
+.dsh-connect-settings .ds-nav-item{height:32px;padding:0 12px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--ds-muted);font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+.dsh-connect-settings .ds-nav-item:hover{color:var(--ds-text)}
+/* aria-current, not role="tab": these are links between two views, and the
+   document has no tablist to belong to. */
+.dsh-connect-settings .ds-nav-item[aria-current=page]{color:var(--ds-accent);border-bottom-color:var(--ds-accent)}
+.dsh-connect-settings .ds-tabs{position:sticky;top:var(--ds-nav-h);z-index:2;display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;background:var(--ds-bg);border-bottom:1px solid var(--ds-border)}
 .dsh-connect-settings .ds-tab{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--ds-border);border-radius:14px;background:transparent;color:var(--ds-text);font:inherit;font-size:12px;cursor:pointer}
 .dsh-connect-settings .ds-tab:hover{background:var(--ds-hover)}
 .dsh-connect-settings .ds-tab[aria-expanded=true]{border-color:var(--ds-accent);color:var(--ds-accent)}
@@ -95,6 +107,14 @@ const STYLE = `
 .dsh-connect-settings .ds-check{flex:none;width:16px;height:16px;accent-color:var(--ds-accent)}
 .dsh-connect-settings .ds-input{height:30px;width:100%;min-width:0;padding:0 9px;border:1px solid var(--ds-border-2);border-radius:6px;background:var(--ds-bg);color:var(--ds-text);font:inherit}
 .dsh-connect-settings select.ds-input{cursor:pointer}
+/* A list field (workspaces/allowUsers/allowChats) is a textarea, one entry per
+   line. .ds-input fixes a 30px height that a textarea cannot use, so this rule
+   overrides both the height and the vertical padding. */
+.dsh-connect-settings .ds-list{min-height:60px;height:auto;padding:6px 9px;line-height:1.5;resize:vertical}
+/* The read-only model row — text, never a control. It is a value this pane
+   deliberately cannot write (see renderModelRow), so it must not look
+   editable. */
+.dsh-connect-settings .ds-readonly{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--ds-text);word-break:break-all}
 .dsh-connect-settings .ds-input:focus{outline:none;border-color:var(--ds-accent);box-shadow:0 0 0 2px rgba(59,130,246,.25);box-shadow:0 0 0 2px color-mix(in srgb,var(--ds-accent) 25%,transparent)}
 .dsh-connect-settings .ds-adv{display:flex;flex-direction:column;gap:8px}
 .dsh-connect-settings .ds-advanced-toggle{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px dashed var(--ds-border-2);border-radius:99px;background:transparent;color:var(--ds-muted);font:inherit;font-size:11px;cursor:pointer}
@@ -130,12 +150,20 @@ function injectStyles() {
 
 // Render one non-secret config field: its control, then its explanation.
 //
-// Label and hint are looked up by *config key* (`f.<key>`), so a field added
-// without its text shows a legible fallback (`field.label`) instead of a raw
-// identifier — and the locale-coverage test fails, which is the real guard.
-function renderConfigField(field, value, onChange, t) {
-  const label = tr(t, `f.${field.key}`, field.label ?? field.key);
-  const hint = optionalText(t, `f.${field.key}.hint`);
+// Label and hint are looked up by *config key* (`f.<key>`, or `g.<key>` in the
+// general view), so a field added without its text shows a legible fallback
+// (`field.label`) instead of a raw identifier — and the locale-coverage test
+// fails, which is the real guard. The namespace is a parameter rather than a
+// second function because every branch below (control shape, hint, `o.<value>`
+// options) is identical between the two views; only the wording differs.
+//
+// `options.note` renders a paragraph *above* the control, which is where a
+// provenance note has to be: reading the caveat after typing into the field is
+// reading it too late.
+function renderConfigField(field, value, onChange, t, options = {}) {
+  const ns = options.ns ?? 'f';
+  const label = tr(t, `${ns}.${field.key}`, field.label ?? field.key);
+  const hint = optionalText(t, `${ns}.${field.key}.hint`);
   let control;
   if (field.kind === 'boolean') {
     control = h('label', { className: 'ds-control ds-check-field' },
@@ -149,11 +177,19 @@ function renderConfigField(field, value, onChange, t) {
   } else if (field.kind === 'number') {
     control = h('label', { className: 'ds-control' }, label + ' ',
       h('input', { className: 'ds-input', type: 'number', value: value ?? '', onChange: (e) => onChange(e.target.value) }));
+  } else if (field.kind === 'list') {
+    // A `list` field is a `string[]` edited as lines of text. `Array.isArray` is
+    // not defensive padding: the value arrives from a snapshot the host built,
+    // and a malformed one must render an empty box rather than the string
+    // "undefined" glued into a textarea.
+    control = h('label', { className: 'ds-control' }, label + ' ',
+      h('textarea', { className: 'ds-input ds-list', value: Array.isArray(value) ? value.join('\n') : '', onChange: (e) => onChange(e.target.value) }));
   } else {
     control = h('label', { className: 'ds-control' }, label + ' ',
       h('input', { className: 'ds-input', type: 'text', value: value ?? '', onChange: (e) => onChange(e.target.value) }));
   }
   return h('div', { className: 'ds-field', key: `cfg-${field.key}` },
+    options.note ? h('p', { className: 'ds-note' }, options.note) : null,
     control,
     hint ? h('p', { className: 'ds-hint' }, hint) : null);
 }
@@ -252,14 +288,17 @@ function renderChannel(ch, ctx) {
     // an unsaved secret — keeping it mounted would buy nothing.
     isOpen ? h('div', { className: 'ds-channel-body', id: `ds-ch-${ch}-body` },
       channelHint ? h('p', { className: 'ds-note' }, channelHint) : null,
+      // First in the body, *above* the credential fields, because of the
+      // complaint that started this: a user works through every field by hand
+      // and only then discovers the button that would have filled them all in.
+      // DOM order is visual order — moving this below the fields again undoes
+      // the fix. (For telegram and dingtalk the same reasoning holds in
+      // reverse: their text says "paste what you got below", so the text has to
+      // come before the fields it points at.)
+      renderOnboarding(ch, { t, onboarding, onOnboard, onOnboardCancel }),
       h('div', { className: 'ds-fields' },
         ...CHANNEL_SECRET_FIELDS[ch].map((field) => renderSecretField(ch, field, form, (value) => setField(ch, field, value), t)),
         ...common.map(configField)),
-      // Inside the card's body, after the credentials the flow would fill in:
-      // the button belongs next to the fields it writes, and not behind the
-      // advanced fold, since it is the one thing on this pane a first-time user
-      // is looking for.
-      renderOnboarding(ch, { t, onboarding, onOnboard, onOnboardCancel }),
       advanced.length === 0 ? null : h('div', { className: 'ds-adv' },
         h('button', {
           type: 'button',
@@ -380,6 +419,65 @@ function renderIssue(issue, t) {
     h('span', null, tr(t, `w.${issue.code}`, issue.code)));
 }
 
+// Which general group the read-only model row sits in. Named rather than
+// implied by position: the row lives in the last card today, and reordering
+// `GENERAL_FIELD_GROUPS` must not silently drop it into an unrelated group.
+const MODEL_GROUP = 'g.group.agent';
+
+// The DSH-owned default model, as a row this pane can show but not edit.
+//
+// **Deliberately read-only, and not for lack of a write path.** The host does
+// expose `saveSelection()` and it does write — `/model` and `/reasoning` in chat
+// go through it — so wiring this to an input would be a two-line change. It is
+// not wired on purpose: that selection belongs to DSH and is shared with every
+// other session in the profile, so a settings card that quietly repoints the
+// user's other conversations is not a settings card. Read it, and send the user
+// to DSH to change it. Do not "finish" this by adding a write path.
+function renderModelRow(t, agentModel) {
+  return h('div', { className: 'ds-field', key: 'cfg-agentModel' },
+    h('label', { className: 'ds-control' }, tr(t, 'g.model', 'Default model')),
+    // Plain text, never an input: it must not look like something to type into.
+    h('p', { className: 'ds-readonly' }, `${agentModel.provider} / ${agentModel.model}`),
+    h('p', { className: 'ds-note' }, tr(t, 'g.model.note', '')));
+}
+
+// One card of the general view: a group title and its fields.
+//
+// `renderConfigField` is reused with `ns: 'g'` rather than reimplemented — the
+// controls, the `o.<value>` option labels and the hint lookup are identical in
+// both views, and a second copy would be a second thing to keep in step.
+function renderGeneralCard(group, ctx) {
+  const { form, t, setGeneral } = ctx;
+  const overridden = new Set(form.sharedOverrideKeys ?? []);
+  return h('section', { className: 'ds-card', key: group.title },
+    h('h4', { className: 'ds-card-title' }, tr(t, group.title, group.title)),
+    h('div', { className: 'ds-fields' },
+      ...group.fields.map((field) => renderConfigField(
+        field,
+        form.general?.[field.key],
+        (raw) => setGeneral(field.key, raw),
+        t,
+        {
+          ns: 'g',
+          // Shown only where the shared config really does override the profile
+          // value. A blanket caveat would be false on every row it does not
+          // apply to, and a warning that is usually wrong is one the user learns
+          // to scroll past. `workspaces` is absent from this list on purpose:
+          // the shared config *merges* there instead of overriding, so an edit
+          // genuinely does take effect — its hint says as much instead.
+          note: overridden.has(field.key) ? tr(t, 'g.sharedOverride', '') : undefined,
+        })),
+      // Only on the agent card, and only when the host could read a selection at
+      // all: an empty read-only row would say "there is no model", which is a
+      // different and false statement from "the pane could not read one".
+      group.title === MODEL_GROUP && form.agentModel ? renderModelRow(t, form.agentModel) : null));
+}
+
+// The 通用设置 view: one card per group, in `GENERAL_FIELD_GROUPS` order.
+function renderGeneralView(ctx) {
+  return GENERAL_FIELD_GROUPS.map((group) => renderGeneralCard(group, ctx));
+}
+
 // Thin React renderer over the tested settings-model helpers.
 export function ConnectSettingsTab({ rpcCall, t }) {
   const [form, setForm] = React.useState(null);
@@ -398,6 +496,13 @@ export function ConnectSettingsTab({ rpcCall, t }) {
   // one-click run's own state — the authorization link and the `waiting` phase —
   // has to survive the polls that follow it, so it cannot live in a local.
   const [onboarding, setOnboarding] = React.useState(null);
+  // The last slot again, appended after `onboarding` so `queued[0..6]` keep
+  // their meanings for the bundle test, which supplies hook values positionally.
+  // `null` means "the user has not chosen a view", and the view is then derived
+  // from `DEFAULT_VIEW` on every render — the stub runs no effects, so a default
+  // written into state from an effect would never be set at all (the same
+  // reason `openOverride` starts null).
+  const [viewOverride, setViewOverride] = React.useState(null);
   const rpc = (endpoint, payload) => rpcCall(endpoint, payload);
 
   React.useEffect(() => {
@@ -505,6 +610,19 @@ export function ConnectSettingsTab({ rpcCall, t }) {
     if (value === undefined) delete defaults[key]; else defaults[key] = value;
     return { ...f, channelDefaults: defaults };
   });
+  // Same shape as `setChannelConfig` against `GENERAL_FIELDS`. The descriptor
+  // lookup is what makes an emptied box mean *deleted key* rather than a
+  // stored empty string or a stored `[]`: `coerceConfigValue` answers
+  // `undefined` for an empty input of every kind, and the key is dropped. For
+  // the three `list` fields that is the whole point — clearing the box must
+  // return the key to its inherited value, not pin it to an empty list.
+  const setGeneral = (key, raw) => setForm((f) => {
+    const descriptor = GENERAL_FIELDS.find((x) => x.key === key);
+    const value = coerceConfigValue(descriptor?.kind ?? 'text', raw);
+    const general = { ...(f.general ?? {}) };
+    if (value === undefined) delete general[key]; else general[key] = value;
+    return { ...f, general };
+  });
 
   if (!form) return h('div', { className: 'dsh-connect-settings' }, t('loading'));
 
@@ -527,6 +645,16 @@ export function ConnectSettingsTab({ rpcCall, t }) {
   // what the creation flow did. Its lines therefore sit alongside the snapshot's,
   // not inside them, and they persist until the user acts again.
   const issues = [...notices, ...onboardingIssues(onboarding?.outcome)];
+  // Which of the two views is showing — derived, exactly like `open` above and
+  // for the same reason: a default can only be applied on the first render, and
+  // the test stub runs no effects, so one written from an effect would never be
+  // set at all.
+  //
+  // `DEFAULT_VIEW` is 机器人渠道 and *not* the first entry of `PANE_VIEWS`. That
+  // is deliberate, not a slip — see the note on it in `panel-state.mjs`: the
+  // navigation reads 通用设置 → 机器人渠道, but the pane opens on the channel view
+  // so the one-click creation button is zero clicks away.
+  const view = viewOverride ?? DEFAULT_VIEW;
 
   const toggleOpen = (ch) => setOpenOverride(toggleInSet(open, ch));
   // Advanced folds default to closed for every channel, so an empty set is the
@@ -543,58 +671,86 @@ export function ConnectSettingsTab({ rpcCall, t }) {
   };
 
   return h('div', { className: 'dsh-connect-settings' },
-    // A tab strip, but not `role=tablist`: several channels can be open at
-    // once, so there is no single "selected" tab to report. These are buttons
-    // that open and jump to a channel, and `aria-expanded` says so honestly.
+    // The primary navigation: 通用设置 → 机器人渠道, in `PANE_VIEWS` order.
     //
-    // A direct child of the root, and not inside the channels card where it
-    // used to live: `position:sticky` pins to the nearest scrollport only while
-    // the element's containing block is the scrolled box. Nested in a card it
-    // could never leave that card, so the strip scrolled away with the content
-    // — the same reason the footer below sits here. `top:0` lines up with the
-    // scroller's edge because the host's own scroller has no top padding.
-    h('nav', { className: 'ds-tabs', 'aria-label': t('tabsAria') },
-      ...ALL_CHANNELS.map((ch) => h('button', {
-        key: `tab-${ch}`,
+    // `aria-current=page`, never `role="tab"`: these are links between two
+    // views and there is no tablist in the document for a tab to belong to.
+    // (The channel strip below is a different thing — it *is* a tab strip,
+    // which is why it keeps `ds-tab` and this must not borrow that class.)
+    //
+    // A direct child of the root, like the two strips below and for the same
+    // sticky reason. It is also the reason `.ds-tabs` pins to `var(--ds-nav-h)`
+    // rather than 0: both strips are sticky, and a control the user asked to
+    // keep on screen must not slide underneath another one.
+    h('nav', { className: 'ds-nav', 'aria-label': t('navAria') },
+      ...PANE_VIEWS.map((name) => h('button', {
+        key: `view-${name}`,
         type: 'button',
-        className: 'ds-tab',
-        'aria-expanded': open.has(ch),
-        'aria-controls': open.has(ch) ? `ds-ch-${ch}-body` : undefined,
-        onClick: () => focusChannel(ch),
-      },
-        h('span', { className: 'ds-dot', 'data-on': form.channels.includes(ch) ? '1' : '0' }),
-        tr(t, `channel.${ch}`, ch)))),
-    h('section', { className: 'ds-card' },
-      h('h4', { className: 'ds-card-title' }, t('channels')),
-      // Explains the masking before the user meets a truncated value and wonders
-      // whether their stored secret is corrupt.
-      h('p', { className: 'ds-note' }, t('previewNote')),
-      // One card per built-in channel: enable toggle + cred badge + secret + config fields.
-      ...ALL_CHANNELS.map((ch) => renderChannel(ch, {
-        form, creds, unknownCreds, t, open, advOverride,
-        setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced,
-        onboarding, onOnboard, onOnboardCancel,
-      }))),
-    h('section', { className: 'ds-card' },
-      h('h4', { className: 'ds-card-title' }, t('defaults')),
-      h('p', { className: 'ds-note' }, t('defaultsHint')),
-      h('div', { className: 'ds-fields' },
-        ...CHANNEL_DEFAULT_FIELDS.map((field) => renderConfigField(field, form.channelDefaults?.[field.key], (raw) => setDefault(field.key, raw), t)),
-        // Only meaningful on the fallback plane: it names the file the pane
-        // persists to. With the namespace live that path is not consulted (and
-        // is not part of the section), so showing an editable field for it would
-        // silently swallow edits.
-        form.live ? null : h('div', { className: 'ds-field' },
-          h('label', { className: 'ds-control' }, t('statePath'),
-            h('input', { className: 'ds-input', value: form.settingsStatePath ?? '', onChange: (e) => setForm((f) => ({ ...f, settingsStatePath: e.target.value })) })),
-          h('p', { className: 'ds-hint' }, t('statePathHint'))),
-      ),
-      h('div', { className: 'ds-status' }, form.live ? t('livePlane') : t('filePlane')),
-    ),
+        className: 'ds-nav-item',
+        'aria-current': view === name ? 'page' : undefined,
+        onClick: () => setViewOverride(name),
+      }, tr(t, `view.${name}`, name)))),
+    // The two views are mutually exclusive: the hidden one is *not rendered*,
+    // not hidden in CSS. Both are tall, and mounting both would put every
+    // control of both in the DOM at once for no benefit.
+    view === 'general'
+      ? renderGeneralView({ form, t, setGeneral })
+      : [
+        // A tab strip, but not `role=tablist`: several channels can be open at
+        // once, so there is no single "selected" tab to report. These are
+        // buttons that open and jump to a channel, and `aria-expanded` says so.
+        //
+        // A direct child of the root, and not inside the channels card where it
+        // used to live: `position:sticky` pins to the nearest scrollport only
+        // while the element's containing block is the scrolled box. Nested in a
+        // card it could never leave that card, so the strip scrolled away with
+        // the content — the same reason the footer below sits here.
+        h('nav', { className: 'ds-tabs', 'aria-label': t('tabsAria') },
+          ...ALL_CHANNELS.map((ch) => h('button', {
+            key: `tab-${ch}`,
+            type: 'button',
+            className: 'ds-tab',
+            'aria-expanded': open.has(ch),
+            'aria-controls': open.has(ch) ? `ds-ch-${ch}-body` : undefined,
+            onClick: () => focusChannel(ch),
+          },
+            h('span', { className: 'ds-dot', 'data-on': form.channels.includes(ch) ? '1' : '0' }),
+            tr(t, `channel.${ch}`, ch)))),
+        h('section', { className: 'ds-card' },
+          h('h4', { className: 'ds-card-title' }, t('channels')),
+          // Explains the masking before the user meets a truncated value and
+          // wonders whether their stored secret is corrupt.
+          h('p', { className: 'ds-note' }, t('previewNote')),
+          // One card per built-in channel: enable + cred badge + secrets + config.
+          ...ALL_CHANNELS.map((ch) => renderChannel(ch, {
+            form, creds, unknownCreds, t, open, advOverride,
+            setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced,
+            onboarding, onOnboard, onOnboardCancel,
+          }))),
+        h('section', { className: 'ds-card' },
+          h('h4', { className: 'ds-card-title' }, t('defaults')),
+          h('p', { className: 'ds-note' }, t('defaultsHint')),
+          h('div', { className: 'ds-fields' },
+            ...CHANNEL_DEFAULT_FIELDS.map((field) => renderConfigField(field, form.channelDefaults?.[field.key], (raw) => setDefault(field.key, raw), t)),
+            // Only meaningful on the fallback plane: it names the file the pane
+            // persists to. With the namespace live that path is not consulted
+            // (and is not part of the section), so showing an editable field for
+            // it would silently swallow edits.
+            form.live ? null : h('div', { className: 'ds-field' },
+              h('label', { className: 'ds-control' }, t('statePath'),
+                h('input', { className: 'ds-input', value: form.settingsStatePath ?? '', onChange: (e) => setForm((f) => ({ ...f, settingsStatePath: e.target.value })) })),
+              h('p', { className: 'ds-hint' }, t('statePathHint'))),
+          ),
+          h('div', { className: 'ds-status' }, form.live ? t('livePlane') : t('filePlane')),
+        ),
+      ],
     // Last child of the root, not of a card: `position:sticky` pins to the
     // nearest scrollport only while its containing block is the scrolled box.
     // Nested in the defaults card it could never move outside that card, so it
     // pinned to nothing and Save scrolled away with the channel list.
+    //
+    // Shared by both views, deliberately: 通用设置 has to be saveable too, and
+    // it is the same save — one payload, one button, whichever view is open.
     h('div', { className: 'ds-footer' },
       // In the save bar rather than beside the channel it concerns: these are
       // answers to *this* save, and the bar is the one part of the pane that is

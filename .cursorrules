@@ -48,7 +48,9 @@
 ### Affected Files
 
 - `packages/connect/package.json`
-- Root `package.json` (workspace, usually stays at 1.0.0)
+- Root `package.json` (private workspace root — **not** touched by `bump-version.ps1`'s
+  `$PackageFiles`, so it must be bumped by hand; it tracks the released version and has
+  been bumped alongside every release since 0.6.7)
 
 ### AI Assistant Behavior
 

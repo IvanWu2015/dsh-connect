@@ -78,21 +78,51 @@ function Update-PackageVersion {
         [string]$FilePath,
         [string]$NewVersion
     )
-    
+
     if (-not (Test-Path $FilePath)) {
         Write-Warning "File not found: $FilePath"
         return $false
     }
-    
-    $Content = Get-Content $FilePath -Raw -Encoding UTF8
-    $Json = $Content | ConvertFrom-Json
-    
-    $OldVersion = $Json.version
-    $Json.version = $NewVersion
-    
-    $Updated = $Json | ConvertTo-Json -Depth 10
-    Set-Content -Path $FilePath -Value $Updated -Encoding UTF8 -NoNewline
-    
+    $FilePath = (Resolve-Path -LiteralPath $FilePath).Path
+
+    # Text surgery, deliberately — NOT `ConvertFrom-Json | ConvertTo-Json`.
+    #
+    # A round trip re-emits the whole document: 4-space indents, CRLF endings,
+    # double spaces after every colon, & for every `&`. Worse, it cannot be
+    # written back by `Set-Content -Encoding UTF8`, which on Windows PowerShell
+    # 5.1 means "UTF-8 *with BOM*". DSH parses plugin manifests with a strict
+    # JSON parser, and a manifest starting EF BB BF makes it drop the plugin
+    # outright ("skipping profile bundle ... is not valid JSON") — the package
+    # looks published and simply never loads. That is how 1.0.2 was nearly
+    # shipped broken, so this function no longer goes near that pair.
+    #
+    # Instead: find the one top-level `"version"` line, replace the value inside
+    # it, and write the original bytes back. In the whole-file regex the `^`
+    # anchor (with the multiline option) is what keeps this from touching a
+    # nested `"version"`; every manifest here has exactly one at the top level.
+    $Content = [System.IO.File]::ReadAllText($FilePath)
+    $Pattern = '(?m)^(\s*"version"\s*:\s*")[^"]*(")'
+    $Regex = New-Object System.Text.RegularExpressions.Regex($Pattern)
+    $Match = $Regex.Match($Content)
+    if (-not $Match.Success) {
+        Write-Warning "No top-level ""version"" line found in $FilePath"
+        return $false
+    }
+    $OldVersion = $Match.Groups[0].Value -replace '^.*"([^"]*)".*$', '$1'
+
+    # `${1}`/`${2}` are the anchors above; only the middle is new text. The
+    # escaping exists so a `$` in a version string can never be read as a
+    # backreference by the regex engine.
+    $Replacement = '${1}' + ($NewVersion -replace '\$', '$$') + '${2}'
+    $Updated = $Regex.Replace($Content, $Replacement, 1)
+
+    # Validate before writing, so a bad replacement cannot leave a broken
+    # manifest on disk with the old one already gone.
+    $null = $Updated | ConvertFrom-Json
+
+    $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($FilePath, $Updated, $Utf8NoBom)
+
     Write-Host "  ✓ $FilePath : $OldVersion → $NewVersion"
     return $true
 }

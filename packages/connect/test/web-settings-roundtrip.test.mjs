@@ -10,6 +10,8 @@ import { createSettingsService } from "../lib/settings/settings-service.js";
 import { createCredentialStore } from "../lib/settings/credential-store.js";
 import { injectSecrets, CHANNELS } from "../lib/settings/channels.js";
 import { createFeishuOnboarding, enableFeishuConfig } from "../lib/settings/feishu-onboarding.js";
+import { sectionOf, materializeConfig } from "../lib/settings/namespace.js";
+import { GENERAL_FIELDS, buildConfigSave } from "../lib/settings/settings-model.js";
 
 function tmpFile() {
   const dir = fsN.mkdtempSync(path.join(os.tmpdir(), "dsh-connect-rt-"));
@@ -53,6 +55,117 @@ test("empty backend reports all-false credentials", async () => {
   const snap = await loadSettings(rpcCall);
   assert.equal(snap.credentials.feishu, false);
   assert.equal(snap.credentials.telegram, false);
+});
+
+// --- the general settings, over the wire -----------------------------------
+//
+// The general keys travel as top-level siblings of `channels`, through the same
+// two endpoints as everything else. The interesting part is not the trip out —
+// it is what happens to them on the way back in, which is the next test.
+
+/** All ten, one of every kind: two selects, three scalars, three lists, a boolean. */
+const GENERAL_SAVE = {
+  language: "en",
+  notifyLevel: "result",
+  progressTimeoutMs: 45000,
+  workDir: "C:/code/example",
+  workspaces: ["packages", "docs"],
+  allowUsers: ["ou_first", "ou_second"],
+  allowChats: ["oc_first"],
+  agentPreset: "dsh-connect",
+  autoMirror: true,
+  streamHeartbeatMs: 1200,
+};
+
+test("every general key survives save -> get, unchanged and in one piece", async () => {
+  const { rpcCall } = makeHostBackend();
+  await saveSettings(rpcCall, { channels: ["feishu"], ...GENERAL_SAVE });
+  const snap = await loadSettings(rpcCall);
+  for (const [key, value] of Object.entries(GENERAL_SAVE)) {
+    assert.deepEqual(snap.config[key], value, `${key} did not survive the round trip`);
+  }
+  // Asserted against the field table as well as the fixture, so a key added to
+  // `GENERAL_FIELDS` without being added here fails instead of going untested.
+  assert.deepEqual(
+    GENERAL_FIELDS.map((f) => f.key).filter((k) => !(k in GENERAL_SAVE)),
+    [],
+    "a general field is missing from the round-trip fixture",
+  );
+});
+
+test("what the client builds is what the wire carries, emptied list and all", async () => {
+  // The two halves of the save, joined: the client decides the payload's shape
+  // (`buildConfigSave`, fed by controls that already coerced their own input)
+  // and the host stores it as given — this plane is deliberately a loose merge
+  // store rather than the declared schema, so a key the client does not send is
+  // absent and nothing conjures it back.
+  //
+  // The emptied box is the case worth naming. `workspaces: []` and an absent
+  // `workspaces` mean the same thing to the config resolver, so the pane drops
+  // the key instead of writing the empty array — and it has to be the pane that
+  // does it, here, because this is the last point at which the two are still
+  // distinguishable.
+  const { rpcCall } = makeHostBackend();
+  const form = {
+    channels: ["feishu"],
+    channelDefaults: {},
+    channelConfigs: {},
+    general: { ...GENERAL_SAVE, workspaces: [] },
+    secrets: {},
+  };
+  const payload = buildConfigSave(form);
+  assert.equal("workspaces" in payload, false, "an emptied list must not reach the wire at all");
+
+  await saveSettings(rpcCall, payload);
+  const snap = await loadSettings(rpcCall);
+  assert.equal("workspaces" in snap.config, false);
+  for (const [key, value] of Object.entries(GENERAL_SAVE)) {
+    if (key === "workspaces") continue;
+    assert.deepEqual(snap.config[key], value, `${key} did not survive the round trip`);
+  }
+});
+
+// --- the reset risk --------------------------------------------------------
+//
+// The one failure this batch was most likely to ship, as a test.
+//
+// The pane writes a *section*, and `SettingsForms.replace()` resolves every
+// field it is not handed back to its inherited value — so a key missing from
+// the payload is not "unchanged", it is a reset. The one-click button happens
+// to be the sharpest edge of that: it reads the live config, projects it, and
+// writes the whole thing back (`enableFeishuConfig` is a whole-section spread,
+// `return { ...section, channels, feishu }`). Every general key it fails to
+// carry is silently wiped by pressing a button that has nothing to do with them.
+//
+// `sectionOf` is therefore the load-bearing projection, and this test is the
+// reproducible evidence: all ten keys in, all ten keys out, through the exact
+// sequence `index.ts` uses.
+
+test("the one-click enable write carries every general key through, none reset", async () => {
+  const { rpcCall } = makeHostBackend();
+  // Something on both planes already: a general value and a channel config the
+  // enable write must also preserve.
+  await saveSettings(rpcCall, { channels: ["telegram"], telegram: { requireMention: true }, ...GENERAL_SAVE });
+  const before = await loadSettings(rpcCall);
+
+  // index.ts: `sectionOf(materializeConfig(rawConfig))` -> `enableFeishuConfig(...)`.
+  const payload = enableFeishuConfig(sectionOf(materializeConfig(before.config)), CHANNELS);
+
+  // The payload itself, first — the assertion that names the actual risk.
+  for (const key of Object.keys(GENERAL_SAVE)) {
+    assert.ok(key in payload, `the enable payload dropped ${key} — the next save resets it`);
+  }
+  assert.deepEqual(payload.workspaces, ["packages", "docs"]);
+
+  await saveSettings(rpcCall, payload);
+  const after = await loadSettings(rpcCall);
+  for (const [key, value] of Object.entries(GENERAL_SAVE)) {
+    assert.deepEqual(after.config[key], value, `${key} was reset by the enable write`);
+  }
+  // ...and it still did its own job.
+  assert.deepEqual(after.enabled, ["telegram", "feishu"]);
+  assert.equal(after.config.feishu.transport, "websocket");
+  assert.equal(after.config.telegram.requireMention, true);
 });
 
 // --- the one-click run, over the wire --------------------------------------

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { snapshotToForm, CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS } from "../lib/settings/settings-model.js";
+import { snapshotToForm, CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, GENERAL_FIELD_GROUPS, GENERAL_FIELDS } from "../lib/settings/settings-model.js";
 import { isMaskedSecret } from "../lib/settings/secret-disclosure.js";
 import { snapshotIssues } from "../client/panel-state.mjs";
 
@@ -184,7 +184,7 @@ function mount(lang, queued, rpcResponder) {
 
 function render(lang, opts = {}) {
   const pane = mount(lang, [
-    snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials },
+    snapshotToForm(opts.snapshot ?? SNAPSHOT), "idle", { ...SNAPSHOT.credentials },
     opts.open ?? ALL_OPEN,
     opts.advanced ?? ALL_OPEN,
     // The issue list, which the load effect fills from the snapshot. Empty by
@@ -195,6 +195,10 @@ function render(lang, opts = {}) {
     // above keep their meanings. `null` is what the component starts with, so
     // every render that does not opt in renders an idle Feishu card.
     opts.onboarding ?? null,
+    // Which of the two views is showing, as an override. Also appended, for the
+    // same reason: `null` means "the user has not chosen", which is what every
+    // render that does not opt in gets — and what the default-view test needs.
+    opts.view ?? null,
   ], opts.rpc);
   const { tree, text, elements: els } = pane.draw();
   return { tree, text, elements: els, localeTable: pane.localeTable, slot: pane.slot, pane };
@@ -230,12 +234,177 @@ test("every rendered string comes from the locale, in the selected language", ()
 test("no raw locale key leaks into the render", () => {
   // `t()` returns the key itself on a miss, which would print `f.dmMode` or
   // `status.idle` straight into the pane.
+  //
+  // Both views, because they share the locale table but not a single key: the
+  // `g.*` and `view.*` namespaces are only reachable from 通用设置 and the
+  // navigation, so checking the default view alone would leave every key this
+  // batch added uncovered.
   for (const lang of ["zh", "en"]) {
-    const { text } = render(lang);
-    for (const value of text) {
-      assert.ok(!/^(f|s|o|status|channel)\./.test(value), `${lang} pane rendered the raw key ${JSON.stringify(value)}`);
+    for (const view of ["channels", "general"]) {
+      const { text } = render(lang, { view });
+      for (const value of text) {
+        assert.ok(
+          !/^(f|g|s|o|status|channel|view)\./.test(value),
+          `${lang} pane (${view} view) rendered the raw key ${JSON.stringify(value)}`,
+        );
+      }
     }
   }
+});
+
+// --- the two-level navigation ----------------------------------------------
+//
+// 通用设置 was added to a pane that had a single view, and the two halves of that
+// are asserted separately on purpose: the *order* of the navigation (通用设置
+// first, as asked) and the *landing* view (机器人渠道, so the one-click button is
+// zero clicks away) are deliberately different, and each half has to survive a
+// well-meaning "fix" that makes them match.
+
+/** The primary navigation strip. */
+function navOf(view) {
+  const nav = view.elements.find((el) => el.props.className === "ds-nav");
+  assert.ok(nav, "the pane has no primary navigation");
+  return nav;
+}
+
+/** Click a navigation button by the view it selects, then redraw. */
+function switchTo(pane, name) {
+  const item = pane.draw().elements
+    .filter((el) => el.props.className === "ds-nav-item")
+    .find((el) => visibleText(el).join("") === pane.localeTable.zh[`view.${name}`]);
+  assert.ok(item, `no navigation button for ${name}`);
+  item.props.onClick();
+  return pane.draw();
+}
+
+test("the pane opens on the channel view, while the navigation still reads 通用设置 first", () => {
+  const view = render("zh");
+  const L = view.localeTable.zh;
+
+  const nav = navOf(view);
+  assert.equal(nav.type, "nav");
+  assert.equal(nav.props["aria-label"], L.navAria);
+
+  const items = view.elements.filter((el) => el.props.className === "ds-nav-item");
+  assert.deepEqual(items.map((el) => visibleText(el).join("")), [L["view.general"], L["view.channels"]]);
+  for (const item of items) {
+    assert.equal(item.type, "button");
+    // `role="tab"` would claim a tablist that is not in the document — the
+    // *channel* strip is the tab strip, and the two must not be confusable.
+    assert.equal(item.props.role, undefined, "the navigation claimed tab semantics");
+  }
+  assert.deepEqual(items.map((el) => el.props["aria-current"]), [undefined, "page"]);
+
+  // The landing view, asserted rather than inferred from the aria state above:
+  // these render no seed for the view slot, so this is the component's own
+  // default and not something the harness chose.
+  assert.equal(view.elements.some((el) => el.props.className === "ds-tabs"), true, "the pane did not open on the channel view");
+});
+
+test("clicking 通用设置 renders every general field, and the channel strip goes with the other view", () => {
+  const pane = mount("zh", [
+    snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials }, ALL_OPEN, ALL_OPEN, [], null, null,
+  ]);
+  const L = pane.localeTable.zh;
+  assert.equal(
+    pane.draw().elements.filter((el) => el.props.className === "ds-tab").length, 4,
+    "the fixture changed: the channel strip is not four tabs",
+  );
+
+  const view = switchTo(pane, "general");
+
+  const cards = view.elements.filter((el) => el.props.className === "ds-card");
+  assert.equal(cards.length, GENERAL_FIELD_GROUPS.length, "one card per general group");
+  assert.deepEqual(
+    cards.map((card) => visibleText(byClass(card, "ds-card-title")).join("")),
+    GENERAL_FIELD_GROUPS.map((g) => L[g.title]),
+    "a group title rendered its raw locale key instead of the translated one",
+  );
+  for (const field of GENERAL_FIELDS) {
+    assert.ok(view.text.includes(L[`g.${field.key}`]), `missing the label for g.${field.key}`);
+    assert.ok(view.text.includes(L[`g.${field.key}.hint`]), `missing the hint for g.${field.key}`);
+    for (const option of field.options ?? []) {
+      assert.ok(view.text.includes(L[`o.${option}`]), `missing the option label for o.${option}`);
+    }
+  }
+
+  // The two views are mutually exclusive: the channel strip is *not rendered*
+  // behind the general view, and the navigation did not borrow its class to make
+  // the count look unchanged. Switching back restores it, so the assertion is
+  // about the view and not about a strip that quietly stopped rendering at all.
+  assert.equal(view.elements.filter((el) => el.props.className === "ds-tab").length, 0, "the channel strip rendered under the general view");
+  assert.equal(switchTo(pane, "channels").elements.filter((el) => el.props.className === "ds-tab").length, 4);
+});
+
+test("a general list field is a textarea, so one entry per line is what it looks like", () => {
+  // The three `list` keys are `string[]`. A single-line `input` would make a
+  // pasted `a, b` look like one absurd path and hide the rest of a long list.
+  const view = render("zh", {
+    view: "general",
+    snapshot: { ...SNAPSHOT, config: { ...SNAPSHOT.config, workspaces: ["packages", "docs"] } },
+  });
+  const areas = view.elements.filter((el) => el.type === "textarea");
+  const keys = GENERAL_FIELDS.filter((f) => f.kind === "list").map((f) => f.key);
+  assert.equal(areas.length, keys.length, "one textarea per list field");
+  // Seeded, one entry per line, and not as a JSON string: the pane's own text
+  // round-trip has to survive a save-load cycle unchanged.
+  assert.ok(
+    areas.some((el) => el.props.value === "packages\ndocs"),
+    `the seeded workspaces list is not rendered line-per-entry: ${JSON.stringify(areas.map((el) => el.props.value))}`,
+  );
+});
+
+test("the DSH-owned model is a read-only row, and only when the host resolved one", () => {
+  const withModel = render("zh", {
+    view: "general",
+    snapshot: { ...SNAPSHOT, agentModel: { provider: "deepseek", model: "v4" } },
+  });
+  const L = withModel.localeTable.zh;
+  const row = withModel.elements.find((el) => el.props.className === "ds-readonly");
+  assert.ok(row, "the host reported a model but the pane rendered no row for it");
+  assert.equal(visibleText(row).join(""), "deepseek / v4");
+  assert.ok(withModel.text.includes(L["g.model"]), "the row does not say what it is");
+  assert.ok(withModel.text.includes(L["g.model.note"]), "the row does not say where to change it");
+
+  // Read-only structurally, not by styling: `saveSelection()` does exist and
+  // does write, so an input that merely *looks* disabled would be one tsc-free
+  // edit away from repointing the user's other conversations. Nothing to type
+  // into is the guarantee.
+  assert.equal(
+    elements(row.children).some((el) => ["input", "select", "textarea"].includes(el.type)), false,
+    "the model row grew a control",
+  );
+  for (const el of withModel.elements) {
+    if (el.type !== "input" && el.type !== "textarea") continue;
+    assert.ok(!String(el.props.value ?? "").includes("deepseek"), "the model was placed in an editable control");
+  }
+
+  // And with nothing resolved there is no row at all — an empty read-only row
+  // would say "you have no model", which is a different and false claim from
+  // "this pane could not read one".
+  const withoutModel = render("zh", { view: "general" });
+  assert.equal(withoutModel.elements.some((el) => el.props.className === "ds-readonly"), false, "an empty model row was rendered");
+  assert.ok(!withoutModel.text.includes(withoutModel.localeTable.zh["g.model.note"]), "the model note was rendered with no model to annotate");
+});
+
+test("the shared-config provenance note appears on the shadowed key and nowhere else", () => {
+  // `dsh.shared.config.json` overrides `workDir`/`language`/`autoMirror`, so a
+  // row that silently accepts an edit would be a control that does nothing. A
+  // blanket caveat would be the opposite failure — false on every other row,
+  // and therefore scrolled past.
+  const clean = render("zh", { view: "general" });
+  assert.ok(!clean.text.includes(clean.localeTable.zh["g.sharedOverride"]), "a clean install grew a shared-config note");
+
+  const view = render("zh", {
+    view: "general",
+    snapshot: { ...SNAPSHOT, sharedOverrideKeys: ["language", "workDir"] },
+  });
+  const notes = view.elements.filter((el) => el.props.className === "ds-note");
+  assert.equal(notes.length, 2, "one note per actually-shadowed key");
+  for (const note of notes) assert.equal(visibleText(note).join(""), view.localeTable.zh["g.sharedOverride"]);
+  // Annotated, not locked: a shared override is a fact about where the value
+  // comes from, and the profile underneath is still the user's to edit.
+  assert.equal(view.elements.filter((el) => el.props.disabled === true).length, 0);
 });
 
 test("every config field renders a translated label and an explanation", () => {
@@ -464,17 +633,26 @@ test("unchecking a channel does not fold its card shut under the cursor", () => 
   assert.ok(bodyOf(view, "telegram"), "unchecking telegram folded its card shut");
 });
 
-test("the save bar is the root's last child, so it can pin to the host's scroll region", () => {
-  const { tree, elements: els } = render("zh");
-  const footer = els.find((el) => el.props.className === "ds-footer");
-  assert.ok(footer, "the pane has no save bar");
-  // `position:sticky` pins to the nearest scrollport only while its containing
-  // block is the scrolled box. Nested inside the defaults card the footer could
-  // never leave that card, so it pinned to nothing and Save scrolled out of
-  // reach with the channel list.
-  assert.equal(tree.children[tree.children.length - 1], footer, "the save bar is not the root's last child");
-  for (const card of els.filter((el) => el.props.className === "ds-card")) {
-    assert.ok(!elements(card.children).includes(footer), "the save bar is nested inside a card again");
+test("the save bar is the root's last child in both views, so it can pin to the host's scroll region", () => {
+  // Both views, because the bar is *shared*: 通用设置 saves through the same
+  // button and the same payload, so a footer nested inside the channel branch
+  // would leave the general view with no way to save at all.
+  for (const view of ["channels", "general"]) {
+    const { tree, elements: els } = render("zh", { view });
+    const footer = els.find((el) => el.props.className === "ds-footer");
+    assert.ok(footer, `the ${view} view has no save bar`);
+    // `position:sticky` pins to the nearest scrollport only while its containing
+    // block is the scrolled box. Nested inside the defaults card the footer could
+    // never leave that card, so it pinned to nothing and Save scrolled out of
+    // reach with the channel list.
+    assert.equal(tree.children[tree.children.length - 1], footer, `the save bar is not the root's last child in the ${view} view`);
+    for (const card of els.filter((el) => el.props.className === "ds-card")) {
+      assert.ok(!elements(card.children).includes(footer), "the save bar is nested inside a card again");
+    }
+    // The navigation is the root's *first* child, which is what lets it pin at
+    // `top:0`; the channel strip below then pins at `var(--ds-nav-h)`, so
+    // neither can slide underneath the other.
+    assert.equal(tree.children[0], els.find((el) => el.props.className === "ds-nav"), "the navigation is not the root's first child");
   }
 });
 
@@ -656,6 +834,29 @@ function feishuBody(view) {
   return byId(view.elements, "ds-ch-feishu-body");
 }
 
+test("the creation block comes before the fields it fills in", () => {
+  // The complaint that started this: a user works through every credential field
+  // by hand and only then discovers the button that would have done all of it.
+  // DOM order is visual order, so the index is the whole assertion.
+  const view = render("zh");
+  const body = elements(feishuBody(view).children);
+  const button = body.findIndex((el) => hasClass(el, "ds-onboard-btn"));
+  const fields = body.findIndex((el) => el.props.className === "ds-fields");
+  assert.ok(button !== -1, "the Feishu card has no one-click button");
+  assert.ok(fields !== -1, "the Feishu card has no credential fields");
+  assert.ok(button < fields, "the one-click button is below the fields again");
+
+  // The two manual channels, same reasoning in reverse: their text says "paste
+  // what you got below", so the link has to come before the fields it points at.
+  for (const ch of ["telegram", "dingtalk"]) {
+    const kids = elements(byId(view.elements, `ds-ch-${ch}-body`).children);
+    const link = kids.findIndex((el) => el.type === "a");
+    const own = kids.findIndex((el) => el.props.className === "ds-fields");
+    assert.ok(link !== -1 && own !== -1, `${ch}'s card lost its creation link or its fields`);
+    assert.ok(link < own, `${ch}'s creation link is below the fields it points at`);
+  }
+});
+
 test("the one-click state is the seventh hook, and the six before it are undisturbed", () => {
   const state = { busy: false, phase: "waiting", link: { url: LINK, expiresInSeconds: 600, expiresAt: 1 } };
   const pane = mount("zh", [
@@ -667,7 +868,11 @@ test("the one-click state is the seventh hook, and the six before it are undistu
   // the end would hand the form to `status`, the status to `creds`, and so on —
   // silently, with the pane still rendering something. Counting the slots is the
   // only way to notice that from out here; a missing one just reads `undefined`.
-  assert.equal(pane.hooksUsed(), 7, "the component reads a different number of hook slots than this file supplies");
+  // Eight since the primary navigation landed: `viewOverride` is appended after
+  // `onboarding`, so `queued[0..6]` keep their meanings and a seed written
+  // before that change — which is every seed in this file — reads `undefined`
+  // for the view and lands on the default one.
+  assert.equal(pane.hooksUsed(), 8, "the component reads a different number of hook slots than this file supplies");
   assert.deepEqual(pane.queued[0], snapshotToForm(SNAPSHOT));
   assert.equal(pane.queued[1], "idle");
   assert.deepEqual(pane.queued[2], SNAPSHOT.credentials);

@@ -2,7 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { LOCALES, LOCALE_KEYS, hasLocale, tr, optionalText } from "../client/locale.mjs";
-import { CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS } from "../lib/settings/settings-model.js";
+import {
+  CHANNEL_SECRET_FIELDS,
+  CHANNEL_CONFIG_FIELDS,
+  CHANNEL_DEFAULT_FIELDS,
+  GENERAL_FIELDS,
+} from "../lib/settings/settings-model.js";
 import { SETTINGS_WARNING_CODES } from "../lib/settings/settings-rpc.js";
 
 /**
@@ -24,6 +29,7 @@ const CHROME_KEYS = [
   "configured", "current", "notConfigured", "previewNote", "secrets",
   "expand", "collapse", "advanced", "tabsAria",
   "credentialUnknown", "credentialUnknownHint", "channelFailed",
+  "navAria", "view.general", "view.channels",
 ];
 
 const LANGS = ["zh", "en"];
@@ -98,13 +104,36 @@ test("every config field has a label and an explanation", () => {
 test("every select option is translated, including the empty one", () => {
   // `(use default)` is what an unset select shows, so it needs a locale too.
   assert.ok(hasLocale("o.default"), "missing the empty-option label");
-  const columns = [...Object.values(CHANNEL_CONFIG_FIELDS), CHANNEL_DEFAULT_FIELDS];
+  const columns = [...Object.values(CHANNEL_CONFIG_FIELDS), CHANNEL_DEFAULT_FIELDS, GENERAL_FIELDS];
   for (const fields of columns) {
     for (const field of fields) {
       for (const option of field.options ?? []) {
-        assert.ok(hasLocale(`o.${option}`), `missing o.${option} (from f.${field.key})`);
+        assert.ok(hasLocale(`o.${option}`), `missing o.${option} (from ${field.key})`);
       }
     }
+  }
+});
+
+test("every general field has a label and an explanation", () => {
+  // The general view is rendered straight from `GENERAL_FIELDS`, so an
+  // untranslated key here is a bare identifier in the middle of the pane —
+  // exactly the failure this module exists to prevent, one level up.
+  for (const field of GENERAL_FIELDS) {
+    assert.ok(hasLocale(`g.${field.key}`), `missing g.${field.key}`);
+    assert.ok(hasLocale(`g.${field.key}.hint`), `missing g.${field.key}.hint`);
+  }
+});
+
+test("every general hint says the change needs a restart", () => {
+  // There is no config hot reload (deliberate): the values resolve once when
+  // the plugin starts. A control that appears to do nothing and explains
+  // nothing is the one outcome the user ruled out, so the wording is asserted
+  // rather than merely written once and hoped for.
+  for (const field of GENERAL_FIELDS) {
+    const zh = LOCALES.zh[`g.${field.key}.hint`];
+    const en = LOCALES.en[`g.${field.key}.hint`];
+    assert.match(zh, /重启/, `zh g.${field.key}.hint does not mention a restart`);
+    assert.match(en, /restart/i, `en g.${field.key}.hint does not mention a restart`);
   }
 });
 

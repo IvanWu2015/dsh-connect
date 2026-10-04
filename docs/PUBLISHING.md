@@ -58,12 +58,14 @@ The first paragraph must naturally include searchable terms — see the opening 
 | `packages/connect/README.md` / `README.zh.md` | `docs/images/settings-overview-zh.png` |
 | `packages/connect/README.i18n.yaml` | same as the READMEs (the i18n file mirrors the English README) |
 
-The settings-pane set is ten PNGs, all 1600×1600 — five names, each in a `-zh` and an `-en` variant:
+The settings-pane set is fourteen PNGs, all 1600×1600 — seven names, each in a `-zh` and an `-en` variant:
 
-- `settings-overview-{zh,en}.png` — channel tab strip over collapsible cards (one setting per row).
+- `settings-overview-{zh,en}.png` — the primary navigation above the channel tab strip, over collapsible cards (one setting per row).
+- `settings-general-{zh,en}.png` — the General view (1.0.2): four cards of the ten formerly chat-command-only values.
+- `settings-general-agent-{zh,en}.png` — the same view, framed on the agent card: the read-only model row, plus the keys `dsh.shared.config.json` overrides.
 - `settings-advanced-{zh,en}.png` — the second-level 高级 / Advanced fold.
 - `settings-defaults-{zh,en}.png` — how defaults are shown for a channel that has none set.
-- `settings-feishu-{zh,en}.png` — the Feishu card's one-click create button (1.0.0). Shot mid-scroll, which is also what shows the tab strip staying pinned at the top.
+- `settings-feishu-{zh,en}.png` — the Feishu card's credential fields, with the one-click create button (1.0.0) sitting *above* them. Shot mid-scroll, which is also what shows both navigation strips staying pinned at the top. (Until 1.0.2 this framed the button itself; that moved to the top of the card body, so it is already in the overview shot and centring on it again produced a file byte-identical to it.)
 - `settings-manual-{zh,en}.png` — the Telegram card's official-entry link, the manual counterpart to the above.
 
 There is deliberately **no screenshot of the result of a one-click run**: producing one means creating a real app in a real tenant, so the docs describe the result lines in a table instead. Do not fill the gap with a mock-up.
@@ -79,7 +81,7 @@ Then drive it with Playwright, screenshotting the pane element itself (a fixed 8
 **Pick the variant that matches the document's language**: Chinese docs and `README.zh.md` use `-zh`, English docs and `README.md` use `-en`. Do not mix them within one file. Because the images are 1600px wide, embed them as raw HTML with an explicit width so they don't blow up the page — e.g.
 
 ```html
-<img src="../packages/connect/docs/images/settings-overview-en.png" alt="dsh-connect web settings: channel tabs + collapsible cards" width="760">
+<img src="../packages/connect/docs/images/settings-overview-en.png" alt="dsh-connect web settings: primary nav + channel tabs + collapsible cards" width="760">
 ```
 
 ## 3. npm publishing (so `dsh plugin add` works)
@@ -94,6 +96,17 @@ Manually, publish the one package:
 # lib/ must exist → run pnpm build first
 pnpm --filter dsh-connect publish --access public
 ```
+
+### 3.1 The 24-hour cooldown that follows every publish
+
+pnpm 12 ships a **1440-minute `minimumReleaseAge`** and applies it non-strictly, so for a full day after each release a bare `dsh plugin --profile web add dsh-connect` resolves to the **previous** version. Nothing is wrong with the tarball and republishing does not help — the remedy is on the consumer side and is documented in the README's ["When the install resolves to an older version"](../README.md#when-the-install-resolves-to-an-older-version).
+
+What this means for a release:
+
+- Expect "the plugin list offers the new version but the install takes the old one" within 24 hours of shipping. That is the expected signature of the cooldown, not a packaging bug — verify against the registry before debugging anything else.
+- A **first-time** install of a package with no release older than 24 hours has nothing to fall back to and fails outright, so the profile exemption or an explicit `dsh-connect@<version>` is mandatory there rather than merely preferable.
+
+Independently of the cooldown, every `add` of this package needs `allowBuilds: {protobufjs: false}` in the consumer's profile, or it exits with `ERR_PNPM_IGNORED_BUILDS` after writing the dependency. Neither problem can be fixed from inside the published package.
 
 Before publishing, confirm the placeholder `"name"`/`"version"` in each package.json and fill in `description`, `keywords`, `repository`, `license`. npm's **`keywords` field** also participates in npm search:
 

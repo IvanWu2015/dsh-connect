@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { ADVANCED_KEYS, isAdvanced, initialOpenChannels, toggleInSet, snapshotIssues, onboardingIssues } from "../client/panel-state.mjs";
+import { ADVANCED_KEYS, isAdvanced, initialOpenChannels, toggleInSet, snapshotIssues, onboardingIssues, PANE_VIEWS, DEFAULT_VIEW } from "../client/panel-state.mjs";
 import { CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS } from "../lib/settings/settings-model.js";
 
 /**
@@ -123,6 +123,24 @@ test("an explicit empty warning list is respected, not treated as absent", () =>
   // `??` and not `||`: a caller that clears its warnings means it, and falling
   // back to `snap.warnings` would resurrect exactly the entry it just dropped.
   assert.deepEqual(snapshotIssues({ warnings: ["credentialsStoredNotApplied"] }, []), []);
+});
+
+// --- the primary navigation ------------------------------------------------
+
+test("the navigation order puts 通用设置 first, and the landing view does not follow it", () => {
+  // Both halves, in one place, because they look like a contradiction and are
+  // not: the *order* of the two subjects is 通用设置 → 机器人渠道, while the pane
+  // opens on the channels view so the one-click creation button is zero clicks
+  // away. Pinned here so that a later "cleanup" that makes `DEFAULT_VIEW` equal
+  // `PANE_VIEWS[0]` — the obvious-looking tidy-up — fails a test instead of
+  // silently burying the button behind a click again.
+  assert.deepEqual(PANE_VIEWS, ["general", "channels"]);
+  assert.equal(DEFAULT_VIEW, "channels");
+  assert.notEqual(DEFAULT_VIEW, PANE_VIEWS[0], "the landing view was aligned with the navigation order");
+  // Every view the pane can select is one the navigation can reach; the render
+  // looks up `view.<name>` for each, so an entry with no locale label would show
+  // the raw key as a button.
+  assert.ok(PANE_VIEWS.includes(DEFAULT_VIEW), "the default view is not reachable from the navigation");
 });
 
 // --- onboardingIssues ------------------------------------------------------

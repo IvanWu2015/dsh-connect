@@ -83,6 +83,46 @@ Electron application* —— 该 profile 只允许由应用自身的载体管理
 `dsh-connect` 自己的页面（**设置 → dsh-connect**）只有在插件真的被安装并加载之后才会出现，所以
 一次被拒绝的安装之后，那里本来就什么都找不到。
 
+### 安装落到旧版本怎么办
+
+pnpm 12 的两个行为会咬住全新安装，而且看起来都像在骗人：桌面端插件列表给出的是最新版，落到磁盘
+上的却是上一版；或者安装以 `ERR_PNPM_IGNORED_BUILDS` 结束，但依赖仍然写进了 `package.json`。
+
+1. **pnpm 内置的 24 小时发布冷静期。** `minimumReleaseAge` 默认 1440 分钟，且是**非严格**的：
+   裸写 `add dsh-connect` 会解析到**发布满 24 小时的最后一版**。桌面端显示版本号用的是一次查询
+   而非安装，不受该策略约束——所以每次发布后的一天里，两者确实会不一致。
+2. **构建脚本未决。** 经 `@larksuiteoapi/node-sdk` 带进来的 `protobufjs` 带有一个构建脚本，
+   pnpm 12 在你做出决定前拒绝执行它；而它是在**写完依赖之后**才报错的，所以失败看起来像
+   「装了一半」。
+
+在 profile 的 `pnpm-workspace.yaml`（`$DSH_HOME/profiles/web/pnpm-workspace.yaml`；Windows 上
+桌面端的 profile 是 `%USERPROFILE%\.dsh\profiles\desktop\pnpm-workspace.yaml`）末尾追加以下
+内容，然后重新安装：
+
+```yaml
+minimumReleaseAgeExclude:
+  - dsh-connect
+allowBuilds:
+  protobufjs: false
+```
+
+`minimumReleaseAgeExclude` **只豁免这一个包**；请不要用 `minimumReleaseAge: 0`，那会把整个
+profile 里所有依赖的 24 小时供应链保护一起关掉。`allowBuilds` 是 pnpm 12 认可的新写法——
+`onlyBuiltDependencies` 与 `ignoredBuiltDependencies` 已不再生效，写了照样报同样的错。
+
+这个豁免无法随包发布：一个包**不能**在自己的清单里为自己的传递依赖声明构建许可，所以它只能写在
+消费方的 profile 里。
+
+两条对策并不等价。显式指定版本——`dsh plugin --profile web add dsh-connect@<版本>`——**确实**
+能单独绕过冷静期，但对构建脚本**毫无作用**：这条命令仍会以 `ERR_PNPM_IGNORED_BUILDS` 结束，
+因为 `protobufjs` 只有 `allowBuilds` 能拍板。如果你完全不想改 profile，版本号能让你装到**正确的
+版本**，但拿不到一次干净的退出。
+
+另外两件值得知道的事：
+
+- **重装前先卸载。** DSH 对已安装的插件会以 `already-installed` 拒绝第二次 `add`，请先卸载。
+- **之后重启 `dsh`**（或桌面端）：宿主插件在进程启动时加载。
+
 ## 快速开始
 
 1. **安装插件**（见上文）。
@@ -222,22 +262,31 @@ Electron application* —— 该 profile 只允许由应用自身的载体管理
 
 ## 设置面板
 
-`dsh-connect` 在 **设置 → dsh-connect** 下有自己的页面。它是一条渠道页签条 + 若干可折叠卡片：
-每张卡片由一个按钮做标题行，低频字段收在第二级的**高级选项**折叠里，保存/状态固定在滚动区底部。
-页签条本身也**钉在滚动区顶部**（`position: sticky`），内容从它下面滚过去，而不是把它带走。
+`dsh-connect` 在 **设置 → dsh-connect** 下有自己的页面，顶部是**两级导航**：主导航（**通用设置**在前、**机器人渠道**在后），
+下面才是渠道视图自己的页签条 + 若干可折叠卡片。每张卡片由一个按钮做标题行，低频字段收在第二级的**高级选项**折叠里，
+保存/状态固定在滚动区底部。两层导航条都**钉在滚动区顶部**（`position: sticky`），内容从它们下面滚过去，而不是把它们带走。
 设置项**一行一个**：字段网格是单列，面板变宽时标签/控件对不会再回流成两三列。
 
-| 渠道与凭据 | 展开高级选项 |
-|---|---|
-| ![dsh-connect 设置面板：渠道页签条、展开的飞书卡片及其凭据字段，以及三张收起后仍显示凭据徽标的渠道卡片](docs/images/settings-overview-zh.png) | ![同一面板展开某渠道的「高级选项」折叠，露出回调端口与回调路径字段](docs/images/settings-advanced-zh.png) |
+面板**打开就停在「机器人渠道」**，这样飞书的一键创建按钮零点击可达；它就排在飞书卡片正文的**最顶端**，App ID / App Secret 在它下面。
+**通用设置**是原先只能靠聊天命令改的那十项——回复语言、通知级别、进度看门狗、工作目录与额外工作区、访问白名单、智能体预设、镜像与心跳。
+它们在这里可改，但与渠道设置不同：这些值是插件加载时一次性读走的，所以每一项都写着「修改后需重启 dsh 才生效」。
+真被 `dsh.shared.config.json` 压过的键会多一行来源提示，说明面板改它不生效；当前模型是**只读**一行，因为那是 DSH 的东西，要换请去 DSH 里换。
 
-| 飞书卡片：一键创建 | Telegram 卡片：官方入口链接 |
+| 渠道与凭据 | 通用设置 |
 |---|---|
-| ![飞书卡片上的一键创建按钮，此时面板已滚动、页签条仍钉在顶部](docs/images/settings-feishu-zh.png) | ![Telegram 卡片，给的是 BotFather 链接而不是创建按钮](docs/images/settings-manual-zh.png) |
+| ![dsh-connect 设置面板：主导航在渠道页签条之上，展开的飞书卡片及其凭据字段，以及收起后仍显示凭据徽标的渠道卡片](docs/images/settings-overview-zh.png) | ![通用设置视图：四张卡片，每行一项，每项都注明修改后需重启 dsh 才生效](docs/images/settings-general-zh.png) |
+
+| 通用设置：只读的模型行 | 展开高级选项 |
+|---|---|
+| ![通用设置的智能体卡片，当前模型是只读文本，附一行说明此值由 DSH 管理](docs/images/settings-general-agent-zh.png) | ![同一面板展开某渠道的「高级选项」折叠，露出回调端口与回调路径字段](docs/images/settings-advanced-zh.png) |
+
+| 飞书卡片：凭据字段（一键按钮在其上方） | Telegram 卡片：官方入口链接 |
+|---|---|
+| ![飞书卡片的 App ID 与 App Secret 字段，一键创建按钮排在它们上方；此时面板已滚动，两层导航条仍钉在顶部](docs/images/settings-feishu-zh.png) | ![Telegram 卡片，给的是 BotFather 链接而不是创建按钮](docs/images/settings-manual-zh.png) |
 
 ![面板底部的公共默认卡片与固定保存条](docs/images/settings-defaults-zh.png)
 
-英文截图：[概览](docs/images/settings-overview-en.png) · [高级](docs/images/settings-advanced-en.png) · [公共默认](docs/images/settings-defaults-en.png) · [一键创建](docs/images/settings-feishu-en.png) · [官方入口](docs/images/settings-manual-en.png)。
+英文截图：[概览](docs/images/settings-overview-en.png) · [通用设置](docs/images/settings-general-en.png) · [通用设置·模型](docs/images/settings-general-agent-en.png) · [高级](docs/images/settings-advanced-en.png) · [公共默认](docs/images/settings-defaults-en.png) · [飞书凭据](docs/images/settings-feishu-en.png) · [官方入口](docs/images/settings-manual-en.png)。
 
 > 截图取自一个凭据全是占位符的一次性 profile。上面没有任何真实密钥 —— 也不可能有：宿主会在
 > 值到达浏览器之前完成打码（见下文[面板回显与脱敏](#面板回显与脱敏)）。
@@ -247,7 +296,8 @@ Electron application* —— 该 profile 只允许由应用自身的载体管理
 以安全，是因为你刚输入但尚未保存的密钥存在面板自身的 state 里，而不在卡片里。勾选某渠道的
 启用框同样会展开它。
 
-飞书卡片上有一个「**一键创建并配置飞书机器人**」按钮（1.0.0）。它由宿主执行飞书官方的
+飞书卡片正文的**最顶端**有一个「**一键创建并配置飞书机器人**」按钮（1.0.0），排在 App ID / App Secret
+**上面**——先给自动路径、再给手填路径，不让人填完才发现在上面有自动的。它由宿主执行飞书官方的
 OAuth 2.0 设备授权流：按钮先给你一条在浏览器里打开的链接，应用在那里建好并预设好权限与接收
 消息的事件，凭据存进 DSH 凭据库，`feishu` 被写进 `channels` 且 `transport` 定为 `websocket`
 —— 不需要公网地址就能跑起来。**Telegram 与钉钉没有对应的官方 API**，所以它们的卡片里只放一
@@ -407,6 +457,7 @@ DSH 0.2 把每个插件的设置保存在 **profile patch** 里，而不是 `$DS
 |---|---|
 | 在 DSH `0.2.0-rc.2` 上安装 `dsh-connect@0.9.0` 被拒绝：*“`dsh-connect@0.9.0` 与 DSH `0.2.0-rc.2` 不兼容 …… 运行它可能导致崩溃或数据丢失”* | 这不是 bug，也不是可以忽略的警告：DSH 的兼容性闸门会拒绝任何声明范围覆盖不到当前宿主的插件，而 `0.9.0` 早于 `0.2.0` 这条线。请安装 **`0.9.3`**（或更新的版本），它的 peer 要求 `^0.2.0-rc.2`。 |
 | 在桌面端找不到安装插件的地方，重启之后那个入口似乎就不见了 | 安装入口是**侧边栏里的「插件」面板**（面板列表第一项），**不在**「设置」里；设置只提供只读的插件列表。见[在桌面端安装](#在桌面端安装)。如果面板打得开却显示「本部署没有可管理的 profile，无法安装或启停插件。」，说明宿主没有暴露插件管理器，该页处于不可用状态 —— 重启应用。另外 **设置 → dsh-connect** 只有在插件被安装并加载之后才存在，所以一次被拒绝的安装之后，那里本来就找不到东西。 |
+| 安装时列表给的是最新版，装上的却是上一版；或者安装以 `ERR_PNPM_IGNORED_BUILDS` 结束 | 两者都属于 pnpm 12 的行为，而不是打包问题：裸写 `add` 会撞上 1440 分钟的 `minimumReleaseAge` 冷静期，而 `protobufjs` 的构建脚本处于未决状态。在 profile 的 `pnpm-workspace.yaml` 里加两行即可同时解决——见[安装落到旧版本怎么办](#安装落到旧版本怎么办)。 |
 | `connect-feishu: adapter init failed` / `start failed` | 凭据错误、应用未发布或网络被阻断。检查 `appId`/`appSecret`，重新运行开通流程，确认机器人在飞书开放平台后台处于在线状态。 |
 | `connect: resume of <id> failed, creating fresh session` | 持久化会话无法恢复（工作目录缺失、持久化问题）。检查 `workDir` 和 `~/.dsh/sessions`。**对话里也会收到通知**（自 `0.9.3` 起）：你会看到「无法恢复上次的会话，已为你开启一个新会话继续」，并附上原因——因为日志是聊天用户唯一不会去看的地方，而一条对自己刚才说过什么毫无记忆的回复，看起来像是机器人在忘事，而不是会话换了地方。旧会话并没有丢：它仍在会话存储里，也仍能在 Web 界面打开。 |
 | `connect: binding store writes to <file> are working again` / `… cannot persist bindings …` | 绑定文件写不进去，于是**重启后已有对话都不会被恢复**，每个对话都会开一个新会话。写入失效时提示一次、恢复时再提示一次。单看它只是磁盘或权限问题；但如果你**同时**看到上面那条恢复通知，两者是同一个原因。 |

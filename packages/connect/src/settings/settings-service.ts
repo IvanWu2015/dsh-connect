@@ -96,6 +96,28 @@ export interface SettingsServiceOptions {
    * endpoints answer `unsupported` rather than pretending.
    */
   onboarding?: () => FeishuOnboardingRegistry | undefined;
+  /**
+   * The DSH-wide default model, for the pane's read-only row.
+   *
+   * Read-only **by design**: `agentDefaultModel.saveSelection()` exists and is
+   * what the `/model` and `/reasoning` chat commands use, so wiring a write
+   * here is technically possible — and deliberately not done. That selection is
+   * DSH's, shared with every other session and plugin; a settings pane that
+   * silently moved it would change other people's runs as a side effect of
+   * editing the Feishu bridge. The pane says where to change it instead.
+   *
+   * A getter because `agentDefaultModel` arrives through injection and may not
+   * be present when this service is built. Returning undefined, throwing, or
+   * answering with an empty provider/model all mean the same thing: drop the
+   * row rather than render a control the user cannot use.
+   */
+  agentModel?: () => { provider?: string; model?: string } | undefined;
+  /**
+   * General-settings keys a shared config on this machine overrides, for the
+   * pane's provenance note. Empty (or absent) is the normal case — no shared
+   * config, ordinary editable rows.
+   */
+  sharedOverrideKeys?: () => string[];
 }
 
 function logError(msg: string) {
@@ -299,6 +321,27 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
       }
     }
     const failures = channelErrors();
+
+    // Read per call, like `onboarding`: both are wired by the host after this
+    // service is built.
+    let agentModel: { provider: string; model: string } | undefined;
+    try {
+      const selection = options.agentModel?.();
+      if (selection?.provider && selection.model) {
+        agentModel = { provider: selection.provider, model: selection.model };
+      }
+    } catch (error) {
+      // "Cannot say" is not "nothing selected": leaving the row off is the
+      // honest answer, and a row showing an empty model would be a claim.
+      log(`failed to read the default model: ${String(error)}`);
+    }
+    let sharedOverrideKeys: string[] = [];
+    try {
+      sharedOverrideKeys = [...(options.sharedOverrideKeys?.() ?? [])];
+    } catch (error) {
+      log(`failed to read the shared-config overrides: ${String(error)}`);
+    }
+
     return {
       config,
       enabled,
@@ -311,6 +354,8 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
       ...(warnings.length > 0 ? { warnings } : {}),
       ...(credentialErrors.length > 0 ? { credentialErrors } : {}),
       ...(Object.keys(failures).length > 0 ? { channelErrors: failures } : {}),
+      ...(agentModel ? { agentModel } : {}),
+      ...(sharedOverrideKeys.length > 0 ? { sharedOverrideKeys } : {}),
     };
   }
 

@@ -99,6 +99,59 @@ Settings → Bundled plugins*.
 plugin is actually installed and loaded, so a refused install leaves nothing to
 find there yet.
 
+### When the install resolves to an older version
+
+Two pnpm 12 behaviours bite a fresh install, and both look like a lie: the
+Desktop plugin list offers the newest version, yet what lands on disk is the one
+before it — or the install ends in `ERR_PNPM_IGNORED_BUILDS` while still leaving
+the dependency in `package.json`.
+
+1. **pnpm's built-in 24-hour release cooldown.** `minimumReleaseAge` defaults to
+   1440 minutes and is **non-strict**: a bare `add dsh-connect` resolves to the
+   newest release *older than 24 hours*. The version query the Desktop shows you
+   is a read, not an install, so it is not subject to the policy — for one day
+   after every publish the two legitimately disagree.
+2. **An undecided build script.** `protobufjs`, reached through
+   `@larksuiteoapi/node-sdk`, has a build script pnpm 12 will not run until you
+   decide about it. It reports that *after* writing the dependency, which is why
+   the failure looks like a half-finished install.
+
+Append this to the profile's `pnpm-workspace.yaml`
+(`$DSH_HOME/profiles/web/pnpm-workspace.yaml`; on Windows the Desktop app's
+profile is `%USERPROFILE%\.dsh\profiles\desktop\pnpm-workspace.yaml`), then
+install again:
+
+```yaml
+minimumReleaseAgeExclude:
+  - dsh-connect
+allowBuilds:
+  protobufjs: false
+```
+
+`minimumReleaseAgeExclude` exempts **only this package**; prefer it to
+`minimumReleaseAge: 0`, which turns the 24-hour supply-chain protection off for
+everything in the profile. `allowBuilds` is the spelling pnpm 12 accepts —
+`onlyBuiltDependencies` and `ignoredBuiltDependencies` no longer work and still
+fail with the same error.
+
+The exemption cannot ship inside `dsh-connect`: a package cannot grant its own
+transitive build allowance from its own manifest, so the consuming profile is
+the only place it can live.
+
+The two remedies are not interchangeable. Naming the version explicitly —
+`dsh plugin --profile web add dsh-connect@<version>` — does defeat the cooldown
+on its own, but it does **nothing** for the build script: that install still
+ends in `ERR_PNPM_IGNORED_BUILDS`, because `allowBuilds` is the only thing that
+decides `protobufjs`. If you would rather not edit the profile at all, the pin
+gets you the right *version*; it does not get you a clean exit.
+
+Two more things worth knowing:
+
+- **Uninstall before reinstalling.** DSH rejects a second `add` of an installed
+  plugin with `already-installed`, so remove it first.
+- **Restart `dsh`** (or the Desktop app) afterwards: host plugins load at
+  process start.
+
 ## Quick start
 
 1. **Install the plugins** (see above).
@@ -238,26 +291,42 @@ Environment variables (`FEISHU_*`, `TELEGRAM_*`, `DINGTALK_*`, `DSH_CONNECT_STAT
 
 ## The settings pane
 
-`dsh-connect` adds its own page under **Settings → dsh-connect**. It is a channel
-tab strip over collapsible cards: each card is headed by a button, its
-low-frequency fields sit behind a second-level **Advanced** fold, and
-Save/status stay pinned to the bottom of the scroll region. The tab strip is
-pinned too — `position: sticky` at the top of the scroll region, so content
-scrolls under it rather than carrying it off-screen. Settings are one per row:
-the field grid is a single column, so the label/control pairs never reflow into
-two or three columns as the pane widens.
+`dsh-connect` adds its own page under **Settings → dsh-connect**, with a
+two-level navigation: a primary strip (**General** first, **Bot channels**
+second) over the channel view's own tab strip of collapsible cards. Each card is
+headed by a button, its low-frequency fields sit behind a second-level
+**Advanced** fold, and Save/status stay pinned to the bottom of the scroll
+region. Both strips are pinned — `position: sticky` at the top of the scroll
+region, so content scrolls under them rather than carrying them off-screen.
+Settings are one per row: the field grid is a single column, so the
+label/control pairs never reflow into two or three columns as the pane widens.
 
-| Channels & credentials | Advanced fields opened |
-|---|---|
-| ![dsh-connect settings pane: the channel tab strip, the Feishu card expanded with its credential fields, and three folded channel cards each showing a credentials badge](docs/images/settings-overview-zh.png) | ![the same pane with a channel's Advanced fold opened, revealing the callback port and path fields](docs/images/settings-advanced-zh.png) |
+The pane **opens on Bot channels**, so the one-click Feishu button is zero clicks
+away; it sits at the very top of the Feishu card body, above App ID / App Secret.
+**General** is the ten values that used to be reachable only through chat
+commands — reply language, notification level, progress watchdog, working
+directory and extra workspaces, the allow-lists, the agent preset, mirror and
+heartbeat. They are editable here, but unlike channel settings they are read once
+when the plugin loads: every field says so, and a change takes effect after `dsh`
+restarts. A key that `dsh.shared.config.json` actually overrides carries a note
+saying the pane cannot win; the current model is shown read-only, because DSH
+owns it and switching it belongs inside DSH.
 
-| Feishu card: one-click create | Telegram card: official entry link |
+| Channels & credentials | General |
 |---|---|
-| ![the Feishu card's one-click create button, the pane scrolled with the tab strip still pinned at the top](docs/images/settings-feishu-zh.png) | ![the Telegram card, which offers a BotFather link instead of a create button](docs/images/settings-manual-zh.png) |
+| ![dsh-connect settings pane: the primary navigation above the channel tab strip, the Feishu card expanded with its credential fields, and folded channel cards each showing a credentials badge](docs/images/settings-overview-zh.png) | ![the General view: four cards of settings, one per row, each noting that a change takes effect after dsh restarts](docs/images/settings-general-zh.png) |
+
+| General: the read-only model row | Advanced fields opened |
+|---|---|
+| ![the General view's agent card, showing the current model as read-only text with a note that DSH owns it](docs/images/settings-general-agent-zh.png) | ![the same pane with a channel's Advanced fold opened, revealing the callback port and path fields](docs/images/settings-advanced-zh.png) |
+
+| Feishu card: credentials, one-click button above | Telegram card: official entry link |
+|---|---|
+| ![the Feishu card's App ID and App Secret fields, with the one-click create button above them and both navigation strips still pinned at the top of a scrolled pane](docs/images/settings-feishu-zh.png) | ![the Telegram card, which offers a BotFather link instead of a create button](docs/images/settings-manual-zh.png) |
 
 ![the common-defaults card and the pinned save bar at the bottom of the pane](docs/images/settings-defaults-zh.png)
 
-English captures: [overview](docs/images/settings-overview-en.png) · [advanced](docs/images/settings-advanced-en.png) · [defaults](docs/images/settings-defaults-en.png) · [one-click create](docs/images/settings-feishu-en.png) · [official entry](docs/images/settings-manual-en.png).
+English captures: [overview](docs/images/settings-overview-en.png) · [general](docs/images/settings-general-en.png) · [general: model row](docs/images/settings-general-agent-en.png) · [advanced](docs/images/settings-advanced-en.png) · [defaults](docs/images/settings-defaults-en.png) · [Feishu credentials](docs/images/settings-feishu-en.png) · [official entry](docs/images/settings-manual-en.png).
 
 > Captured from a throwaway profile whose credentials are all placeholders. Nothing
 > above contains a real secret — and it could not, because the host masks every
@@ -270,7 +339,9 @@ its body rather than hiding it, which is safe because an unsaved secret you type
 lives in the pane's own state, not in the card. Ticking a channel's enable box
 opens it too.
 
-The Feishu card carries a **Create and configure a Feishu bot in one click** button (1.0.0). The
+The Feishu card carries a **Create and configure a Feishu bot in one click** button (1.0.0), at the
+very top of the card body — above App ID / App Secret, so the automated path comes before the manual
+one instead of after it. The
 host runs Feishu's official OAuth 2.0 device-authorization flow: the button hands you a link to open
 in a browser, the app is created there with its permissions and message-receive event preset, the
 credentials go into the DSH credential store, and `feishu` is added to `channels` with
@@ -476,6 +547,7 @@ Logs come from the DSH host logger (run `dsh web` in a terminal); plugin message
 |---|---|
 | Installing `dsh-connect@0.9.0` on DSH `0.2.0-rc.2` is refused: *"`dsh-connect@0.9.0` 与 DSH `0.2.0-rc.2` 不兼容 … 运行它可能导致崩溃或数据丢失"* | Not a bug and not a warning to click past: DSH's compatibility gate rejects any plugin whose declared peer range does not cover the running host, and `0.9.0` predates the `0.2.0` line. Install **`0.9.3`** (or newer), whose peers require `^0.2.0-rc.2`. |
 | In the Desktop app you cannot find where to install a plugin — the entry seems to have gone after a restart | The install surface is the **Plugins panel in the sidebar** (first in the panel list), not Settings; Settings only lists plugins, read-only. See [Installing in the Desktop app](#installing-in-the-desktop-app). If the panel opens but says *this deployment runs without a manageable profile*, the host did not expose its plugin manager, so the page is inert — restart the app. And **Settings → dsh-connect** can only exist once the plugin is installed and loaded, so after a refused install there is legitimately nothing to find. |
+| The install reports the newest version but lands on the previous one, or ends in `ERR_PNPM_IGNORED_BUILDS` | Both are pnpm 12 behaviours rather than packaging faults: a bare `add` hits the 1440-minute `minimumReleaseAge` cooldown, and `protobufjs`'s build script is undecided. Two lines in the profile's `pnpm-workspace.yaml` clear both — see [When the install resolves to an older version](#when-the-install-resolves-to-an-older-version). |
 | `connect-feishu: adapter init failed` / `start failed` | Bad credentials, app not published, or network blocked. Check `appId`/`appSecret`, re-run onboarding, verify the bot is online in the Feishu console. |
 | `connect: resume of <id> failed, creating fresh session` | The persisted session could not be resumed (missing workdir, persistence issue). Check `workDir` and `~/.dsh/sessions`. **The chat is told too**, since `0.9.3`: you get 「无法恢复上次的会话，已为你开启一个新会话继续」 with the reason, because the log is the one place a chat user never looks and a reply that arrives with no memory of the conversation looks like the bot forgetting rather than a session that moved. The old session is not lost — it is still in the session store and still openable in the Web GUI. |
 | `connect: binding store writes to <file> are working again` / `… cannot persist bindings …` | The binding file could not be written, so **existing chats will not be resumed after a restart** and each will start a new session. Reported once when the write breaks and once when it recovers — on its own it is a disk or permission problem, but if you see it *and* the resume notice above, the two are the same cause. |

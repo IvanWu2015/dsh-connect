@@ -21,6 +21,26 @@
  * `CHANNEL_CONFIG_FIELDS`, because a typo would silently drop a field from the
  * UI rather than fail anything.
  */
+/**
+ * The pane's primary navigation, in the order it is shown: 通用设置 first, then
+ * 机器人渠道. The order is what the user asked for and is not derived from
+ * anything — it is a product decision, so it lives here rather than inline.
+ */
+export const PANE_VIEWS = ['general', 'channels'];
+
+/**
+ * Which view the pane opens on: 机器人渠道, *not* the first entry of `PANE_VIEWS`.
+ *
+ * This looks like a bug next to the constant above and is deliberately not one.
+ * The one-click "create a Feishu bot" button lives in the channel view, and the
+ * complaint that started this work was a user filling in every field by hand
+ * only to discover the button at the bottom. Landing on the channels view keeps
+ * that button zero clicks away; the navigation still *reads* 通用设置 → 机器人渠道
+ * because that is the order of the two subjects, not the order of arrival.
+ * Do not "fix" one to match the other.
+ */
+export const DEFAULT_VIEW = 'channels';
+
 export const ADVANCED_KEYS = {
   feishu: ['webhookPort', 'webhookPath'],
   telegram: ['pollingTimeoutSeconds', 'baseUrl'],

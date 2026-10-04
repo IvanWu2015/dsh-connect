@@ -12,10 +12,18 @@
  *
  * Key scheme:
  * - plain keys  — chrome (titles, buttons, status words)
+ * - `view.<name>` — a primary-navigation view label (`PANE_VIEWS`)
  * - `channel.<name>` / `channel.<name>.hint` — one card per channel
- * - `f.<key>` / `f.<key>.hint` — a non-secret config field (`CHANNEL_CONFIG_FIELDS`)
+ * - `f.<key>` / `f.<key>.hint` — a non-secret *per-channel* config field
+ *   (`CHANNEL_CONFIG_FIELDS` / `CHANNEL_DEFAULT_FIELDS`)
+ * - `g.<key>` / `g.<key>.hint` — a *general* (plugin-wide) config field
+ *   (`GENERAL_FIELDS`). Separate from `f.*` on purpose: the channel-level
+ *   `language` is 「回复语言」 while the general one is 「语言」, so one shared
+ *   wording would be wrong in one of the two places.
  * - `s.<channel>.<key>` / `.hint` — a secret field (`CHANNEL_SECRET_FIELDS`)
  * - `o.<value>` — a `select` option value, shared across fields
+ * - `onboard.<step>` — the one-click Feishu creation flow (label, hint, each
+ *   result line and each subscription outcome)
  * - `status.<state>` — the save-button status line
  * - `w.<code>` — a non-fatal warning code from the host (`SettingsWarningCode`)
  */
@@ -45,6 +53,9 @@ export const LOCALES = {
     collapse: '收起',
     advanced: '高级选项',
     tabsAria: '渠道切换',
+    navAria: '设置分区',
+    'view.general': '通用设置',
+    'view.channels': '机器人渠道',
     credentialUnknown: '凭据状态未知',
     credentialUnknownHint: '无法读取已存储的凭据，请确认凭据库可访问后重试。',
     channelFailed: '渠道启动失败：',
@@ -114,8 +125,37 @@ export const LOCALES = {
     'f.defaultAt.hint': '群消息默认 @ 的成员，多个用逗号分隔。',
     'f.pollIntervalMs': '轮询间隔（毫秒）',
     'f.pollIntervalMs.hint': '网页渠道检查新消息的间隔，默认 1000。',
-    'f.notifyLevel': '通知级别',
-    'f.notifyLevel.hint': '控制机器人把多少过程信息发到聊天里。',
+
+    // General settings. These resolve once when the plugin starts and there is
+    // no hot reload, so every hint says so — a control that silently does
+    // nothing until a restart is worse than one that says it will.
+    'g.group.locale': '语言与提醒',
+    'g.group.workspace': '工作目录',
+    'g.group.access': '访问控制',
+    'g.group.agent': '智能体',
+    'g.language': '语言',
+    'g.language.hint': '机器人回复用户使用的语言，对所有渠道生效（渠道卡片里的「回复语言」可单独覆盖）。修改后需重启 dsh 才生效。',
+    'g.notifyLevel': '通知级别',
+    'g.notifyLevel.hint': '控制机器人把多少过程信息发到聊天里。修改后需重启 dsh 才生效。',
+    'g.progressTimeoutMs': '进度提醒超时（毫秒）',
+    'g.progressTimeoutMs.hint': '任务超过这个时长没有输出时，给用户发一条进度提醒。修改后需重启 dsh 才生效。',
+    'g.workDir': '默认工作目录',
+    'g.workDir.hint': '机器人新建会话时使用的目录。修改后需重启 dsh 才生效。',
+    'g.workspaces': '额外工作区',
+    'g.workspaces.hint': '每行一个目录。这里的内容会与 dsh.shared.config.json 里的 additionalWorkspaces 合并，而不是替换它。修改后需重启 dsh 才生效。',
+    'g.allowUsers': '允许的用户',
+    'g.allowUsers.hint': '每行一个用户标识；留空表示不限制。修改后需重启 dsh 才生效。',
+    'g.allowChats': '允许的会话',
+    'g.allowChats.hint': '每行一个会话 ID；留空表示不限制。修改后需重启 dsh 才生效。',
+    'g.agentPreset': '智能体预设',
+    'g.agentPreset.hint': '新建会话默认使用的预设名称；留空表示沿用 DSH 的默认值。修改后需重启 dsh 才生效。',
+    'g.autoMirror': '自动镜像会话',
+    'g.autoMirror.hint': '把机器人发起的会话也显示在 DSH 网页界面里。修改后需重启 dsh 才生效。',
+    'g.streamHeartbeatMs': '流式心跳（毫秒）',
+    'g.streamHeartbeatMs.hint': '流式回复期间向聊天发送心跳的间隔，避免长任务看起来像卡住。修改后需重启 dsh 才生效。',
+    'g.sharedOverride': '当前取值来自 dsh.shared.config.json，此处的修改不会生效。',
+    'g.model': '默认模型',
+    'g.model.note': '此值由 DSH 管理，请在 DSH 里切换。',
 
     's.feishu.appId': 'App ID',
     's.feishu.appId.hint': '开放平台「凭证与基础信息」中的 App ID，非机密，完整显示。',
@@ -169,6 +209,9 @@ export const LOCALES = {
     collapse: 'Collapse',
     advanced: 'Advanced',
     tabsAria: 'Channel switcher',
+    navAria: 'Settings sections',
+    'view.general': 'General',
+    'view.channels': 'Bot channels',
     credentialUnknown: 'Credential state unknown',
     credentialUnknownHint: 'The stored credentials could not be read — check that the credential store is reachable, then try again.',
     channelFailed: 'Channel failed to start:',
@@ -238,8 +281,37 @@ export const LOCALES = {
     'f.defaultAt.hint': 'Members to @ by default on group messages, comma-separated.',
     'f.pollIntervalMs': 'Poll interval (ms)',
     'f.pollIntervalMs.hint': 'How often the web channel checks for new messages; defaults to 1000.',
-    'f.notifyLevel': 'Notify level',
-    'f.notifyLevel.hint': 'How much of the working process the bot posts into the chat.',
+
+    // General settings. These resolve once when the plugin starts and there is
+    // no hot reload, so every hint says so — a control that silently does
+    // nothing until a restart is worse than one that says it will.
+    'g.group.locale': 'Language & notices',
+    'g.group.workspace': 'Working directories',
+    'g.group.access': 'Access control',
+    'g.group.agent': 'Agent',
+    'g.language': 'Language',
+    'g.language.hint': 'The language the bot replies to users in, for every channel (a channel card’s “Reply language” overrides it). A change takes effect after dsh restarts.',
+    'g.notifyLevel': 'Notify level',
+    'g.notifyLevel.hint': 'How much of the working process the bot posts into the chat. A change takes effect after dsh restarts.',
+    'g.progressTimeoutMs': 'Progress timeout (ms)',
+    'g.progressTimeoutMs.hint': 'How long a task may go without output before the user gets a progress notice. A change takes effect after dsh restarts.',
+    'g.workDir': 'Default working directory',
+    'g.workDir.hint': 'The directory the bot uses for new sessions. A change takes effect after dsh restarts.',
+    'g.workspaces': 'Additional workspaces',
+    'g.workspaces.hint': 'One directory per line. These are merged with additionalWorkspaces from dsh.shared.config.json rather than replacing it. A change takes effect after dsh restarts.',
+    'g.allowUsers': 'Allowed users',
+    'g.allowUsers.hint': 'One user id per line; leave empty to allow everyone. A change takes effect after dsh restarts.',
+    'g.allowChats': 'Allowed chats',
+    'g.allowChats.hint': 'One chat id per line; leave empty to allow every chat. A change takes effect after dsh restarts.',
+    'g.agentPreset': 'Agent preset',
+    'g.agentPreset.hint': 'The preset new sessions use by default; leave empty for the DSH default. A change takes effect after dsh restarts.',
+    'g.autoMirror': 'Mirror sessions',
+    'g.autoMirror.hint': 'Also show bot-created sessions in the DSH web UI. A change takes effect after dsh restarts.',
+    'g.streamHeartbeatMs': 'Stream heartbeat (ms)',
+    'g.streamHeartbeatMs.hint': 'How often a heartbeat is posted into the chat while a reply streams, so a long task does not look stuck. A change takes effect after dsh restarts.',
+    'g.sharedOverride': 'The current value comes from dsh.shared.config.json — editing it here has no effect.',
+    'g.model': 'Default model',
+    'g.model.note': 'DSH owns this value — switch it inside DSH.',
 
     's.feishu.appId': 'App ID',
     's.feishu.appId.hint': 'The App ID from the open platform’s credentials page. Not a secret — shown in full.',

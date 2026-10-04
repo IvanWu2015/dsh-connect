@@ -54,6 +54,7 @@ const suites = [
   "settings-namespace.test.mjs",
   "legacy-import.test.mjs",
   "runner.test.mjs",
+  "manifest.test.mjs",
 ];
 
 /**

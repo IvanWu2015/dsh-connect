@@ -67,24 +67,38 @@ All channels share the same `dsh-connect` core: commands, `/menu`, notification 
 
 ## The settings pane
 
-`dsh-connect` adds its own page under **Settings → dsh-connect**. It is a channel tab strip over
-collapsible cards: each card's title row is a button, low-frequency fields hide behind a second-level
-**Advanced** fold, and the save row is pinned to the bottom of the scroll area. The tab strip is
-pinned too — `position: sticky` at the top of the scroll area, so content scrolls under it rather
-than carrying it away. One setting per row: the field grid is a single column, so the label/control
+`dsh-connect` adds its own page under **Settings → dsh-connect**, with a two-level navigation: a
+primary strip (**General** first, **Bot channels** second) over the channel view's own tab strip of
+collapsible cards. Each card's title row is a button, low-frequency fields hide behind a second-level
+**Advanced** fold, and the save row is pinned to the bottom of the scroll area. Both strips are
+pinned — `position: sticky` at the top of the scroll area, so content scrolls under them rather than
+carrying them away. One setting per row: the field grid is a single column, so the label/control
 pairs never reflow into two or three columns as the pane widens.
 
-| Channels & credentials | Advanced fold open |
-|---|---|
-| ![The dsh-connect settings pane: channel tab strip, the expanded Feishu card with its credential fields, and three collapsed channel cards still showing credential badges](packages/connect/docs/images/settings-overview-en.png) | ![The same pane with one channel's Advanced fold expanded, revealing the callback port and callback path fields](packages/connect/docs/images/settings-advanced-en.png) |
+The pane **opens on Bot channels**, so the one-click Feishu button is zero clicks away; it sits at
+the very top of the Feishu card body, above App ID / App Secret. **General** is the ten values that
+used to be reachable only through chat commands — reply language, notification level, progress
+watchdog, working directory and extra workspaces, the allow-lists, the agent preset, mirror and
+heartbeat. They are editable here, but unlike channel settings they are read once when the plugin
+loads: every field says so, and a change takes effect after `dsh` restarts. A key that
+`dsh.shared.config.json` actually overrides carries a note saying the pane cannot win; the current
+model is shown read-only, because DSH owns it and switching it belongs inside DSH.
 
-| Feishu card: one-click create | Telegram card: official entry link |
+| Channels & credentials | General |
 |---|---|
-| ![The Feishu card's one-click create button, with the tab strip still pinned at the top of a scrolled pane](packages/connect/docs/images/settings-feishu-en.png) | ![The Telegram card, which offers a link to BotFather instead of a create button](packages/connect/docs/images/settings-manual-en.png) |
+| ![The dsh-connect settings pane: the primary navigation above the channel tab strip, the Feishu card expanded with its credential fields, and collapsed channel cards still showing credential badges](packages/connect/docs/images/settings-overview-en.png) | ![The General view: four cards of settings, one per row, each noting that a change takes effect after dsh restarts](packages/connect/docs/images/settings-general-en.png) |
+
+| General: the read-only model row | Advanced fold open |
+|---|---|
+| ![The General view's agent card, showing the current model as read-only text with a note that DSH owns it](packages/connect/docs/images/settings-general-agent-en.png) | ![The same pane with one channel's Advanced fold expanded, revealing the callback port and callback path fields](packages/connect/docs/images/settings-advanced-en.png) |
+
+| Feishu card: credentials, one-click button above | Telegram card: official entry link |
+|---|---|
+| ![The Feishu card's App ID and App Secret fields, with the one-click create button above them and both navigation strips still pinned at the top of a scrolled pane](packages/connect/docs/images/settings-feishu-en.png) | ![The Telegram card, which offers a link to BotFather instead of a create button](packages/connect/docs/images/settings-manual-en.png) |
 
 ![The shared-defaults card and pinned save row at the bottom of the pane](packages/connect/docs/images/settings-defaults-en.png)
 
-中文截图：[概览](packages/connect/docs/images/settings-overview-zh.png) · [高级](packages/connect/docs/images/settings-advanced-zh.png) · [公共默认](packages/connect/docs/images/settings-defaults-zh.png) · [一键创建](packages/connect/docs/images/settings-feishu-zh.png) · [官方入口](packages/connect/docs/images/settings-manual-zh.png).
+中文截图：[概览](packages/connect/docs/images/settings-overview-zh.png) · [通用设置](packages/connect/docs/images/settings-general-zh.png) · [通用设置·模型](packages/connect/docs/images/settings-general-agent-zh.png) · [高级](packages/connect/docs/images/settings-advanced-zh.png) · [公共默认](packages/connect/docs/images/settings-defaults-zh.png) · [飞书凭据](packages/connect/docs/images/settings-feishu-zh.png) · [官方入口](packages/connect/docs/images/settings-manual-zh.png).
 
 > The shots come from a throwaway profile whose credentials are all placeholders. There is no real
 > secret in frame — there cannot be: the host masks values before they reach the browser (see
@@ -204,6 +218,33 @@ dsh plugin --profile web add dsh-connect
 (Installing the single package pulls in the core `connect` service, every channel adapter, and the web-settings stack. Enable the channels you need via the `channels` selector.)
 
 For local development (before the package is published), load the built package by absolute path as shown in [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
+#### When the install resolves to an older version
+
+Two pnpm 12 behaviours bite a fresh install, and both look like a lie: the Desktop plugin list offers the newest version, yet what lands on disk is the one before it — or the install ends in `ERR_PNPM_IGNORED_BUILDS` while still leaving the dependency in `package.json`.
+
+1. **pnpm's built-in 24-hour release cooldown.** `minimumReleaseAge` defaults to 1440 minutes and is **non-strict**: a bare `add dsh-connect` resolves to the newest release *older than 24 hours*. The version query the Desktop shows you is a read, not an install, so it is not subject to the policy — for one day after every publish the two legitimately disagree.
+2. **An undecided build script.** `protobufjs`, reached through `@larksuiteoapi/node-sdk`, has a build script pnpm 12 will not run until you decide about it. It reports that *after* writing the dependency, which is why the failure looks like a half-finished install.
+
+Append this to the profile's `pnpm-workspace.yaml` (`$DSH_HOME/profiles/web/pnpm-workspace.yaml`; on Windows the Desktop app's profile is `%USERPROFILE%\.dsh\profiles\desktop\pnpm-workspace.yaml`), then install again:
+
+```yaml
+minimumReleaseAgeExclude:
+  - dsh-connect
+allowBuilds:
+  protobufjs: false
+```
+
+`minimumReleaseAgeExclude` exempts **only this package**; prefer it to `minimumReleaseAge: 0`, which turns the 24-hour supply-chain protection off for everything in the profile. `allowBuilds` is the spelling pnpm 12 accepts — `onlyBuiltDependencies` and `ignoredBuiltDependencies` no longer work and still fail with the same error.
+
+The exemption cannot ship inside `dsh-connect`: a package cannot grant its own transitive build allowance from its own manifest, so the consuming profile is the only place it can live.
+
+The two remedies are not interchangeable. Naming the version explicitly — `dsh plugin --profile web add dsh-connect@<version>` — does defeat the cooldown on its own, but it does **nothing** for the build script: that install still ends in `ERR_PNPM_IGNORED_BUILDS`, because `allowBuilds` is the only thing that decides `protobufjs`. If you would rather not edit the profile at all, the pin gets you the right *version*; it does not get you a clean exit.
+
+Two more things worth knowing:
+
+- **Uninstall before reinstalling.** DSH rejects a second `add` of an installed plugin with `already-installed`, so remove it first.
+- **Restart `dsh`** (or the Desktop app) afterwards: host plugins load at process start.
 
 ### Configure
 

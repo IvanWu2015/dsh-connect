@@ -43,7 +43,7 @@
 
 import z from "@deepseek-ai/schemastery";
 import { CHANNELS, type ChannelName, type LoggerLike } from "./channels.js";
-import { CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS } from "./settings-model.js";
+import { CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, GENERAL_FIELDS } from "./settings-model.js";
 
 /**
  * The section key the pre-0.2 harness read from `$DSH_HOME/settings.yaml`, keyed
@@ -172,18 +172,56 @@ export function paneConfigFields(): Record<string, z<any>> {
   return fields;
 }
 
-/** Channel-agnostic defaults section of the namespace. */
-export type ConnectSectionDefaults = Record<string, unknown> & { language?: string; notifyLevel?: string };
+/**
+ * Channel-agnostic defaults section of the namespace.
+ *
+ * `notifyLevel` used to be declared here and was dead: no adapter ever read it
+ * (they read `language`; the notification level a runner uses comes from the
+ * top-level key). It is gone from both the field table and this type, so a
+ * legacy `channelDefaults.notifyLevel` in an old profile is projected away on
+ * the next save rather than being preserved forever in honour of a key that
+ * never did anything. The real, working `notifyLevel` is a top-level key — see
+ * `ConnectSection` below.
+ */
+export type ConnectSectionDefaults = Record<string, unknown> & { language?: string };
 
 /**
  * The pane-editable slice of the config: the whole of what this plugin stores
  * on the user's behalf. Every field is optional — a user who only ever edits
  * `channels` leaves the rest absent, and each adapter applies its own default
  * for anything missing.
+ *
+ * The top-level keys below `channelDefaults` are the **general settings** the
+ * pane edits on its 通用设置 view — the same values the chat commands set. They
+ * are declared here because `sectionOf` is the only thing standing between them
+ * and a silent reset: `enableFeishuConfig` spreads the whole section it is
+ * given, so a general key this type (and that function's loop) forgets is
+ * dropped by the next save of any kind. Keep this list in step with
+ * `GENERAL_FIELDS`.
  */
 export interface ConnectSection {
   channels?: ChannelName[];
   channelDefaults?: ConnectSectionDefaults;
+  /** Reply language (`zh`/`en`) for a channel that does not set its own. */
+  language?: string;
+  /** How much of a run gets pushed to chat: `full` / `important` / `result`. */
+  notifyLevel?: string;
+  /** Silence a quiet run for this long before warning, in ms. */
+  progressTimeoutMs?: number;
+  /** Default working directory for new sessions. */
+  workDir?: string;
+  /** Additional workspace roots offered to new sessions. */
+  workspaces?: string[];
+  /** Open ids allowed to talk to the bot; empty/absent means everyone. */
+  allowUsers?: string[];
+  /** Chat ids allowed to talk to the bot; empty/absent means every chat. */
+  allowChats?: string[];
+  /** Agent preset applied to new sessions. */
+  agentPreset?: string;
+  /** Mirror a session's workspace automatically when it is created. */
+  autoMirror?: boolean;
+  /** Heartbeat interval for a streaming answer, in ms. */
+  streamHeartbeatMs?: number;
   feishu?: Record<string, unknown>;
   telegram?: Record<string, unknown>;
   dingtalk?: Record<string, unknown>;
@@ -241,6 +279,34 @@ export function sectionOf(config: unknown, options: SectionOptions = {}): Connec
   }
   if (Object.keys(defaults).length > 0) section.channelDefaults = defaults as ConnectSectionDefaults;
 
+  // The general keys. This loop is load-bearing, not bookkeeping: everything
+  // that writes a section goes through this projection, and `enableFeishuConfig`
+  // spreads the section it is handed — so a key missing from here is silently
+  // reset the next time the user saves *anything*, including a save that had
+  // nothing to do with it. Adding a field to `GENERAL_FIELDS` without it
+  // appearing here is the one mistake this batch can make.
+  for (const field of GENERAL_FIELDS) {
+    const value = source[field.key];
+    if (value === undefined) continue;
+    if (field.kind === 'list') {
+      // An empty list is skipped rather than written as `[]`: absent already
+      // resolves to `[]` for these keys, so emitting one only stamps noise into
+      // a profile, and "cleared" is meant to mean "back to inherited".
+      if (!Array.isArray(value)) continue;
+      // Trimmed, to match `coerceConfigValue`'s list branch. The pane never
+      // produces a padded entry, but this is also the guard on *untrusted*
+      // JSON from the settings RPC, and a whitespace-only path saved from a
+      // hand-edited document is an entry that means nothing.
+      const items = value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+      if (items.length > 0) (section as Record<string, unknown>)[field.key] = items;
+      continue;
+    }
+    (section as Record<string, unknown>)[field.key] = value;
+  }
+
   for (const name of CHANNELS) {
     const raw = (source[name] ?? {}) as Record<string, unknown>;
     const projected: Record<string, unknown> = {};
@@ -263,9 +329,18 @@ export function sectionOf(config: unknown, options: SectionOptions = {}): Connec
  * channel list itself, which switches every adapter off.
  */
 export function mergeSections(base: ConnectSection, override: ConnectSection): ConnectSection {
-  const merged: ConnectSection = {};
+  // Start from a plain spread so the flat general keys carry over without this
+  // function having to list them. Rebuilding the object key by key — the shape
+  // this had before the general settings existed — silently *drops* any key the
+  // merge does not explicitly mention, and the only caller here
+  // (`legacy-import.ts`) writes `mergeSections(current, legacy)`: a dropped key
+  // there is a user's setting erased by an import that was supposed to preserve
+  // it. `channels`/`channelDefaults`/per-channel blocks are copied explicitly
+  // below because each has merge semantics of its own.
+  const merged: ConnectSection = { ...base, ...override };
   const channels = override.channels ?? base.channels;
   if (channels !== undefined) merged.channels = [...channels];
+  else delete merged.channels;
 
   const defaults = { ...base.channelDefaults, ...override.channelDefaults };
   if (Object.keys(defaults).length > 0) merged.channelDefaults = defaults as ConnectSectionDefaults;

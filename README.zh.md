@@ -67,22 +67,31 @@ examples/
 
 ## 设置面板
 
-`dsh-connect` 在 **设置 → dsh-connect** 下有自己的页面。它是一条渠道页签条 + 若干可折叠卡片：
-每张卡片由一个按钮做标题行，低频字段收在第二级的**高级选项**折叠里，保存/状态固定在滚动区底部。
-页签条本身也**钉在滚动区顶部**（`position: sticky`），内容从它下面滚过去，而不是把它带走。
+`dsh-connect` 在 **设置 → dsh-connect** 下有自己的页面，顶部是**两级导航**：主导航（**通用设置**在前、**机器人渠道**在后），
+下面才是渠道视图自己的页签条 + 若干可折叠卡片。每张卡片由一个按钮做标题行，低频字段收在第二级的**高级选项**折叠里，
+保存/状态固定在滚动区底部。两层导航条都**钉在滚动区顶部**（`position: sticky`），内容从它们下面滚过去，而不是把它们带走。
 设置项**一行一个**：字段网格是单列，面板变宽时标签/控件对不会再回流成两三列。
 
-| 渠道与凭据 | 展开高级选项 |
-|---|---|
-| ![dsh-connect 设置面板：渠道页签条、展开的飞书卡片及其凭据字段，以及三张收起后仍显示凭据徽标的渠道卡片](packages/connect/docs/images/settings-overview-zh.png) | ![同一面板展开某渠道的「高级选项」折叠，露出回调端口与回调路径字段](packages/connect/docs/images/settings-advanced-zh.png) |
+面板**打开就停在「机器人渠道」**，这样飞书的一键创建按钮零点击可达；它就排在飞书卡片正文的**最顶端**，App ID / App Secret 在它下面。
+**通用设置**是原先只能靠聊天命令改的那十项——回复语言、通知级别、进度看门狗、工作目录与额外工作区、访问白名单、智能体预设、镜像与心跳。
+它们在这里可改，但与渠道设置不同：这些值是插件加载时一次性读走的，所以每一项都写着「修改后需重启 dsh 才生效」。
+真被 `dsh.shared.config.json` 压过的键会多一行来源提示，说明面板改它不生效；当前模型是**只读**一行，因为那是 DSH 的东西，要换请去 DSH 里换。
 
-| 飞书卡片：一键创建 | Telegram 卡片：官方入口链接 |
+| 渠道与凭据 | 通用设置 |
 |---|---|
-| ![飞书卡片上的一键创建按钮，此时面板已滚动、页签条仍钉在顶部](packages/connect/docs/images/settings-feishu-zh.png) | ![Telegram 卡片，给的是 BotFather 链接而不是创建按钮](packages/connect/docs/images/settings-manual-zh.png) |
+| ![dsh-connect 设置面板：主导航在渠道页签条之上，展开的飞书卡片及其凭据字段，以及收起后仍显示凭据徽标的渠道卡片](packages/connect/docs/images/settings-overview-zh.png) | ![通用设置视图：四张卡片，每行一项，每项都注明修改后需重启 dsh 才生效](packages/connect/docs/images/settings-general-zh.png) |
+
+| 通用设置：只读的模型行 | 展开高级选项 |
+|---|---|
+| ![通用设置的智能体卡片，当前模型是只读文本，附一行说明此值由 DSH 管理](packages/connect/docs/images/settings-general-agent-zh.png) | ![同一面板展开某渠道的「高级选项」折叠，露出回调端口与回调路径字段](packages/connect/docs/images/settings-advanced-zh.png) |
+
+| 飞书卡片：凭据字段（一键按钮在其上方） | Telegram 卡片：官方入口链接 |
+|---|---|
+| ![飞书卡片的 App ID 与 App Secret 字段，一键创建按钮排在它们上方；此时面板已滚动，两层导航条仍钉在顶部](packages/connect/docs/images/settings-feishu-zh.png) | ![Telegram 卡片，给的是 BotFather 链接而不是创建按钮](packages/connect/docs/images/settings-manual-zh.png) |
 
 ![面板底部的公共默认卡片与固定保存条](packages/connect/docs/images/settings-defaults-zh.png)
 
-English screenshots: [overview](packages/connect/docs/images/settings-overview-en.png) · [advanced](packages/connect/docs/images/settings-advanced-en.png) · [shared defaults](packages/connect/docs/images/settings-defaults-en.png) · [one-click create](packages/connect/docs/images/settings-feishu-en.png) · [official entry](packages/connect/docs/images/settings-manual-en.png).
+English screenshots: [overview](packages/connect/docs/images/settings-overview-en.png) · [general](packages/connect/docs/images/settings-general-en.png) · [general: model row](packages/connect/docs/images/settings-general-agent-en.png) · [advanced](packages/connect/docs/images/settings-advanced-en.png) · [shared defaults](packages/connect/docs/images/settings-defaults-en.png) · [Feishu credentials](packages/connect/docs/images/settings-feishu-en.png) · [official entry](packages/connect/docs/images/settings-manual-en.png).
 
 > 截图取自一个凭据全是占位符的一次性 profile。上面没有任何真实密钥——也不可能有：宿主会在
 > 值到达浏览器之前完成打码（见下文[面板回显与脱敏](#面板回显与脱敏)）。
@@ -193,6 +202,33 @@ dsh plugin --profile web add dsh-connect
 （安装这一个包会拉进核心 `connect` 服务、所有通道适配器以及 Web 设置栈。通过 `channels` 选择器启用你要的通道。）
 
 本地开发（包尚未发布时）请按 [快速开始](docs/QUICKSTART.zh.md) 中的绝对路径方式加载本地构建的包。
+
+#### 安装落到旧版本怎么办
+
+pnpm 12 的两个行为会咬住全新安装，而且看起来都像在骗人：桌面端插件列表给出的是最新版，落到磁盘上的却是上一版；或者安装以 `ERR_PNPM_IGNORED_BUILDS` 结束，但依赖仍然写进了 `package.json`。
+
+1. **pnpm 内置的 24 小时发布冷静期。** `minimumReleaseAge` 默认 1440 分钟，且是**非严格**的：裸写 `add dsh-connect` 会解析到**发布满 24 小时的最后一版**。桌面端显示版本号用的是一次查询而非安装，不受该策略约束——所以每次发布后的一天里，两者确实会不一致。
+2. **构建脚本未决。** 经 `@larksuiteoapi/node-sdk` 带进来的 `protobufjs` 带有一个构建脚本，pnpm 12 在你做出决定前拒绝执行它；而它是在**写完依赖之后**才报错的，所以失败看起来像「装了一半」。
+
+在 profile 的 `pnpm-workspace.yaml`（`$DSH_HOME/profiles/web/pnpm-workspace.yaml`；Windows 上桌面端的 profile 是 `%USERPROFILE%\.dsh\profiles\desktop\pnpm-workspace.yaml`）末尾追加以下内容，然后重新安装：
+
+```yaml
+minimumReleaseAgeExclude:
+  - dsh-connect
+allowBuilds:
+  protobufjs: false
+```
+
+`minimumReleaseAgeExclude` **只豁免这一个包**；请不要用 `minimumReleaseAge: 0`，那会把整个 profile 里所有依赖的 24 小时供应链保护一起关掉。`allowBuilds` 是 pnpm 12 认可的新写法——`onlyBuiltDependencies` 与 `ignoredBuiltDependencies` 已不再生效，写了照样报同样的错。
+
+这个豁免无法随包发布：一个包**不能**在自己的清单里为自己的传递依赖声明构建许可，所以它只能写在消费方的 profile 里。
+
+两条对策并不等价。显式指定版本——`dsh plugin --profile web add dsh-connect@<版本>`——**确实**能单独绕过冷静期，但对构建脚本**毫无作用**：这条命令仍会以 `ERR_PNPM_IGNORED_BUILDS` 结束，因为 `protobufjs` 只有 `allowBuilds` 能拍板。如果你完全不想改 profile，版本号能让你装到**正确的版本**，但拿不到一次干净的退出。
+
+另外两件值得知道的事：
+
+- **重装前先卸载。** DSH 对已安装的插件会以 `already-installed` 拒绝第二次 `add`，请先卸载。
+- **之后重启 `dsh`**（或桌面端）：宿主插件在进程启动时加载。
 
 ### 配置
 

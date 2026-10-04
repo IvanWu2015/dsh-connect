@@ -60,17 +60,17 @@ deepseek-harness  dsh  dsh-plugin  feishu  lark  dingtalk  ai-agent  chatbot  co
 | `packages/connect/README.md` / `README.zh.md` | `docs/images/settings-overview-zh.png` |
 | `packages/connect/README.i18n.yaml` | 与 README 相同（该 i18n 文件镜像英文 README） |
 
-设置页这套截图共 10 张 PNG，均为 1600×1600——5 个名字，各有 `-zh` 与 `-en` 两个变体：
+设置页这套截图共 14 张 PNG，均为 1600×1600——7 个名字，各有 `-zh` 与 `-en` 两个变体：
 
-- `settings-overview-{zh,en}.png`——渠道 Tab 条 + 可折叠卡片（设置项单列）。
+- `settings-overview-{zh,en}.png`——主导航 + 渠道 Tab 条 + 可折叠卡片（设置项单列）。
+- `settings-general-{zh,en}.png`——通用设置视图（1.0.2）：四张卡片，装着原先只能靠聊天命令改的那十项。
+- `settings-general-agent-{zh,en}.png`——同一视图里对准智能体卡片：只读的模型行，以及被 `dsh.shared.config.json` 压过的键。
 - `settings-advanced-{zh,en}.png`——二级「高级」折叠。
 - `settings-defaults-{zh,en}.png`——渠道未设置任何值时的默认值展示。
-- `settings-feishu-{zh,en}.png`——飞书卡片上的「一键创建」按钮（1.0.0）。这张是**滚动后**拍的，同时也正好证明页签条钉在顶部。
+- `settings-feishu-{zh,en}.png`——飞书卡片的凭据字段，而「一键创建」按钮（1.0.0）在它们**上方**。这张是**滚动后**拍的，同时也正好证明两层导航条都钉在顶部。（1.0.2 之前这张拍的是按钮本身；按钮上移到卡片正文顶端后已经进了概览图，再对准它就会拍出一张与概览图逐字节相同的文件。）
 - `settings-manual-{zh,en}.png`——Telegram 卡片的官方入口链接，与上一张互为对照。
 
 **故意没有「一键创建之后」的结果截图**：要拍出它就得在真实租户里建一个真实应用，所以文档改用一张表描述结果行。不要用效果图去补这个空缺。
-
-截图取自一个**一次性** `dsh` profile：插件 `link:` 到工作树，里面所有凭据都是假占位符。画面里没有真实密钥，任何一次截图也都不会真的启动流程（按钮只拍不按）。
 
 **怎么拍出来的。** 用一个**不是开发者本人**的一次性 `dsh` profile：一个临时 `DSH_HOME`，其 profile 的插件 `link:` 到本工作树，凭据全是假占位符。画面里没有真实密钥，任何一次截图都不会真的启动流程（一键按钮只拍不按）。用空闲端口启动——`--port 0` 让 OS 挑一个，这很重要，因为开发机上 3080 很可能已经跑着真实的 DSH Web UI：
 
@@ -98,6 +98,17 @@ DSH 的插件安装命令是 `dsh plugin --profile web add <package>`（底层�
 # lib/ 必须先构建 → 先运行 pnpm build
 pnpm --filter dsh-connect publish --access public
 ```
+
+### 3.1 每次发布之后的 24 小时冷静期
+
+pnpm 12 内置 **1440 分钟的 `minimumReleaseAge`**，且是非严格生效的：每次发布后的整整一天里，裸写 `dsh plugin --profile web add dsh-connect` 都会解析到**上一版**。tarball 没有任何问题，重新发布也救不了——对策在消费方，README 的[「安装落到旧版本怎么办」](../README.zh.md#安装落到旧版本怎么办)记录了具体做法。
+
+对一次发布来说，这意味着：
+
+- 发布后 24 小时内，请预期收到「插件列表给的是新版本，装上的却是旧版本」这类反馈。这是冷静期的典型签名，不是打包问题——先去比对 registry，再排查别的地方。
+- 对于**首次**安装、且该包不存在任何满 24 小时的发布的情况，没有可回退的版本，安装会直接失败。此时 profile 豁免或显式写 `dsh-connect@<版本>` 是必需项，而不是「更好」。
+
+与冷静期无关的另一个问题：每次 `add` 这个包，都需要消费方 profile 里有 `allowBuilds: {protobufjs: false}`，否则会在写入依赖之后以 `ERR_PNPM_IGNORED_BUILDS` 退出。这两个问题都无法从已发布的包内部修掉。
 
 发布前，确认每个 package.json 中的占位 `"name"`/`"version"`，并填写 `description`、`keywords`、`repository`、`license`。npm 的 **`keywords` 字段**也参与 npm 搜索：
 

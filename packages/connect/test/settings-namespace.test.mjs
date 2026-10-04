@@ -23,7 +23,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { CHANNELS } from "../lib/settings/channels.js";
-import { CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS } from "../lib/settings/settings-model.js";
+import { CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, GENERAL_FIELDS } from "../lib/settings/settings-model.js";
 import {
   installConnectSection,
   materializeConfig,
@@ -80,6 +80,15 @@ function volatileConfig(profile = {}) {
     for (const field of CHANNEL_CONFIG_FIELDS[name]) channel[field.key] = slot(profile[name]?.[field.key]);
     config[name] = channel;
   }
+  // The general settings, top-level and volatile like the real schema. Derived
+  // from `GENERAL_FIELDS` for the same reason the channel blocks are derived
+  // from their table: a field the fixture does not know about is a field whose
+  // reset cannot be reproduced here.
+  const general = {};
+  for (const field of GENERAL_FIELDS) {
+    general[field.key] = slot(profile[field.key]);
+    config[field.key] = general[field.key];
+  }
   // Keys the pane does not own: they ride along in the config and must not
   // appear in anything the seam sends or hands out.
   config.settingsStatePath = "state.json";
@@ -91,8 +100,12 @@ function volatileConfig(profile = {}) {
     for (const name of CHANNELS) {
       for (const field of CHANNEL_CONFIG_FIELDS[name]) config[name][field.key].commit(section[name]?.[field.key]);
     }
+    // The real loader resets a declared-but-omitted leaf to its inherited
+    // value; here that is `undefined`, which is what makes a partial section
+    // observably destructive in the tests below.
+    for (const field of GENERAL_FIELDS) general[field.key].commit(section[field.key]);
   };
-  return { config, commit };
+  return { config, commit, general };
 }
 
 /** A settings service that behaves like `SettingsForms` in the ways this module depends on. */
@@ -173,11 +186,102 @@ test("sectionOf drops undeclared keys entirely", () => {
 });
 
 test("sectionOf projects channelDefaults onto the declared keys", () => {
-  const section = sectionOf({
-    channelDefaults: { language: "en", notifyLevel: "result", rogue: "x" },
-  });
-  assert.deepEqual(section.channelDefaults, { language: "en", notifyLevel: "result" });
+  const section = sectionOf({ channelDefaults: { language: "en", rogue: "x" } });
+  assert.deepEqual(section.channelDefaults, { language: "en" });
   assert.equal(sectionOf({ channelDefaults: { rogue: "x" } }).channelDefaults, undefined);
+});
+
+test("sectionOf drops the dead channelDefaults.notifyLevel, which no adapter ever read", () => {
+  // Two directions, because only one of them is obvious. Dropping it on the way
+  // *out* is what makes it disappear from an old user's profile on their next
+  // save — `sectionOf` is the only projection, so the write path carries the
+  // same answer. It must not reappear on the way in either: a hand-edited
+  // settings document that still has it would otherwise be preserved verbatim
+  // by schemastery's passthrough and keep resurrecting in every later save.
+  assert.equal(sectionOf({ channelDefaults: { notifyLevel: "result" } }).channelDefaults, undefined);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(sectionOf({ channelDefaults: { language: "en", notifyLevel: "result" } }).channelDefaults, "notifyLevel"),
+    false,
+  );
+  // ...and the top-level `notifyLevel`, which is the one that works, is a
+  // different key and is unaffected by any of this.
+  assert.equal(sectionOf({ notifyLevel: "result" }).notifyLevel, "result");
+});
+
+// --- sectionOf: the general keys (the reset hazard) -----------------------
+
+test("sectionOf projects every general key", () => {
+  // The table is the source of truth: asserting against it means a field added
+  // to 通用设置 without the matching arm in `sectionOf` fails here rather than
+  // silently resetting on the user's next unrelated save.
+  const source = {
+    language: "en",
+    notifyLevel: "result",
+    progressTimeoutMs: 60000,
+    workDir: "C:/code",
+    workspaces: ["packages", "docs"],
+    allowUsers: ["ou_1"],
+    allowChats: ["oc_1"],
+    agentPreset: "fast",
+    autoMirror: true,
+    streamHeartbeatMs: 2000,
+  };
+  assert.deepEqual(sectionOf(source), {
+    channels: [...CHANNELS],
+    language: "en",
+    notifyLevel: "result",
+    progressTimeoutMs: 60000,
+    workDir: "C:/code",
+    workspaces: ["packages", "docs"],
+    allowUsers: ["ou_1"],
+    allowChats: ["oc_1"],
+    agentPreset: "fast",
+    autoMirror: true,
+    streamHeartbeatMs: 2000,
+  });
+});
+
+test("sectionOf skips an unset or emptied general key instead of stamping a default", () => {
+  // Absent stays absent, and a cleared list becomes absent rather than `[]`.
+  // Both matter for the same reason: a volatile array resolves an unset key to
+  // `[]` on the way back in, so writing `workspaces: []` would be pure noise in
+  // the profile — and "cleared" is supposed to mean "back to inherited".
+  const section = sectionOf({ language: undefined, workspaces: [], allowUsers: ["", null, 3], allowChats: "not-an-array" });
+  assert.equal("language" in section, false);
+  assert.equal("workspaces" in section, false);
+  assert.equal("allowUsers" in section, false);
+  assert.equal("allowChats" in section, false);
+});
+
+test("sectionOf keeps a list's real entries and drops the blank ones", () => {
+  const section = sectionOf({ workspaces: ["C:/code", "", "  ", "C:/other"] });
+  assert.deepEqual(section.workspaces, ["C:/code", "C:/other"]);
+});
+
+test("sectionOf's general projection is what keeps a save from resetting them", () => {
+  // The failure this pins, in one line: `enableFeishuConfig` does
+  // `{ ...section, channels, feishu }`. A general key that `sectionOf` forgets
+  // is therefore not merely missing from the snapshot — it is *erased* the next
+  // time the user saves anything at all, including a save made on the channels
+  // view for an unrelated reason. Feeding a fully-populated config through the
+  // same projection the write path uses is the reproducible check.
+  const store = volatileConfig({
+    channels: ["feishu"],
+    language: "en",
+    notifyLevel: "important",
+    progressTimeoutMs: 30000,
+    workDir: "C:/code",
+    workspaces: ["packages"],
+    allowUsers: ["ou_1"],
+    allowChats: ["oc_1"],
+    agentPreset: "fast",
+    autoMirror: true,
+    streamHeartbeatMs: 1500,
+  });
+  const projected = sectionOf(materializeConfig(store.config));
+  for (const field of GENERAL_FIELDS) {
+    assert.notEqual(projected[field.key], undefined, `${field.key} was dropped by sectionOf — the next save resets it`);
+  }
 });
 
 test("sectionOf keeps an empty channel list — 'none' is a choice, not an omission", () => {
@@ -290,6 +394,45 @@ test("mergeSections layers per-channel keys with the override winning", () => {
 
 test("mergeSections omits a channel neither side mentions", () => {
   assert.deepEqual(mergeSections({ channels: ["feishu"] }, {}), { channels: ["feishu"] });
+});
+
+test("mergeSections keeps the base's general keys when the override omits them", () => {
+  // The most important new assertion of this batch. `mergeSections` rebuilds
+  // the section key by key, and the only caller (`legacy-import.ts`) writes
+  // `mergeSections(current, legacy)` — so a general key the merge does not
+  // explicitly mention is silently *erased* by an import that was supposed to
+  // preserve it. A rebuild-from-nothing implementation passes every other test
+  // in this file and fails this one.
+  const base = {
+    channels: ["feishu"],
+    language: "en",
+    notifyLevel: "important",
+    progressTimeoutMs: 30000,
+    workDir: "C:/code",
+    workspaces: ["packages"],
+    allowUsers: ["ou_1"],
+    allowChats: ["oc_1"],
+    agentPreset: "fast",
+    autoMirror: true,
+    streamHeartbeatMs: 1500,
+  };
+  const merged = mergeSections(base, { feishu: { transport: "webhook" } });
+
+  for (const field of GENERAL_FIELDS) {
+    assert.deepEqual(merged[field.key], base[field.key], `${field.key} was dropped by mergeSections`);
+  }
+  assert.deepEqual(merged.feishu, { transport: "webhook" });
+  assert.deepEqual(merged.channels, ["feishu"]);
+});
+
+test("mergeSections lets the override's general keys win", () => {
+  const merged = mergeSections(
+    { channels: ["feishu"], language: "en", allowUsers: ["ou_1"] },
+    { language: "zh", notifyLevel: "result" },
+  );
+  assert.equal(merged.language, "zh");
+  assert.deepEqual(merged.allowUsers, ["ou_1"]);
+  assert.equal(merged.notifyLevel, "result");
 });
 
 // --- installConnectSection ------------------------------------------------

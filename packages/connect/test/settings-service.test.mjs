@@ -373,3 +373,100 @@ test("a failing live write rejects instead of silently falling back to the file"
   // No fallback write: a rejection means the saved value is unknown, not stale.
   assert.equal(fsN.existsSync(file), false);
 });
+
+// --- the two general-view extras on the snapshot ---------------------------
+//
+// Both are display-only and both are attached **only when they have something
+// to say**. The pane's own tests deep-equal whole snapshots, so an
+// always-present `agentModel: undefined` / `sharedOverrideKeys: []` would be
+// noise on the happy path — which is the common case for both (no DSH model
+// resolved, no shared config on the machine).
+
+test("a snapshot with nothing extra carries neither general-view field", async () => {
+  const svc = createSettingsService({ statePath: tmpFile() });
+  const snap = await svc.get();
+  assert.equal("agentModel" in snap, false);
+  assert.equal("sharedOverrideKeys" in snap, false);
+});
+
+test("a resolved default model rides along, read-only and never writeable", async () => {
+  const file = tmpFile();
+  const svc = createSettingsService({
+    statePath: file,
+    agentModel: () => ({ provider: "deepseek", model: "v4" }),
+  });
+  const snap = await svc.get();
+  assert.deepEqual(snap.agentModel, { provider: "deepseek", model: "v4" });
+
+  // The whole point of the read-only row: seeing the value must not create a
+  // way to change it. `saveSelection()` exists and is what `/model` uses — this
+  // snapshot must stay out of that path, so a save built from it carries no
+  // trace of the value and the state file never learns it.
+  const payload = buildConfigSave(snapshotToForm(snap));
+  assert.equal("agentModel" in payload, false);
+  assert.equal(JSON.stringify(payload).includes("deepseek"), false);
+  assert.equal(JSON.stringify(snap.config).includes("deepseek"), false);
+  await svc.save(payload);
+  assert.equal(JSON.stringify(JSON.parse(fsN.readFileSync(file, "utf8"))).includes("deepseek"), false);
+});
+
+test("a half-answered default model is dropped rather than shown empty", async () => {
+  // "Cannot say" is not "nothing selected". Every shape that leaves the row
+  // without a provider *and* a model is the same statement, and a row reading
+  // 「deepseek / 」 would be a claim about DSH that DSH did not make.
+  for (const selection of [
+    undefined,
+    {},
+    { provider: "deepseek" },
+    { model: "v4" },
+    { provider: "", model: "v4" },
+    { provider: "deepseek", model: "" },
+  ]) {
+    const svc = createSettingsService({ statePath: tmpFile(), agentModel: () => selection });
+    assert.equal("agentModel" in (await svc.get()), false, `kept a partial selection: ${JSON.stringify(selection)}`);
+  }
+});
+
+test("a default-model getter that throws degrades to no row, and says so", async () => {
+  const logs = [];
+  const svc = createSettingsService({
+    statePath: tmpFile(),
+    log: (m) => logs.push(m),
+    agentModel: () => { throw new Error("agentDefaultModel is still injecting"); },
+  });
+  const snap = await svc.get();
+  assert.equal("agentModel" in snap, false);
+  assert.equal(logs.some((m) => m.includes("agentDefaultModel is still injecting")), true);
+});
+
+test("shared-config overrides ride along only when a shared config really shadows a key", async () => {
+  const clean = createSettingsService({ statePath: tmpFile(), sharedOverrideKeys: () => [] });
+  assert.equal("sharedOverrideKeys" in (await clean.get()), false);
+
+  const shadowed = createSettingsService({
+    statePath: tmpFile(),
+    sharedOverrideKeys: () => ["workDir", "language", "autoMirror"],
+  });
+  assert.deepEqual((await shadowed.get()).sharedOverrideKeys, ["workDir", "language", "autoMirror"]);
+
+  // A copy, so the pane's list and the service's own cannot be the same array:
+  // the host hands out the live one, and a client-side edit reaching back into
+  // it would change what the *next* read reports.
+  const source = ["workDir"];
+  const copying = createSettingsService({ statePath: tmpFile(), sharedOverrideKeys: () => source });
+  const snap = await copying.get();
+  source.push("language");
+  assert.deepEqual(snap.sharedOverrideKeys, ["workDir"]);
+});
+
+test("a shared-override getter that throws reads as 'nothing is overridden', and says so", async () => {
+  const logs = [];
+  const svc = createSettingsService({
+    statePath: tmpFile(),
+    log: (m) => logs.push(m),
+    sharedOverrideKeys: () => { throw new Error("shared config unreadable"); },
+  });
+  const snap = await svc.get();
+  assert.equal("sharedOverrideKeys" in snap, false);
+  assert.equal(logs.some((m) => m.includes("shared config unreadable")), true);
+});

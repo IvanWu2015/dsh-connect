@@ -37,8 +37,14 @@ interface SharedConfig {
   language?: "zh" | "en";
 }
 
-/** Load shared configuration from project root or current directory. */
-function loadSharedConfig(): SharedConfig {
+/**
+ * Load shared configuration from project root or current directory.
+ *
+ * Exported for the settings pane's provenance note: it needs to say *which*
+ * keys a shared config is overriding, and answering that from a second copy of
+ * this lookup would drift from the merge below the moment either changed.
+ */
+export function loadSharedConfig(): SharedConfig {
   const candidates = [
     join(process.cwd(), "dsh.shared.config.json"),
     join(dirname(process.cwd()), "dsh.shared.config.json"),
@@ -71,6 +77,12 @@ const OUTBOUND_RETRY: RetryOptions = { attempts: 3, baseDelayMs: 250, maxDelayMs
 
 export class ConnectService extends Service {
   readonly config: ResolvedConnectConfig;
+  /**
+   * General-settings keys a `dsh.shared.config.json` on this machine actually
+   * sets, and which therefore win over whatever the profile says. Computed once
+   * beside the merge so the two cannot disagree.
+   */
+  private readonly overriddenKeys: readonly string[];
   private readonly adapters = new Map<string, ChannelAdapter>();
   private readonly runners = new Map<string, AgentRunner>();
   private readonly bindings: BindingStore;
@@ -104,11 +116,29 @@ export class ConnectService extends Service {
       autoMirror: sharedConfig.mirror?.autoCreate ?? config.autoMirror,
     };
     
+    // Only the general keys the *pane* shows — `stateDir` is overridden the
+    // same way but is not a pane field, and reporting it would put a provenance
+    // note on a row that does not exist.
+    const overridden: string[] = [];
+    if (sharedConfig.workspace?.defaultWorkDir !== undefined) overridden.push("workDir");
+    if (sharedConfig.language !== undefined) overridden.push("language");
+    if (sharedConfig.mirror?.autoCreate !== undefined) overridden.push("autoMirror");
+    this.overriddenKeys = overridden;
+
     this.config = resolveConnectConfig(mergedConfig);
     this.bindings = new BindingStore(this.config.stateDir, this.ctx.logger);
     this.interaction = new InteractionBridge(ctx, this.adapters, this.bindings, this.config);
     this.reminders = new ReminderStore(this.config.stateDir);
     this.startReminderLoop();
+  }
+
+  /**
+   * General-settings keys a shared config overrides on this machine. The pane
+   * shows these rows as editable still, but annotates them, because a save that
+   * appears to do nothing and explains nothing is the one outcome to avoid.
+   */
+  sharedOverrideKeys(): string[] {
+    return [...this.overriddenKeys];
   }
 
   /** Poll the reminder store and deliver anything that has come due. */
