@@ -365,8 +365,12 @@ The web settings pane (`dsh-connect` under **Settings**) edits **this plugin's
 entry in the active profile patch** — the same
 `~/.dsh/profiles/<profile>/cordis.patch.yml` you would edit by hand — through
 DSH's own first-party `settings` service. That service writes atomically under a
-file lock and preserves your comments, and the loader hot-reloads the result, so
-a save takes effect without a restart.
+file lock and preserves your comments, and the loader hot-reloads the result.
+**Channel settings therefore take effect immediately; the general settings do
+not** — `workDir`, `language`, `notifyLevel`, `progressTimeoutMs`, `workspaces`,
+the two allowlists, `agentPreset` and `streamHeartbeatMs` are read when the
+plugin loads, so they need a restart of `dsh`. Every one of them says so on its
+own row in the pane.
 
 The fields the pane owns are declared `volatile` in the plugin's config schema.
 That declaration is what makes a save *reconcile* instead of remounting: the

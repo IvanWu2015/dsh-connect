@@ -83,7 +83,7 @@ DSH_HOME=<scratch-home> dsh --profile <scratch-profile> --no-open --port 0
 **变体要与文档语言一致**：中文文档与 `README.zh.md` 用 `-zh`，英文文档与 `README.md` 用 `-en`，同一文件内不要混用。由于原图宽 1600px，请用带显式宽度的原始 HTML 嵌入，避免撑破页面：
 
 ```html
-<img src="../packages/connect/docs/images/settings-overview-zh.png" alt="dsh-connect Web 设置页：渠道 Tab 条 + 可折叠卡片" width="760">
+<img src="../packages/connect/docs/images/settings-overview-zh.png" alt="dsh-connect Web 设置页：主导航 + 渠道 Tab 条 + 可折叠卡片" width="760">
 ```
 
 ## 3. npm 发布（让 `dsh plugin add` 可用）

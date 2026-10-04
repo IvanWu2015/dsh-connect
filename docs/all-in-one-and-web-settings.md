@@ -67,7 +67,7 @@
 
 **当时还差什么（两项均已完成，保留存档）：**
 1. ~~`dsh web` 内构建并渲染前端 `settings-client` 组件~~——已完成：`client/client.js` 由 `scripts/build-client.mjs` 构建，`test/client-bundle.test.mjs` 直接加载构建产物在 Node 里渲染并断言。
-2. ~~推送 v0.7.2~~——已解决：v0.7.2 及其后的 0.8.0 / 0.8.1 均已发布，当前版本为 **1.0.2**（1.0.1 只修订文档，把 pnpm 12 的两个安装陷阱写进 README 与发布指南；1.0.2 改了设置页布局、新增通用设置、并修好版本号脚本会写坏 `package.json` 的缺陷——见根 `CHANGELOG.md` 两段）。
+2. ~~推送 v0.7.2~~——已解决：v0.7.2 及其后的 0.8.0 / 0.8.1 均已发布，当前版本为 **1.0.2**（1.0.1 写的是 pnpm 12 那两个安装陷阱的文档，但**从未单独发布**——没有 `v1.0.1` tag，npm 上从 1.0.0 直接到 1.0.2，它的改动随 1.0.2 一起发出；1.0.2 还改了设置页布局、新增通用设置、并修好版本号脚本会写坏 `package.json` 的缺陷——见根 `CHANGELOG.md` 两段）。
 
 ## 1. 重构前的现状：配置与安装复杂度
 
@@ -92,7 +92,7 @@
 **一个插件、一个设置入口，多渠道统一管理，Web 可视化配置，凭据入库。**
 
 - 单插件（就是把渠道吸收进 `dsh-connect`，做成一个多合一包），一个 `dsh plugin add dsh-connect` 装完。
-- Web 设置页「设置 → 通道」：按渠道分 Tab，每个通道可加**多个机器人**；每个机器人卡片配工作区、Agent Preset、通知/进度、访问模式（白名单）等。（0.9.0 已落地的是**渠道 Tab 条 + 可折叠卡片**，见本页顶部截图；「每渠道多机器人」仍未实现。）
+- Web 设置页「设置 → dsh-connect」：顶部是**两级主导航**——**通用设置**（1.0.2）放模型、语言、工作目录、两个白名单、智能体预设等十来项默认值（改完需重启 `dsh`），**机器人渠道**按渠道分 Tab，每个通道可加**多个机器人**；每个机器人卡片配工作区、Agent Preset、通知/进度、访问模式（白名单）等。（0.9.0 起落地渠道 Tab 条 + 可折叠卡片，1.0.2 加上主导航与通用设置视图，见本页顶部截图；「每渠道多机器人」仍未实现。）
 - 连接方式走 QR 扫码 / App Manifest / 手工凭据（复用现有 `onboard.ts` 的扫码流并扩展到各渠道）。
 - Secret 只写本地 Harness 凭据存储，不写进普通配置；`dsh-connect-settings.json` 状态文件绝不落密钥。面板可回显凭据库里的值（非机密 id 如 `appId` 明文、真密钥掩码）以便老版本配置的用户确认；老版本写在配置文件里的密钥会在启动时自动迁入凭据库（`migrateConfigSecrets`），渠道因此显示「已配置」而非「未配置凭据」。
 - 每个机器人独立工作区、会话、绑定；会话绑定按 channel+chatKey，多机器人互不干扰。
@@ -103,7 +103,7 @@
 
 1. **设置页入口**：客户端插件用 `ctx.slots.inject('settings.section', () => ctx.slots.register({
      name:'settings.section', id:'dsh-connect', order:21, label, locale, inject: () => ({...rpcCalls})
-   }))` 注册「设置 → 通道」。
+   }))` 注册为「设置 → dsh-connect」页面。
 2. **前后端通信**：前端 `ctx.connection.rpc.call('<通道>', endpoint, payload, signal)`；宿主插件注册 RPC 通道，处理读写配置/凭据/重启等。
 3. **凭据库**：secret 走宿主凭据存储（dsh-im 写明「Device Token 只写入 Harness 凭据存储」），普通配置只保留非敏感 id。
 4. **Web 镜像**：`web` 通道已存在复用关系。
@@ -171,7 +171,7 @@
 
 ### 待办（当时的清单，附现状对照）
 - **阶段一 配置简化**：统一 `channels` 命名空间、收敛重复键、最小示例。→ **已完成**（`channels` + `channelDefaults` + 各渠道块，见 `docs/config-reference.md`）。
-- **阶段三 Web 设置页**：客户端 `settings.section` + 宿主 RPC + 凭据库 + 渠道 Tab/机器人卡片；需 `dsh web` 联调。→ **已完成**（0.9.0 起：宿主 RPC + 凭据库 + 渠道 Tab 条与可折叠卡片；0.9.2 起设置改存 profile patch 条目，见本页顶部截图与 `CHANGELOG.md` 0.9.0 / 0.9.2）。
+- **阶段三 Web 设置页**：客户端 `settings.section` + 宿主 RPC + 凭据库 + 渠道 Tab/机器人卡片；需 `dsh web` 联调。→ **已完成**（0.9.0 起：宿主 RPC + 凭据库 + 渠道 Tab 条与可折叠卡片；0.9.2 起设置改存 profile patch 条目；1.0.2 起顶部为两级主导航并新增通用设置视图，见本页顶部截图与 `CHANGELOG.md` 0.9.0 / 0.9.2 / 1.0.2）。
 - **阶段四 多机器人 + 独立绑定**。→ **仍未实现**：当前每个渠道仍按 channel+chatKey 绑定单机器人。
 - **单插件按需加载**：目前 `connect-all` 静态引入 4 个渠道，SDK 会随包存在；若只启用部分渠道的「不下载无用 SDK」，需把渠道改为可选依赖 + 动态 `import()`（引发布局/构建调整，单独排期）。→ **仍未实现**：单包化后渠道仍为静态引入（`packages/connect/src/channels/`）。
 

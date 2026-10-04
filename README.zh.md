@@ -120,7 +120,10 @@ OAuth 2.0 设备授权流：按钮先给你一条在浏览器里打开的链接�
 
 面板编辑的是**当前 profile patch 中属于本插件的条目**——也就是你手工编辑的那个
 `~/.dsh/profiles/<profile>/cordis.patch.yml`——走 DSH 自带的（第一方）`settings` 服务。该服务
-在文件锁下原子写入并保留你的注释，loader 会热重载结果，因此保存无需重启即可生效。取值分三层
+在文件锁下原子写入并保留你的注释，loader 会热重载结果。**因此渠道设置改完即生效，通用设置不
+会**——`workDir`、`language`、`notifyLevel`、`progressTimeoutMs`、`workspaces`、两个白名单、
+`agentPreset`、`streamHeartbeatMs` 这些在插件加载时就被读走，要**重启 `dsh`**；面板上每一项
+都写明了这一点。取值分三层
 解析，越靠后越具体：
 
 1. 插件内置的 schema 默认值；

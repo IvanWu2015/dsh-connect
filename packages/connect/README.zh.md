@@ -316,8 +316,10 @@ OAuth 2.0 设备授权流：按钮先给你一条在浏览器里打开的链接�
 
 Web 设置面板（**设置** 下的 `dsh-connect`）编辑的是**当前 profile patch 中属于本插件的
 条目**——也就是你手工编辑的那个 `~/.dsh/profiles/<profile>/cordis.patch.yml`——走 DSH
-自带的（第一方）`settings` 服务。该服务在文件锁下原子写入并保留你的注释，loader 会热重载
-结果，因此保存无需重启即可生效。
+自带的（第一方）`settings` 服务。该服务在文件锁下原子写入并保留你的注释，loader 会热重载结
+果。**因此渠道设置改完即生效，通用设置不会**——`workDir`、`language`、`notifyLevel`、
+`progressTimeoutMs`、`workspaces`、两个白名单、`agentPreset`、`streamHeartbeatMs` 这些在插
+件加载时就被读走，要**重启 `dsh`**；面板上每一项都写明了这一点。
 
 面板能编辑的字段在插件 config schema 里声明为 `volatile`。正是这个声明让保存变成**就地
 reconcile 而不是重挂载**：loader 为每个声明字段交给插件一个活引用，设置写入会就地提交它们，

@@ -51,7 +51,7 @@ dsh plugin --profile web add C:\path\to\dsh-connect\packages\connect
       # language: en            # user-facing message language: zh (default) / en
 ```
 
-> 也可以不把凭据写进文件，改用环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，并在配置中省略 `appId`/`appSecret`——或直接在 Web 设置页（设置 → dsh-connect）里配置全部内容（见 [config-reference.md](config-reference.md)）。面板把**非密钥**设置写进**当前 profile patch（`cordis.patch.yml`）中本插件的条目**，经 DSH 第一方 `settings` 服务写入，热重载生效（无需重启）并保留你的注释；**密钥只进 DSH 凭据库**，永远不写进 patch。你现有的配置块不会作废：取值顺序为 schema 默认值 → 插件被组合进来时的配置（继承条目）→ profile patch 中本插件的条目。在 DSH 0.2 上从 0.9.0 升级？`$DSH_HOME/settings.yaml` 里旧的 `dsh-connect` 段会被一次性导入到该条目——见[从 0.9.0 升级](../packages/connect/README.zh.md#从-090-升级)。
+> 也可以不把凭据写进文件，改用环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，并在配置中省略 `appId`/`appSecret`——或直接在 Web 设置页（设置 → dsh-connect）里配置全部内容（见 [config-reference.md](config-reference.md)）。面板把**非密钥**设置写进**当前 profile patch（`cordis.patch.yml`）中本插件的条目**，经 DSH 第一方 `settings` 服务写入，并保留你的注释。**渠道设置热重载，通用设置不会**——语言、工作目录、两个白名单、智能体预设这些在插件加载时就被读走了，改完要**重启 `dsh`** 才生效；**密钥只进 DSH 凭据库**，永远不写进 patch。你现有的配置块不会作废：取值顺序为 schema 默认值 → 插件被组合进来时的配置（继承条目）→ profile patch 中本插件的条目。在 DSH 0.2 上从 0.9.0 升级？`$DSH_HOME/settings.yaml` 里旧的 `dsh-connect` 段会被一次性导入到该条目——见[从 0.9.0 升级](../packages/connect/README.zh.md#从-090-升级)。飞书不想手抄凭据？面板打开就停在「机器人渠道」，飞书卡片正文顶端就是「一键创建并配置飞书机器人」（1.0.0 起），点一下走完官方授权即可。
 
 ## 4. 重启 dsh web
 
