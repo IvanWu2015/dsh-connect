@@ -42,9 +42,13 @@ export const PANE_VIEWS = ['general', 'channels'];
 export const DEFAULT_VIEW = 'channels';
 
 export const ADVANCED_KEYS = {
-  feishu: ['webhookPort', 'webhookPath'],
+  feishu: ['webhookPort', 'webhookPath', 'threadIsolation', 'onboarding'],
   telegram: ['pollingTimeoutSeconds', 'baseUrl'],
-  dingtalk: ['defaultAt'],
+  // `defaultAt` is not here and is not a field at all: it is an object, and the
+  // pane used to render it as a text input (showing `[object Object]` and
+  // writing a string back over it). It survives saves through
+  // `CHANNEL_PRESERVED_KEYS` instead — displayed nowhere, damaged nowhere.
+  dingtalk: ['stream.url', 'stream.requireMention'],
   web: ['pollIntervalMs'],
 };
 

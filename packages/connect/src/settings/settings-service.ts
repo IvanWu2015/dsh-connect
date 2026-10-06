@@ -20,12 +20,13 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { CHANNELS, type ChannelName } from "./channels.js";
+import { CHANNELS, secretConfigPath, withoutDotPath, type ChannelName } from "./channels.js";
 import type { SettingsService, SettingsSnapshot, SettingsWarningCode } from "./settings-rpc.js";
 import type { FeishuOnboardingRegistry, OnboardingStatus } from "./feishu-onboarding.js";
 import { CHANNEL_SECRET_KEYS, type CredentialStore } from "./credential-store.js";
 import { maskSecret } from "./secret-disclosure.js";
 import type { LiveConnectSection } from "./namespace.js";
+import type { ChannelConnectionStatus } from "./channel-status.js";
 
 export interface SettingsServiceOptions {
   /** JSON file to persist non-secret settings when no namespace is live (omit = in-memory only). */
@@ -85,6 +86,31 @@ export interface SettingsServiceOptions {
    */
   channelFailures?: () => Record<string, string>;
   /**
+   * Per-channel **access** state for the pane's second badge — whether the
+   * channel is switched on, up, or actually connected — as
+   * `{channel: {state, attempts?}}`. See `channel-status.ts` for how a state is
+   * composed; this option is only the plumbing.
+   *
+   * **The parameter is the service's own `enabled` array**, passed straight
+   * through to the callback. That is a deliberate one-way dependency and not a
+   * redundant argument: the badge's notion of 「未启用」 and the snapshot's own
+   * `enabled` field then cannot disagree, because they are the same value.
+   *
+   * Its absence is meaningful and preserved: when this is not wired, the
+   * snapshot carries **no** `channelStatus` key at all and the pane renders no
+   * badge — an older host, or a boot where the channel runtime was never
+   * created. That is why the snapshot attaches this *unconditionally* when the
+   * option exists, breaking the surrounding "spread only when non-empty"
+   * convention: elsewhere an empty list is merely an add-nothing, but here
+   * 「未启用」 and 「未运行」 are themselves answers, and collapsing them into the
+   * absent key would erase the distinction the pane depends on.
+   *
+   * Like {@link channelFailures} this is a plain getter (the runtime exists by
+   * the time this is called), and a throwing probe is logged and dropped rather
+   * than failing the snapshot.
+   */
+  channelStatus?: (enabled: readonly ChannelName[]) => Record<string, ChannelConnectionStatus> | undefined;
+  /**
    * The one-click Feishu bot creation registry, if this host has one. Optional,
    * and like {@link live} a **getter, not a value**: the registry needs
    * `save()` — the enable step is a settings write, and it must take the exact
@@ -127,6 +153,13 @@ function logError(msg: string) {
 /**
  * Drop per-channel secret keys before a config leaves the host.
  *
+ * Removed by their *config path*, not by their config key: a credential table
+ * names `clientId`, but the schema puts DingTalk's at `stream.clientId`, and a
+ * filter that compared top-level key names would walk straight past the nested
+ * one — reading the secret out of the config and, because the pane rebuilds its
+ * save payload from this same object, writing it back on the next click.
+ * `secretConfigPath` is the only thing that knows the difference.
+ *
  * Applied in `snapshot`, which is the one boundary every read crosses, so both
  * data planes are covered and neither has to remember: the live plane's resolved
  * section is *allowed* to carry a secret the user wrote by hand (the documented
@@ -154,10 +187,11 @@ function withoutSecrets(config: Record<string, unknown>): Record<string, unknown
     if (block === null || typeof block !== "object" || Array.isArray(block)) continue;
     const secretKeys = Object.keys(keys ?? {});
     if (secretKeys.length === 0) continue;
-    const kept: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(block as Record<string, unknown>)) {
-      if (!secretKeys.includes(key)) kept[key] = value;
-    }
+    // `withoutDotPath` copies rather than mutates: `out` is shallow, so a
+    // mutating delete would reach into the caller's live config and strip the
+    // credential the running adapter is still holding.
+    let kept = block as Record<string, unknown>;
+    for (const key of secretKeys) kept = withoutDotPath(kept, secretConfigPath(channel as ChannelName, key));
     out[channel] = kept;
   }
   return out;
@@ -247,6 +281,28 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
   }
 
   /**
+   * Read the channel access states for `enabled`, or `undefined` when there is
+   * no probe wired.
+   *
+   * `undefined` is the whole point of the return type: the caller attaches the
+   * key only when this is not undefined, so "this host cannot report access
+   * state" stays distinguishable from "every channel is disabled". A probe that
+   * *throws* resolves to `undefined` for the same reason — failing to describe
+   * the state is not the same claim as the state being empty, and a save must
+   * not be rejected over it.
+   */
+  function channelStates(enabled: readonly ChannelName[]): Record<string, ChannelConnectionStatus> | undefined {
+    if (!options.channelStatus) return undefined;
+    try {
+      const statuses = options.channelStatus(enabled);
+      return statuses === undefined ? undefined : { ...statuses };
+    } catch (error) {
+      log(`failed to read the channel connection states: ${String(error)}`);
+      return undefined;
+    }
+  }
+
+  /**
    * Resolve the onboarding registry, or refuse. The getter is read per call
    * because the host assigns the registry *after* building this service (the
    * registry's enable step saves through `save()` below); a host that never
@@ -321,6 +377,9 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
       }
     }
     const failures = channelErrors();
+    // Same `enabled` the snapshot reports, handed to the probe so the badge's
+    // 「未启用」 cannot disagree with the checkbox that produced it.
+    const channelStatus = channelStates(enabled as readonly ChannelName[]);
 
     // Read per call, like `onboarding`: both are wired by the host after this
     // service is built.
@@ -354,6 +413,10 @@ export function createSettingsService(options: SettingsServiceOptions = {}): Set
       ...(warnings.length > 0 ? { warnings } : {}),
       ...(credentialErrors.length > 0 ? { credentialErrors } : {}),
       ...(Object.keys(failures).length > 0 ? { channelErrors: failures } : {}),
+      // Attached whenever the probe is wired, empty result or not — see the
+      // option's note: 「未启用」/「未运行」 are answers, so an absent key has to
+      // keep meaning "this host cannot say".
+      ...(channelStatus === undefined ? {} : { channelStatus }),
       ...(agentModel ? { agentModel } : {}),
       ...(sharedOverrideKeys.length > 0 ? { sharedOverrideKeys } : {}),
     };

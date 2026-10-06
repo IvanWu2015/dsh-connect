@@ -47,6 +47,8 @@ const suites = [
   "web-settings-integration.test.mjs",
   "web-settings-roundtrip.test.mjs",
   "settings-model.test.mjs",
+  "channel-config-coverage.test.mjs",
+  "channel-status.test.mjs",
   "apply.test.mjs",
   "agent-scope.test.mjs",
   "channel-runtime.test.mjs",
@@ -55,6 +57,7 @@ const suites = [
   "legacy-import.test.mjs",
   "runner.test.mjs",
   "manifest.test.mjs",
+  "plugin-export.test.mjs",
 ];
 
 /**

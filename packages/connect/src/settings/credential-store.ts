@@ -52,7 +52,18 @@ function resolveValue(resolved: ResolvedCredential | string | null | undefined):
  * {@link CREDENTIAL_GROUPS} would be writable-but-unclearable — `save` and
  * `clear` both derive from this table for exactly that reason. */
 export const CHANNEL_SECRET_KEYS: Record<ChannelName, Record<string, string>> = Object.freeze({
-  feishu: { appId: "DSH_CONNECT_FEISHU_APP_ID", appSecret: "DSH_CONNECT_FEISHU_APP_SECRET" },
+  // The last two are the **webhook** transport's secrets, and they are declared
+  // `role("secret")` in the Feishu `Config` like appId/appSecret — so they
+  // belong in this store rather than in the config section, and the pane renders
+  // them as masked inputs alongside the other two. Before this they were
+  // declared in the schema with no home at all: not editable, and silently
+  // deleted from the profile on the next save.
+  feishu: {
+    appId: "DSH_CONNECT_FEISHU_APP_ID",
+    appSecret: "DSH_CONNECT_FEISHU_APP_SECRET",
+    verificationToken: "DSH_CONNECT_FEISHU_VERIFICATION_TOKEN",
+    encryptKey: "DSH_CONNECT_FEISHU_ENCRYPT_KEY",
+  },
   telegram: { botToken: "DSH_CONNECT_TELEGRAM_BOT_TOKEN" },
   dingtalk: {
     webhookUrl: "DSH_CONNECT_DINGTALK_WEBHOOK_URL",
@@ -77,6 +88,12 @@ export const CHANNEL_SECRET_KEYS: Record<ChannelName, Record<string, string>> = 
  * secret. Reporting that as unconfigured was pure noise in the pane's badge.
  */
 export const CREDENTIAL_GROUPS: Record<ChannelName, readonly (readonly string[])[]> = Object.freeze({
+  // appId + appSecret only, and that is **not an oversight to be helpfully
+  // completed** by adding the verification token / encrypt key above. Those two
+  // belong to the *webhook* transport, while this group answers the badge's
+  // question — 「this channel has what it needs to be reached」 — which is
+  // websocket's, and the one nearly every user has. Folding them in would flip a
+  // working websocket bot to 「未配置凭据」 because a webhook secret is empty.
   feishu: [["DSH_CONNECT_FEISHU_APP_ID", "DSH_CONNECT_FEISHU_APP_SECRET"]],
   telegram: [["DSH_CONNECT_TELEGRAM_BOT_TOKEN"]],
   dingtalk: [

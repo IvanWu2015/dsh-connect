@@ -9,7 +9,7 @@
  * restarting it would duplicate the streaming card.
  * @module dsh-connect/retry
  */
-import type { ChannelAdapter } from "./types.js";
+import type { ChannelAdapter, OutboundTarget } from "./types.js";
 
 export interface RetryOptions {
   /** Total attempts including the first call (default 3). */
@@ -51,6 +51,14 @@ export async function retry<T>(fn: () => Promise<T>, options: RetryOptions = {})
  * Wrap an adapter so its delivery methods retry transient failures.
  * Non-delivery faces (start/stop/onInbound) and streamText pass through
  * untouched.
+ *
+ * Every *optional* member of `ChannelAdapter` must be forwarded here by hand —
+ * this builds a fresh object, so anything not named below is dropped from the
+ * adapter the service actually holds. That is not hypothetical: `sendFile` was
+ * silently lost this way, which made `runner.ts`'s `this.adapter.sendFile ===
+ * undefined` check always true and degraded `/send <path>` to sending the path
+ * as text on every channel. There is a test for the passthrough list; extend it
+ * rather than adding a member to `ChannelAdapter` alone.
  */
 export function withOutboundRetry(adapter: ChannelAdapter, options: RetryOptions = {}): ChannelAdapter {
   return {
@@ -70,5 +78,14 @@ export function withOutboundRetry(adapter: ChannelAdapter, options: RetryOptions
       }),
     closeMenu: (messageId, summary) => retry(() => adapter.closeMenu(messageId, summary), options),
     streamText: (target, chunks) => adapter.streamText(target, chunks),
+    // Optional members, forwarded conditionally so an adapter that omits one
+    // still omits it after wrapping (the presence of `sendFile` is itself the
+    // feature test in `runner.ts`).
+    ...(adapter.sendFile === undefined
+      ? {}
+      : { sendFile: (target: OutboundTarget, filePath: string, opts?: { filename?: string }) => adapter.sendFile!(target, filePath, opts) }),
+    ...(adapter.connectionStatus === undefined
+      ? {}
+      : { connectionStatus: () => adapter.connectionStatus!() }),
   };
 }

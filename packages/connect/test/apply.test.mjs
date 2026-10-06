@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 
 import { apply, name, inject } from "../lib/index.js";
+import { CHANNEL_SECRET_KEYS } from "../lib/settings/credential-store.js";
 import { SETTINGS_RPC_CHANNEL, createSettingsHttpHandler, installSettingsRpc } from "../lib/settings/settings-rpc.js";
 
 // Build a real root context with the host services ConnectService expects. We
@@ -262,8 +263,15 @@ test("apply wires the host credential store into the settings service", async ()
     assert.equal(snap.result.value.credentials.feishu, true);
     // Presence, not values: the snapshot crosses to the browser, so the secret
     // itself must not be in it (the save above still reached the right refs —
-    // asserted against the store below).
-    assert.deepEqual(snap.result.value.secrets.feishu, { appId: true, appSecret: true });
+    // asserted against the store below). Keyed by *every* secret the channel
+    // declares, derived rather than hand-listed: feishu also declares the webhook
+    // transport's verificationToken and encryptKey, and this save stored neither,
+    // so `false` for those is the correct report and not a regression.
+    const stored = new Set(["appId", "appSecret"]);
+    assert.deepEqual(
+      snap.result.value.secrets.feishu,
+      Object.fromEntries(Object.keys(CHANNEL_SECRET_KEYS.feishu).map((k) => [k, stored.has(k)])),
+    );
     assert.ok(!JSON.stringify(snap.result.value).includes("sec_9"));
   });
 

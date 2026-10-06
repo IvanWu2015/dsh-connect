@@ -9,6 +9,7 @@ import {
   GENERAL_FIELDS,
 } from "../lib/settings/settings-model.js";
 import { SETTINGS_WARNING_CODES } from "../lib/settings/settings-rpc.js";
+import { CHANNEL_CONNECTION_STATES } from "../lib/settings/channel-status.js";
 
 /**
  * The pane's language consistency is not a matter of care, it is a matter of
@@ -70,6 +71,28 @@ test("every host warning code is translated", () => {
   assert.ok(SETTINGS_WARNING_CODES.length > 0);
   for (const code of SETTINGS_WARNING_CODES) {
     assert.ok(hasLocale(`w.${code}`), `missing locale for the warning code w.${code}`);
+  }
+});
+
+test("every connection state is translated, and the reconnect wording keeps its placeholder", () => {
+  // Derived from the host's own closed set (`composeChannelStatus` produces
+  // exactly these), so a state added on the host side without wording here
+  // renders as a bare identifier in the badge instead of a phrase.
+  for (const state of CHANNEL_CONNECTION_STATES) {
+    assert.ok(hasLocale(`cs.${state}`), `missing cs.${state}`);
+  }
+  // Separate namespace from `status.*` on purpose — that one is the save
+  // button's line, and sharing keys would make two unrelated messages collide.
+  assert.equal(hasLocale("status.connected"), false, "cs.* must not be folded back into status.*");
+
+  // The attempt count is interpolated at the call site, so a translation that
+  // drops the placeholder renders 「重连中（第 次）」 — a sentence with a hole in
+  // it — while every other assertion here still passes.
+  for (const lang of LANGS) {
+    assert.ok(
+      LOCALES[lang]["cs.reconnecting.n"].includes("{n}"),
+      `${lang} cs.reconnecting.n lost its {n} placeholder`,
+    );
   }
 });
 
@@ -165,6 +188,8 @@ test("the two languages actually differ, apart from language-neutral names", () 
     "channel.telegram",
     "s.feishu.appId",
     "s.feishu.appSecret",
+    "s.feishu.verificationToken",
+    "s.feishu.encryptKey",
     "s.telegram.botToken",
     "s.dingtalk.clientId",
     "s.dingtalk.clientSecret",

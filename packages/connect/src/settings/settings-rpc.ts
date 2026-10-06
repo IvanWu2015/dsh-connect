@@ -22,6 +22,7 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OnboardingStatus } from "./feishu-onboarding.js";
+import type { ChannelConnectionStatus } from "./channel-status.js";
 
 /** RPC channel the settings pane calls. */
 export const SETTINGS_RPC_CHANNEL = "/dsh-connect";
@@ -124,6 +125,23 @@ export interface SettingsSnapshot {
    */
   channelErrors?: Record<string, string>;
   /**
+   * Per-channel **access** state — whether the channel is switched on, up, or
+   * actually connected — as `{channel: {state, attempts?}}`.
+   *
+   * Kept separate from `credentials`, which only says a secret exists: a channel
+   * with perfect credentials and a socket that keeps dropping is 「已配置凭据」 +
+   * 「重连中」, and collapsing the two would describe it as working.
+   *
+   * **Attached whenever the host wired the option, which deliberately breaks the
+   * "spread only when non-empty" convention above.** The other optional fields
+   * are adds — an empty list carries no information — but here 「未启用」 *is* an
+   * answer and a channel with no probe is honestly 「运行中」. So an absent key
+   * has to keep its stronger meaning: *this host cannot report access state at
+   * all* (an older host, or a boot where the runtime was never wired), and the
+   * pane renders no badge rather than inventing one.
+   */
+  channelStatus?: Record<string, ChannelConnectionStatus>;
+  /**
    * The DSH-wide default model, for the pane's read-only display row. Absent
    * when the host could not answer (no `agentDefaultModel` service, nothing
    * selected), in which case the pane omits the row — an empty control would
@@ -189,8 +207,19 @@ function validPayload(endpoint: string, payload: unknown): boolean {
   return keys.length === 0;
 }
 
-/** Build the channel handler for a settings service. */
-export function createSettingsRpcHandler(service: SettingsService) {
+/**
+ * Build the channel handler for a settings service.
+ *
+ * `log` is how a failure that is *not* in {@link PUBLIC_ERRORS} stays
+ * diagnosable. The pane is only told a code, and an unrecognised error is
+ * flattened to the generic `settings-failed` — deliberately, since the raw
+ * message of a host-side failure may name plugin internals the pane cannot act
+ * on. That flattening is only acceptable while the real cause is recorded
+ * *somewhere*: without a line here, a refused write (a missing profile entry, a
+ * non-volatile path) reaches the user as "保存失败" and leaves nothing at all in
+ * the host log to work from.
+ */
+export function createSettingsRpcHandler(service: SettingsService, log?: (message: string) => void) {
   return async (endpoint: string, payload: unknown, signal?: { aborted?: boolean }) => {
     if (!SETTINGS_ENDPOINTS.includes(endpoint as never) || !validPayload(endpoint, payload)) {
       return { ok: false, error: { code: "bad-request", message: "Invalid settings request." } };
@@ -213,10 +242,28 @@ export function createSettingsRpcHandler(service: SettingsService) {
                   : await service.status();
       return { ok: true, value };
     } catch (error) {
-      const code = PUBLIC_ERRORS.has((error as any)?.code) ? (error as any).code : "settings-failed";
+      const publicCode = (error as any)?.code;
+      const code = PUBLIC_ERRORS.has(publicCode) ? publicCode : "settings-failed";
+      // Always logged, including for a public code: the pane shows the code, and
+      // the specific reason (`not-configured` for which ref, say) is in the
+      // message. The status is dropped from the failure the pane receives, so
+      // this line is the only record that the call failed on our side.
+      log?.(`connect: settings rpc ${endpoint} failed (${code}): ${errorText(error)}`);
       return { ok: false, error: { code, message: code } };
     }
   };
+}
+
+/**
+ * One-line error text for the diagnostic log line. The `code` is prefixed when
+ * the thrown value carries one — for a domain error (`save-failed`, `unchanged`)
+ * that code is the actionable half, and the message alone would read as a
+ * sentence with no name.
+ */
+function errorText(error: unknown): string {
+  const code = (error as any)?.code;
+  const message = error instanceof Error ? error.message : String(error);
+  return typeof code === "string" && code !== "" && !message.startsWith(code) ? `${code}: ${message}` : message;
 }
 
 /** The error a service reports for an endpoint it was not wired to serve. */
@@ -277,6 +324,7 @@ interface SettingsRpcScope {
   connection?: ConnectionFence;
   webServer?: WebServerLike;
   effect?<T>(execute: () => T, label?: string): (() => void) | T;
+  logger?: { warn?(message: string): void };
 }
 
 /**
@@ -343,8 +391,8 @@ function responseEnvelope(rpcId: string, result: { ok?: boolean; value?: unknown
  * the Host/Origin and browser-auth fence) so the pane sees the same protocol
  * and the same failure codes as a first-party channel.
  */
-export function createSettingsHttpHandler(service: SettingsService, connection?: ConnectionFence) {
-  const handle = createSettingsRpcHandler(service);
+export function createSettingsHttpHandler(service: SettingsService, connection?: ConnectionFence, log?: (message: string) => void) {
+  const handle = createSettingsRpcHandler(service, log);
 
   return async function settingsHttpHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // Same fence the host applies to `/api`: trusted Host/Origin, then browser auth.
@@ -432,7 +480,9 @@ export function createSettingsHttpHandler(service: SettingsService, connection?:
  * scope — or declaring it in the plugin's `inject` — does not help, because the
  * shadow overrides the caller's fiber.
  *
- * @param ctx - an injection scope holding `connection` and `webServer`.
+ * @param ctx - an injection scope holding `connection` and `webServer`; its
+ *   `logger` is used, when present, to record a refused call (see
+ *   {@link createSettingsRpcHandler}).
  * @param options - the settings service backing the channel.
  * @returns a disposer removing the route (no-op if the host has no webserver).
  */
@@ -441,10 +491,11 @@ export function installSettingsRpc(ctx: unknown, options: { service: SettingsSer
   const register = scope.webServer?.register;
   if (typeof register !== "function") return () => {};
 
+  const log = (message: string): void => scope.logger?.warn?.(message);
   const route: PrefixRoute = {
     kind: "prefix",
     path: SETTINGS_RPC_CHANNEL,
-    handler: createSettingsHttpHandler(options.service, scope.connection),
+    handler: createSettingsHttpHandler(options.service, scope.connection, log),
   };
 
   // Register through the scope's effect so the route is torn down with the fiber.

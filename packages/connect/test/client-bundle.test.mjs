@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { snapshotToForm, CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, GENERAL_FIELD_GROUPS, GENERAL_FIELDS } from "../lib/settings/settings-model.js";
+import { CHANNEL_CONNECTION_STATES } from "../lib/settings/channel-status.js";
 import { isMaskedSecret } from "../lib/settings/secret-disclosure.js";
 import { snapshotIssues } from "../client/panel-state.mjs";
 
@@ -447,7 +448,7 @@ test("each secret field shows its hint and, when stored, its masked preview", ()
 test("an identifier is a plain input, a confidential key is a password input", () => {
   const { elements: els, localeTable } = render("zh");
   // `autoComplete: "off"` is what marks a credential input, as opposed to the
-  // plain-text config fields (webhookPath, baseUrl, defaultAt) that share the
+  // plain-text config fields (webhookPath, baseUrl, stream.url) that share the
   // same `ds-input` class.
   const inputs = els.filter((el) => el.type === "input" && el.props.autoComplete === "off");
   const allKeys = Object.values(CHANNEL_SECRET_FIELDS).flat();
@@ -509,6 +510,27 @@ function badgeOf(view, ch) {
   return { text: visibleText(badge).join(""), warn: hasClass(badge, "ds-badge-warn") };
 }
 
+/**
+ * A channel card's *access-state* badge — the second one in the header.
+ *
+ * Position matters here: the credentials badge answers "is there a secret in the
+ * store" and this one answers "is the bot actually reachable", and a pane that
+ * rendered only one of them would look identical to the eye. So this reads the
+ * slot explicitly rather than searching by text, and asserts there is a second
+ * badge at all.
+ */
+function connectionBadgeOf(view, ch) {
+  const card = byId(view.elements, `ds-ch-${ch}`);
+  const badges = elements(card.children).filter((el) => hasClass(el, "ds-badge"));
+  assert.equal(badges.length, 2, `${ch} does not carry both a credential badge and an access-state badge`);
+  const badge = badges[1];
+  return {
+    text: visibleText(badge).join(""),
+    warn: hasClass(badge, "ds-badge-warn"),
+    ok: hasClass(badge, "ds-badge-ok"),
+  };
+}
+
 /** Every line of the save bar's problem list. */
 function issueLines(view) {
   const list = view.elements.find((el) => hasClass(el, "ds-issues"));
@@ -524,7 +546,7 @@ test("a collapsed channel renders no fields at all, not just hidden ones", () =>
   const { text, localeTable: L } = render("zh", { open: new Set(["feishu"]) });
   const collapsed = [
     ["telegram", ["f.pollingTimeoutSeconds", "f.baseUrl", "s.telegram.botToken", "channel.telegram.hint"]],
-    ["dingtalk", ["f.defaultAt", "s.dingtalk.webhookUrl", "s.dingtalk.clientSecret", "channel.dingtalk.hint"]],
+    ["dingtalk", ["f.stream.url", "s.dingtalk.webhookUrl", "s.dingtalk.clientSecret", "channel.dingtalk.hint"]],
     ["web", ["f.pollIntervalMs", "channel.web.hint"]],
   ];
   for (const [ch, keys] of collapsed) {
@@ -720,6 +742,78 @@ test("a channel whose store could not be read is unknown, not missing", () => {
   }
 });
 
+test("every access state the host can report renders as its own badge", () => {
+  // Derived from the host's own list of states, so a state the composer learns to
+  // emit cannot arrive here without wording — the loop would ask for a locale key
+  // that does not exist and the assertion would name it.
+  for (const state of CHANNEL_CONNECTION_STATES) {
+    const view = render("zh", { snapshot: { ...SNAPSHOT, channelStatus: { feishu: { state } } } });
+    const badge = connectionBadgeOf(view, "feishu");
+    assert.ok(view.localeTable.zh[`cs.${state}`], `no wording for the host's ${state} state`);
+    assert.equal(badge.text, view.localeTable.zh[`cs.${state}`], `the ${state} badge says something else`);
+    // The colour rule, stated once: only a failure asks the user to act, and only
+    // the two states that mean traffic is flowing may look healthy. Anything else
+    // painted green is a lie the user cannot see through.
+    assert.equal(badge.warn, state === "failed", `${state} was flagged as a problem`);
+    assert.equal(badge.ok, state === "connected" || state === "running", `${state} was painted as healthy`);
+  }
+});
+
+test("a reconnect reports how many times it has tried, not just that it is trying", () => {
+  const L = render("zh").localeTable.zh;
+  assert.ok(L["cs.reconnecting.n"].includes("{n}"), "the numbered wording lost its placeholder, so the count would vanish silently");
+
+  const counted = render("zh", { snapshot: { ...SNAPSHOT, channelStatus: { feishu: { state: "reconnecting", attempts: 3 } } } });
+  assert.equal(connectionBadgeOf(counted, "feishu").text, L["cs.reconnecting.n"].replace("{n}", "3"));
+
+  // Zero attempts is what the host omits, and it must not come back as 「第 0 次」:
+  // "reconnecting, 0 attempts" is a sentence that says the opposite of the truth.
+  const bare = render("zh", { snapshot: { ...SNAPSHOT, channelStatus: { feishu: { state: "reconnecting", attempts: 0 } } } });
+  assert.equal(connectionBadgeOf(bare, "feishu").text, L["cs.reconnecting"]);
+});
+
+test("a host that cannot report access state renders no second badge, not a guess", () => {
+  // `SNAPSHOT` carries no `channelStatus`, which is exactly what a host whose
+  // probe is not wired sends. A placeholder badge is indistinguishable from a
+  // real one, so there must not be one at all.
+  const view = render("zh");
+  for (const ch of ["feishu", "telegram", "dingtalk", "web"]) {
+    const card = byId(view.elements, `ds-ch-${ch}`);
+    const badges = elements(card.children).filter((el) => hasClass(el, "ds-badge"));
+    assert.equal(badges.length, 1, `${ch} grew an access-state badge out of a snapshot that carries none`);
+  }
+
+  // Independently of that: the two badges must not be the same report wearing two
+  // hats. Turning the probe on changes the access badge and leaves the credential
+  // badge byte-for-byte where it was, for every channel — including the ones with
+  // no access state of their own.
+  const wired = render("zh", { snapshot: { ...SNAPSHOT, channelStatus: { feishu: { state: "connected" } } } });
+  for (const ch of ["feishu", "telegram", "dingtalk", "web"]) {
+    assert.deepEqual(badgeOf(wired, ch), badgeOf(view, ch), `${ch}'s credential badge moved when the access state arrived`);
+  }
+  assert.equal(connectionBadgeOf(wired, "feishu").text, wired.localeTable.zh["cs.connected"]);
+});
+
+test("a snapshot with no access state yields a form with no access-state key", () => {
+  // The form is compared key-for-key against `snapshotToForm(SNAPSHOT)` further
+  // down, and an unconditional `channelStatus: undefined` would add a key there
+  // and break a test about something else entirely.
+  assert.equal("channelStatus" in snapshotToForm(SNAPSHOT), false, "the form grew a key the snapshot never carried");
+  assert.deepEqual(
+    snapshotToForm({ ...SNAPSHOT, channelStatus: { feishu: { state: "idle" } } }).channelStatus,
+    { feishu: { state: "idle" } },
+  );
+});
+
+test("the access badge costs no hook slot", () => {
+  // The stub implements three hooks and the pane's slots are read by position. A
+  // ninth `useState` for the status would shift every slot after it, and this
+  // file's fixture would feed the wrong values into the wrong names without a
+  // single type error.
+  const { pane } = render("zh", { snapshot: { ...SNAPSHOT, channelStatus: { feishu: { state: "connected" } } } });
+  assert.equal(pane.hooksUsed(), 8, "the pane reads a different number of hook slots than this file supplies");
+});
+
 test("a call with nothing to report renders no problem list at all", () => {
   // The happy path has to stay quiet. An always-present empty `<ul>` is not just
   // noise: `ds-issues` takes a full row of the save bar, so a stray one pushes the
@@ -812,6 +906,95 @@ test("a warning raised by an earlier credential save survives a later one", asyn
   const lines = issueLines(view);
   assert.equal(lines.length, 1, `expected exactly the one warning, got ${JSON.stringify(lines.map((l) => visibleText(l).join("")))}`);
   assert.ok(visibleText(lines[0]).join("").includes(pane.localeTable.zh["w.credentialsStoredNotApplied"]));
+});
+
+// --- a save that only half lands -------------------------------------------
+//
+// The two writes behind the save button go to two documents — the config section
+// and the credential store — and the defect these pin is what happens when they
+// are treated as one. 1.0.3 shipped with the plugin unconfigurable at all:
+// `settings.save` threw, the pane's single try/catch jumped to the error status,
+// and the `credentials.save` loop below it never ran. The appId and appSecret a
+// user had just typed were discarded without a word, the channel stayed 未设置,
+// and 「保存失败」 — the one message the pane showed — cannot be told apart from
+// a secret that was stored and then refused by Feishu.
+
+/** The typed-secret input of one channel card, as the renderer builds it. */
+function secretInputOf(view, ch) {
+  return elements(byId(view.elements, `ds-ch-${ch}`).children)
+    .find((el) => el.type === "input" && el.props.autoComplete === "off");
+}
+
+test("a failed settings write does not discard the credential the user typed", async () => {
+  const calls = [];
+  const rpc = async (endpoint) => {
+    calls.push(endpoint);
+    // The host refuses the config write outright, and accepts the credential.
+    if (endpoint === "settings.save") return { ok: false, error: { code: "settings-failed", message: "settings-failed" } };
+    if (endpoint === "credentials.save") {
+      return { ok: true, value: { ...SNAPSHOT, credentials: { ...SNAPSHOT.credentials, telegram: true } } };
+    }
+    return { ok: true, value: SNAPSHOT };
+  };
+
+  const pane = mount("zh", [
+    snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials }, ALL_OPEN, ALL_OPEN, [],
+  ], rpc);
+  let view = pane.draw();
+
+  // Telegram, because its stored-credential flag starts false — so the badge
+  // below can only read 「已接入」 if the credential write really landed.
+  secretInputOf(view, "telegram").props.onChange({ target: { value: "123456:ABC" } });
+  view = pane.draw();
+
+  const save = view.elements.find((el) => el.props.className === "ds-btn");
+  await save.props.onClick();
+  view = pane.draw();
+
+  assert.deepEqual(calls, ["settings.save", "credentials.save"], "the failed settings write stopped the credential write");
+  assert.equal(pane.queued[1], "error", "a save that lost one of its two writes reported success");
+  assert.equal(pane.queued[2].telegram, true, "the credential was written but the pane still shows the channel as unconfigured");
+
+  // What the user typed is still in the form. Re-seeding from the snapshot would
+  // have replaced it with the host's unchanged config — losing their input a
+  // second time, and this time silently.
+  assert.equal(secretInputOf(view, "telegram").props.value, "123456:ABC", "the typed credential was dropped by the failed save");
+
+  // One line, naming the half that failed, with the host's code on it: the code
+  // is the only part that distinguishes a refused write from a dropped link.
+  const lines = issueLines(view);
+  assert.equal(lines.length, 1, `expected exactly one line, got ${JSON.stringify(lines.map((l) => visibleText(l).join("")))}`);
+  const said = visibleText(lines[0]).join("");
+  assert.ok(said.includes(pane.localeTable.zh.saveFailedSettings), `the failure line is not the settings one: ${said}`);
+  assert.ok(said.includes("settings-failed"), `the host's code was dropped: ${said}`);
+});
+
+test("a failed credential write is named as itself, and keeps the typed value", async () => {
+  const rpc = async (endpoint) => {
+    if (endpoint === "credentials.save") return { ok: false, error: { code: "invalid-credentials", message: "invalid-credentials" } };
+    return { ok: true, value: SNAPSHOT };
+  };
+
+  const pane = mount("zh", [
+    snapshotToForm(SNAPSHOT), "idle", { ...SNAPSHOT.credentials }, ALL_OPEN, ALL_OPEN, [],
+  ], rpc);
+  let view = pane.draw();
+  secretInputOf(view, "telegram").props.onChange({ target: { value: "123456:ABC" } });
+  view = pane.draw();
+
+  await view.elements.find((el) => el.props.className === "ds-btn").props.onClick();
+  view = pane.draw();
+
+  assert.equal(pane.queued[1], "error");
+  assert.equal(pane.queued[2].telegram, false, "a credential that was never stored is now shown as stored");
+  assert.equal(secretInputOf(view, "telegram").props.value, "123456:ABC", "the typed credential was cleared by the failed write");
+
+  const lines = issueLines(view);
+  assert.equal(lines.length, 1, `expected exactly one line, got ${JSON.stringify(lines.map((l) => visibleText(l).join("")))}`);
+  const said = visibleText(lines[0]).join("");
+  assert.ok(said.includes(pane.localeTable.zh.saveFailedCredentials), `the failure line is not the credential one: ${said}`);
+  assert.ok(said.includes(pane.localeTable.zh["channel.telegram"]), `the line does not say which channel: ${said}`);
+  assert.ok(said.includes("invalid-credentials"), `the host's code was dropped: ${said}`);
 });
 
 // --- the one-click Feishu run ----------------------------------------------

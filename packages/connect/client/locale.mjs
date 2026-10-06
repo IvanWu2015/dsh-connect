@@ -25,6 +25,12 @@
  * - `onboard.<step>` — the one-click Feishu creation flow (label, hint, each
  *   result line and each subscription outcome)
  * - `status.<state>` — the save-button status line
+ * - `cs.<state>` — a *connection* state badge beside the credentials badge
+ *   (`CHANNEL_CONNECTION_STATES`). Deliberately not folded into `status.*`: that
+ *   one reports on the save the user just pressed, this one on the channel's
+ *   live transport, and one wording cannot be true about both. `cs.reconnecting.n`
+ *   carries the attempt count in a `{n}` placeholder, substituted at the call
+ *   site — the locale test asserts the placeholder survives in both languages.
  * - `w.<code>` — a non-fatal warning code from the host (`SettingsWarningCode`)
  */
 
@@ -90,11 +96,26 @@ export const LOCALES = {
 
     'w.credentialsStoredNotApplied': '凭据已保存，但运行中的渠道没能重新加载，请重启 dsh 后确认。',
 
+    // The two halves of a save fail independently, so they are reported
+    // independently — see `onSave` in `settings-client.mjs`.
+    'saveFailedSettings': '配置设置未保存，请重试。',
+    'saveFailedCredentials': '凭据未保存，请重新输入后再保存。',
+
     'status.loading': '加载中…',
     'status.idle': '就绪',
     'status.saving': '保存中…',
     'status.saved': '已保存',
     'status.error': '保存失败',
+
+    'cs.disabled': '未启用',
+    'cs.stopped': '未运行',
+    'cs.failed': '接入失败',
+    'cs.running': '运行中',
+    'cs.idle': '空闲',
+    'cs.connecting': '连接中',
+    'cs.connected': '已连接',
+    'cs.reconnecting': '重连中',
+    'cs.reconnecting.n': '重连中（第 {n} 次）',
 
     'channel.feishu': '飞书 / Lark',
     'channel.feishu.hint': '在飞书开放平台创建自建应用，用长连接接收消息。',
@@ -113,6 +134,10 @@ export const LOCALES = {
     'f.dmMode.hint': '控制哪些人可以直接私聊机器人。',
     'f.language': '回复语言',
     'f.language.hint': '机器人回复用户时使用的语言。',
+    'f.threadIsolation': '话题独立会话',
+    'f.threadIsolation.hint': '开启后，同一个群里的每个话题各自拥有独立的会话上下文；关闭则整个群共用一个会话。',
+    'f.onboarding': '允许首次扫码创建',
+    'f.onboarding.hint': '关闭后，缺少凭据时不再进入扫码引导流程，只提示手动填写。',
     'f.webhookPort': '回调端口',
     'f.webhookPort.hint': '仅「回调地址」接入方式使用，默认 3000。',
     'f.webhookPath': '回调路径',
@@ -121,8 +146,10 @@ export const LOCALES = {
     'f.pollingTimeoutSeconds.hint': '单次长轮询等待秒数，默认 30。',
     'f.baseUrl': '接口地址',
     'f.baseUrl.hint': 'Telegram Bot API 地址，只有在自建反向代理时才需要修改。',
-    'f.defaultAt': '默认 @ 成员',
-    'f.defaultAt.hint': '群消息默认 @ 的成员，多个用逗号分隔。',
+    'f.stream.url': 'Stream 地址',
+    'f.stream.url.hint': '钉钉 Stream 模式的接入地址，只有在自建代理时才需要修改。',
+    'f.stream.requireMention': '仅响应 @ 提及',
+    'f.stream.requireMention.hint': '开启后群聊中只有 @ 机器人才处理；单聊不受影响。',
     'f.pollIntervalMs': '轮询间隔（毫秒）',
     'f.pollIntervalMs.hint': '网页渠道检查新消息的间隔，默认 1000。',
 
@@ -161,6 +188,10 @@ export const LOCALES = {
     's.feishu.appId.hint': '开放平台「凭证与基础信息」中的 App ID，非机密，完整显示。',
     's.feishu.appSecret': 'App Secret',
     's.feishu.appSecret.hint': '与 App ID 配对的应用密钥，属于机密，仅显示首尾各 4 位。',
+    's.feishu.verificationToken': 'Verification Token',
+    's.feishu.verificationToken.hint': '仅「回调地址」模式需要，在开放平台「事件与回调」里获取；属于机密。用长连接模式可留空。',
+    's.feishu.encryptKey': 'Encrypt Key',
+    's.feishu.encryptKey.hint': '仅「回调地址」模式需要，与 Verification Token 同页的加密密钥；属于机密。用长连接模式可留空。',
     's.telegram.botToken': 'Bot Token',
     's.telegram.botToken.hint': '@BotFather 生成的机器人令牌，形如 123456:ABC…，属于机密。',
     's.dingtalk.webhookUrl': 'Webhook 地址',
@@ -246,11 +277,26 @@ export const LOCALES = {
 
     'w.credentialsStoredNotApplied': 'The credential was saved, but the running channels did not reload it — restart dsh to be sure.',
 
+    // The two halves of a save fail independently, so they are reported
+    // independently — see `onSave` in `settings-client.mjs`.
+    'saveFailedSettings': 'The settings were not saved — please try again.',
+    'saveFailedCredentials': 'The credential was not stored — re-enter it and save again.',
+
     'status.loading': 'Loading…',
     'status.idle': 'Ready',
     'status.saving': 'Saving…',
     'status.saved': 'Saved',
     'status.error': 'Save failed',
+
+    'cs.disabled': 'Not enabled',
+    'cs.stopped': 'Not running',
+    'cs.failed': 'Connection failed',
+    'cs.running': 'Running',
+    'cs.idle': 'Idle',
+    'cs.connecting': 'Connecting',
+    'cs.connected': 'Connected',
+    'cs.reconnecting': 'Reconnecting',
+    'cs.reconnecting.n': 'Reconnecting (attempt {n})',
 
     'channel.feishu': 'Feishu / Lark',
     'channel.feishu.hint': 'Create a custom app on the Feishu open platform and receive messages over a long connection.',
@@ -269,6 +315,10 @@ export const LOCALES = {
     'f.dmMode.hint': 'Who is allowed to message the bot directly.',
     'f.language': 'Reply language',
     'f.language.hint': 'The language the bot replies to users in.',
+    'f.threadIsolation': 'Per-topic sessions',
+    'f.threadIsolation.hint': 'When on, each topic in a group chat keeps its own conversation context; when off, the whole group shares one session.',
+    'f.onboarding': 'Allow first-run QR setup',
+    'f.onboarding.hint': 'When off, a missing credential no longer starts the QR flow; the pane only asks you to fill the fields in.',
     'f.webhookPort': 'Callback port',
     'f.webhookPort.hint': 'Used only by the callback-URL transport; defaults to 3000.',
     'f.webhookPath': 'Callback path',
@@ -277,8 +327,10 @@ export const LOCALES = {
     'f.pollingTimeoutSeconds.hint': 'How long one long poll waits; defaults to 30.',
     'f.baseUrl': 'API base URL',
     'f.baseUrl.hint': 'The Telegram Bot API endpoint — only change it if you run your own proxy.',
-    'f.defaultAt': 'Default @-list',
-    'f.defaultAt.hint': 'Members to @ by default on group messages, comma-separated.',
+    'f.stream.url': 'Stream URL',
+    'f.stream.url.hint': 'The DingTalk Stream endpoint — only change it if you run your own proxy.',
+    'f.stream.requireMention': 'Only when @-mentioned',
+    'f.stream.requireMention.hint': 'In group chats, handle a message only if the bot was mentioned. Direct messages are unaffected.',
     'f.pollIntervalMs': 'Poll interval (ms)',
     'f.pollIntervalMs.hint': 'How often the web channel checks for new messages; defaults to 1000.',
 
@@ -317,6 +369,10 @@ export const LOCALES = {
     's.feishu.appId.hint': 'The App ID from the open platform’s credentials page. Not a secret — shown in full.',
     's.feishu.appSecret': 'App Secret',
     's.feishu.appSecret.hint': 'The app secret paired with the App ID. Confidential — only the first and last 4 characters are shown.',
+    's.feishu.verificationToken': 'Verification Token',
+    's.feishu.verificationToken.hint': 'Only needed by the “callback URL” transport, from the open platform’s events page. Confidential; leave empty when using the websocket transport.',
+    's.feishu.encryptKey': 'Encrypt Key',
+    's.feishu.encryptKey.hint': 'Only needed by the “callback URL” transport — the encryption key on the same page as the verification token. Confidential; leave empty when using the websocket transport.',
     's.telegram.botToken': 'Bot Token',
     's.telegram.botToken.hint': 'The bot token from @BotFather, like 123456:ABC… — confidential.',
     's.dingtalk.webhookUrl': 'Webhook URL',

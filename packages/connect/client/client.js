@@ -89,10 +89,49 @@ function saveCredentials(rpcCall, channel, values) {
 
 // lib/settings/channels.js
 var CHANNELS = ["feishu", "telegram", "dingtalk", "web"];
+function readDotPath(obj, path) {
+  let node = obj;
+  for (const segment of path.split(".")) {
+    if (node === null || typeof node !== "object")
+      return void 0;
+    node = node[segment];
+  }
+  return node;
+}
+function writeDotPath(target, path, value) {
+  const segments = path.split(".");
+  let node = target;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const segment = segments[i];
+    const next = node[segment];
+    if (next === null || typeof next !== "object" || Array.isArray(next)) {
+      if (next !== void 0)
+        return target;
+      const created = {};
+      node[segment] = created;
+      node = created;
+      continue;
+    }
+    node = next;
+  }
+  node[segments[segments.length - 1]] = value;
+  return target;
+}
 
 // lib/settings/credential-store.js
 var CHANNEL_SECRET_KEYS = Object.freeze({
-  feishu: { appId: "DSH_CONNECT_FEISHU_APP_ID", appSecret: "DSH_CONNECT_FEISHU_APP_SECRET" },
+  // The last two are the **webhook** transport's secrets, and they are declared
+  // `role("secret")` in the Feishu `Config` like appId/appSecret — so they
+  // belong in this store rather than in the config section, and the pane renders
+  // them as masked inputs alongside the other two. Before this they were
+  // declared in the schema with no home at all: not editable, and silently
+  // deleted from the profile on the next save.
+  feishu: {
+    appId: "DSH_CONNECT_FEISHU_APP_ID",
+    appSecret: "DSH_CONNECT_FEISHU_APP_SECRET",
+    verificationToken: "DSH_CONNECT_FEISHU_VERIFICATION_TOKEN",
+    encryptKey: "DSH_CONNECT_FEISHU_ENCRYPT_KEY"
+  },
   telegram: { botToken: "DSH_CONNECT_TELEGRAM_BOT_TOKEN" },
   dingtalk: {
     webhookUrl: "DSH_CONNECT_DINGTALK_WEBHOOK_URL",
@@ -103,6 +142,12 @@ var CHANNEL_SECRET_KEYS = Object.freeze({
   web: {}
 });
 var CREDENTIAL_GROUPS = Object.freeze({
+  // appId + appSecret only, and that is **not an oversight to be helpfully
+  // completed** by adding the verification token / encrypt key above. Those two
+  // belong to the *webhook* transport, while this group answers the badge's
+  // question — 「this channel has what it needs to be reached」 — which is
+  // websocket's, and the one nearly every user has. Folding them in would flip a
+  // working websocket bot to 「未配置凭据」 because a webhook secret is empty.
   feishu: [["DSH_CONNECT_FEISHU_APP_ID", "DSH_CONNECT_FEISHU_APP_SECRET"]],
   telegram: [["DSH_CONNECT_TELEGRAM_BOT_TOKEN"]],
   dingtalk: [
@@ -129,6 +174,8 @@ var CHANNEL_CONFIG_FIELDS = {
     { key: "requireMention", kind: "boolean", label: "requireMention" },
     { key: "dmMode", kind: "select", options: ["open", "allowlist", "pair", "disabled"], label: "dmMode" },
     { key: "language", kind: "select", options: ["zh", "en"], label: "language" },
+    { key: "threadIsolation", kind: "boolean", label: "threadIsolation" },
+    { key: "onboarding", kind: "boolean", label: "onboarding" },
     { key: "webhookPort", kind: "number", label: "webhookPort" },
     { key: "webhookPath", kind: "text", label: "webhookPath" }
   ],
@@ -140,11 +187,24 @@ var CHANNEL_CONFIG_FIELDS = {
   ],
   dingtalk: [
     { key: "language", kind: "select", options: ["zh", "en"], label: "language" },
-    { key: "defaultAt", kind: "text", label: "defaultAt" }
+    // Nested, because that is where the adapter reads them (`config.stream.*`).
+    // DingTalk's `defaultAt` is deliberately *not* here — it is an object with a
+    // list inside, the pane has no control for it, and rendering it as text
+    // printed `[object Object]` and then wrote that string over the real value.
+    // It is carried through untouched instead; see `CHANNEL_PRESERVED_KEYS`.
+    { key: "stream.url", kind: "text", label: "stream.url" },
+    { key: "stream.requireMention", kind: "boolean", label: "stream.requireMention" }
   ],
   web: [
     { key: "pollIntervalMs", kind: "number", label: "pollIntervalMs" }
   ]
+};
+var CHANNEL_PRESERVED_KEYS = {
+  feishu: [],
+  telegram: [],
+  // `defaultAt` is `{ mobiles?: string[]; userIds?: string[]; all?: boolean }`.
+  dingtalk: ["defaultAt"],
+  web: []
 };
 var CHANNEL_DEFAULT_FIELDS = [
   { key: "language", kind: "select", options: ["zh", "en"], label: "language" }
@@ -182,6 +242,21 @@ var GENERAL_FIELD_GROUPS = [
   }
 ];
 var GENERAL_FIELDS = GENERAL_FIELD_GROUPS.flatMap((g) => g.fields);
+function copyConfigValue(value) {
+  if (Array.isArray(value))
+    return value.map(copyConfigValue);
+  if (value !== null && typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value))
+      out[k] = copyConfigValue(v);
+    return out;
+  }
+  return value;
+}
+function channelConfigPaths(channel) {
+  const fields = CHANNEL_CONFIG_FIELDS[channel] ?? [];
+  return [...fields.map((f) => f.key), ...CHANNEL_PRESERVED_KEYS[channel] ?? []];
+}
 function coerceConfigValue(kind, raw) {
   if (raw === void 0 || raw === null || raw === "")
     return void 0;
@@ -207,7 +282,15 @@ function snapshotToForm(snapshot) {
   const channels = snapshot.enabled ?? [];
   const channelConfigs = {};
   for (const ch of Object.keys(CHANNEL_CONFIG_FIELDS)) {
-    channelConfigs[ch] = config[ch] ?? {};
+    const section = config[ch] ?? {};
+    const cfg = {};
+    for (const path of channelConfigPaths(ch)) {
+      const value = readDotPath(section, path);
+      if (value === void 0 || value === null)
+        continue;
+      cfg[path] = copyConfigValue(value);
+    }
+    channelConfigs[ch] = cfg;
   }
   const general = {};
   for (const field of GENERAL_FIELDS) {
@@ -225,6 +308,7 @@ function snapshotToForm(snapshot) {
     // setters, and aliasing the snapshot here would edit the host's own object.
     sharedOverrideKeys: [...snapshot.sharedOverrideKeys ?? []],
     ...snapshot.agentModel ? { agentModel: snapshot.agentModel } : {},
+    ...snapshot.channelStatus === void 0 ? {} : { channelStatus: { ...snapshot.channelStatus } },
     // Deliberately empty even though `secretPreviews` carries something: an
     // input is a place to *type a new* secret, and prefilling it with the mask
     // would either overwrite the stored secret with its own preview on save, or
@@ -250,9 +334,22 @@ function buildConfigSave(form) {
   if (Object.keys(defaults).length > 0)
     config.channelDefaults = defaults;
   for (const [ch, cfg] of Object.entries(form.channelConfigs ?? {})) {
-    const clean = stripEmpty(cfg ?? {});
-    if (Object.keys(clean).length > 0)
-      config[ch] = clean;
+    const out = {};
+    const known = /* @__PURE__ */ new Set();
+    for (const path of channelConfigPaths(ch)) {
+      known.add(path);
+      const value = cfg?.[path];
+      if (value === void 0 || value === null)
+        continue;
+      writeDotPath(out, path, value);
+    }
+    for (const [k, v] of Object.entries(cfg ?? {})) {
+      if (known.has(k) || v === void 0 || v === null)
+        continue;
+      out[k] = v;
+    }
+    if (Object.keys(out).length > 0)
+      config[ch] = out;
   }
   for (const field of GENERAL_FIELDS) {
     const value = form.general?.[field.key];
@@ -350,11 +447,24 @@ var LOCALES = {
     "onboard.subscription.skipped": "\u6CA1\u6709\u53EF\u7528\u51ED\u636E\uFF0C\u672A\u8BBE\u7F6E\u4E8B\u4EF6\u8BA2\u9605",
     "onboard.subscription.notAttempted": "\u672A\u80FD\u8D70\u5230\u8BBE\u7F6E\u4E8B\u4EF6\u8BA2\u9605\u8FD9\u4E00\u6B65",
     "w.credentialsStoredNotApplied": "\u51ED\u636E\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u8FD0\u884C\u4E2D\u7684\u6E20\u9053\u6CA1\u80FD\u91CD\u65B0\u52A0\u8F7D\uFF0C\u8BF7\u91CD\u542F dsh \u540E\u786E\u8BA4\u3002",
+    // The two halves of a save fail independently, so they are reported
+    // independently — see `onSave` in `settings-client.mjs`.
+    "saveFailedSettings": "\u914D\u7F6E\u8BBE\u7F6E\u672A\u4FDD\u5B58\uFF0C\u8BF7\u91CD\u8BD5\u3002",
+    "saveFailedCredentials": "\u51ED\u636E\u672A\u4FDD\u5B58\uFF0C\u8BF7\u91CD\u65B0\u8F93\u5165\u540E\u518D\u4FDD\u5B58\u3002",
     "status.loading": "\u52A0\u8F7D\u4E2D\u2026",
     "status.idle": "\u5C31\u7EEA",
     "status.saving": "\u4FDD\u5B58\u4E2D\u2026",
     "status.saved": "\u5DF2\u4FDD\u5B58",
     "status.error": "\u4FDD\u5B58\u5931\u8D25",
+    "cs.disabled": "\u672A\u542F\u7528",
+    "cs.stopped": "\u672A\u8FD0\u884C",
+    "cs.failed": "\u63A5\u5165\u5931\u8D25",
+    "cs.running": "\u8FD0\u884C\u4E2D",
+    "cs.idle": "\u7A7A\u95F2",
+    "cs.connecting": "\u8FDE\u63A5\u4E2D",
+    "cs.connected": "\u5DF2\u8FDE\u63A5",
+    "cs.reconnecting": "\u91CD\u8FDE\u4E2D",
+    "cs.reconnecting.n": "\u91CD\u8FDE\u4E2D\uFF08\u7B2C {n} \u6B21\uFF09",
     "channel.feishu": "\u98DE\u4E66 / Lark",
     "channel.feishu.hint": "\u5728\u98DE\u4E66\u5F00\u653E\u5E73\u53F0\u521B\u5EFA\u81EA\u5EFA\u5E94\u7528\uFF0C\u7528\u957F\u8FDE\u63A5\u63A5\u6536\u6D88\u606F\u3002",
     "channel.telegram": "Telegram",
@@ -371,6 +481,10 @@ var LOCALES = {
     "f.dmMode.hint": "\u63A7\u5236\u54EA\u4E9B\u4EBA\u53EF\u4EE5\u76F4\u63A5\u79C1\u804A\u673A\u5668\u4EBA\u3002",
     "f.language": "\u56DE\u590D\u8BED\u8A00",
     "f.language.hint": "\u673A\u5668\u4EBA\u56DE\u590D\u7528\u6237\u65F6\u4F7F\u7528\u7684\u8BED\u8A00\u3002",
+    "f.threadIsolation": "\u8BDD\u9898\u72EC\u7ACB\u4F1A\u8BDD",
+    "f.threadIsolation.hint": "\u5F00\u542F\u540E\uFF0C\u540C\u4E00\u4E2A\u7FA4\u91CC\u7684\u6BCF\u4E2A\u8BDD\u9898\u5404\u81EA\u62E5\u6709\u72EC\u7ACB\u7684\u4F1A\u8BDD\u4E0A\u4E0B\u6587\uFF1B\u5173\u95ED\u5219\u6574\u4E2A\u7FA4\u5171\u7528\u4E00\u4E2A\u4F1A\u8BDD\u3002",
+    "f.onboarding": "\u5141\u8BB8\u9996\u6B21\u626B\u7801\u521B\u5EFA",
+    "f.onboarding.hint": "\u5173\u95ED\u540E\uFF0C\u7F3A\u5C11\u51ED\u636E\u65F6\u4E0D\u518D\u8FDB\u5165\u626B\u7801\u5F15\u5BFC\u6D41\u7A0B\uFF0C\u53EA\u63D0\u793A\u624B\u52A8\u586B\u5199\u3002",
     "f.webhookPort": "\u56DE\u8C03\u7AEF\u53E3",
     "f.webhookPort.hint": "\u4EC5\u300C\u56DE\u8C03\u5730\u5740\u300D\u63A5\u5165\u65B9\u5F0F\u4F7F\u7528\uFF0C\u9ED8\u8BA4 3000\u3002",
     "f.webhookPath": "\u56DE\u8C03\u8DEF\u5F84",
@@ -379,8 +493,10 @@ var LOCALES = {
     "f.pollingTimeoutSeconds.hint": "\u5355\u6B21\u957F\u8F6E\u8BE2\u7B49\u5F85\u79D2\u6570\uFF0C\u9ED8\u8BA4 30\u3002",
     "f.baseUrl": "\u63A5\u53E3\u5730\u5740",
     "f.baseUrl.hint": "Telegram Bot API \u5730\u5740\uFF0C\u53EA\u6709\u5728\u81EA\u5EFA\u53CD\u5411\u4EE3\u7406\u65F6\u624D\u9700\u8981\u4FEE\u6539\u3002",
-    "f.defaultAt": "\u9ED8\u8BA4 @ \u6210\u5458",
-    "f.defaultAt.hint": "\u7FA4\u6D88\u606F\u9ED8\u8BA4 @ \u7684\u6210\u5458\uFF0C\u591A\u4E2A\u7528\u9017\u53F7\u5206\u9694\u3002",
+    "f.stream.url": "Stream \u5730\u5740",
+    "f.stream.url.hint": "\u9489\u9489 Stream \u6A21\u5F0F\u7684\u63A5\u5165\u5730\u5740\uFF0C\u53EA\u6709\u5728\u81EA\u5EFA\u4EE3\u7406\u65F6\u624D\u9700\u8981\u4FEE\u6539\u3002",
+    "f.stream.requireMention": "\u4EC5\u54CD\u5E94 @ \u63D0\u53CA",
+    "f.stream.requireMention.hint": "\u5F00\u542F\u540E\u7FA4\u804A\u4E2D\u53EA\u6709 @ \u673A\u5668\u4EBA\u624D\u5904\u7406\uFF1B\u5355\u804A\u4E0D\u53D7\u5F71\u54CD\u3002",
     "f.pollIntervalMs": "\u8F6E\u8BE2\u95F4\u9694\uFF08\u6BEB\u79D2\uFF09",
     "f.pollIntervalMs.hint": "\u7F51\u9875\u6E20\u9053\u68C0\u67E5\u65B0\u6D88\u606F\u7684\u95F4\u9694\uFF0C\u9ED8\u8BA4 1000\u3002",
     // General settings. These resolve once when the plugin starts and there is
@@ -417,6 +533,10 @@ var LOCALES = {
     "s.feishu.appId.hint": "\u5F00\u653E\u5E73\u53F0\u300C\u51ED\u8BC1\u4E0E\u57FA\u7840\u4FE1\u606F\u300D\u4E2D\u7684 App ID\uFF0C\u975E\u673A\u5BC6\uFF0C\u5B8C\u6574\u663E\u793A\u3002",
     "s.feishu.appSecret": "App Secret",
     "s.feishu.appSecret.hint": "\u4E0E App ID \u914D\u5BF9\u7684\u5E94\u7528\u5BC6\u94A5\uFF0C\u5C5E\u4E8E\u673A\u5BC6\uFF0C\u4EC5\u663E\u793A\u9996\u5C3E\u5404 4 \u4F4D\u3002",
+    "s.feishu.verificationToken": "Verification Token",
+    "s.feishu.verificationToken.hint": "\u4EC5\u300C\u56DE\u8C03\u5730\u5740\u300D\u6A21\u5F0F\u9700\u8981\uFF0C\u5728\u5F00\u653E\u5E73\u53F0\u300C\u4E8B\u4EF6\u4E0E\u56DE\u8C03\u300D\u91CC\u83B7\u53D6\uFF1B\u5C5E\u4E8E\u673A\u5BC6\u3002\u7528\u957F\u8FDE\u63A5\u6A21\u5F0F\u53EF\u7559\u7A7A\u3002",
+    "s.feishu.encryptKey": "Encrypt Key",
+    "s.feishu.encryptKey.hint": "\u4EC5\u300C\u56DE\u8C03\u5730\u5740\u300D\u6A21\u5F0F\u9700\u8981\uFF0C\u4E0E Verification Token \u540C\u9875\u7684\u52A0\u5BC6\u5BC6\u94A5\uFF1B\u5C5E\u4E8E\u673A\u5BC6\u3002\u7528\u957F\u8FDE\u63A5\u6A21\u5F0F\u53EF\u7559\u7A7A\u3002",
     "s.telegram.botToken": "Bot Token",
     "s.telegram.botToken.hint": "@BotFather \u751F\u6210\u7684\u673A\u5668\u4EBA\u4EE4\u724C\uFF0C\u5F62\u5982 123456:ABC\u2026\uFF0C\u5C5E\u4E8E\u673A\u5BC6\u3002",
     "s.dingtalk.webhookUrl": "Webhook \u5730\u5740",
@@ -496,11 +616,24 @@ var LOCALES = {
     "onboard.subscription.skipped": "No usable credentials, so the event subscription was not set",
     "onboard.subscription.notAttempted": "The flow never reached the event subscription step",
     "w.credentialsStoredNotApplied": "The credential was saved, but the running channels did not reload it \u2014 restart dsh to be sure.",
+    // The two halves of a save fail independently, so they are reported
+    // independently — see `onSave` in `settings-client.mjs`.
+    "saveFailedSettings": "The settings were not saved \u2014 please try again.",
+    "saveFailedCredentials": "The credential was not stored \u2014 re-enter it and save again.",
     "status.loading": "Loading\u2026",
     "status.idle": "Ready",
     "status.saving": "Saving\u2026",
     "status.saved": "Saved",
     "status.error": "Save failed",
+    "cs.disabled": "Not enabled",
+    "cs.stopped": "Not running",
+    "cs.failed": "Connection failed",
+    "cs.running": "Running",
+    "cs.idle": "Idle",
+    "cs.connecting": "Connecting",
+    "cs.connected": "Connected",
+    "cs.reconnecting": "Reconnecting",
+    "cs.reconnecting.n": "Reconnecting (attempt {n})",
     "channel.feishu": "Feishu / Lark",
     "channel.feishu.hint": "Create a custom app on the Feishu open platform and receive messages over a long connection.",
     "channel.telegram": "Telegram",
@@ -517,6 +650,10 @@ var LOCALES = {
     "f.dmMode.hint": "Who is allowed to message the bot directly.",
     "f.language": "Reply language",
     "f.language.hint": "The language the bot replies to users in.",
+    "f.threadIsolation": "Per-topic sessions",
+    "f.threadIsolation.hint": "When on, each topic in a group chat keeps its own conversation context; when off, the whole group shares one session.",
+    "f.onboarding": "Allow first-run QR setup",
+    "f.onboarding.hint": "When off, a missing credential no longer starts the QR flow; the pane only asks you to fill the fields in.",
     "f.webhookPort": "Callback port",
     "f.webhookPort.hint": "Used only by the callback-URL transport; defaults to 3000.",
     "f.webhookPath": "Callback path",
@@ -525,8 +662,10 @@ var LOCALES = {
     "f.pollingTimeoutSeconds.hint": "How long one long poll waits; defaults to 30.",
     "f.baseUrl": "API base URL",
     "f.baseUrl.hint": "The Telegram Bot API endpoint \u2014 only change it if you run your own proxy.",
-    "f.defaultAt": "Default @-list",
-    "f.defaultAt.hint": "Members to @ by default on group messages, comma-separated.",
+    "f.stream.url": "Stream URL",
+    "f.stream.url.hint": "The DingTalk Stream endpoint \u2014 only change it if you run your own proxy.",
+    "f.stream.requireMention": "Only when @-mentioned",
+    "f.stream.requireMention.hint": "In group chats, handle a message only if the bot was mentioned. Direct messages are unaffected.",
     "f.pollIntervalMs": "Poll interval (ms)",
     "f.pollIntervalMs.hint": "How often the web channel checks for new messages; defaults to 1000.",
     // General settings. These resolve once when the plugin starts and there is
@@ -563,6 +702,10 @@ var LOCALES = {
     "s.feishu.appId.hint": "The App ID from the open platform\u2019s credentials page. Not a secret \u2014 shown in full.",
     "s.feishu.appSecret": "App Secret",
     "s.feishu.appSecret.hint": "The app secret paired with the App ID. Confidential \u2014 only the first and last 4 characters are shown.",
+    "s.feishu.verificationToken": "Verification Token",
+    "s.feishu.verificationToken.hint": "Only needed by the \u201Ccallback URL\u201D transport, from the open platform\u2019s events page. Confidential; leave empty when using the websocket transport.",
+    "s.feishu.encryptKey": "Encrypt Key",
+    "s.feishu.encryptKey.hint": "Only needed by the \u201Ccallback URL\u201D transport \u2014 the encryption key on the same page as the verification token. Confidential; leave empty when using the websocket transport.",
     "s.telegram.botToken": "Bot Token",
     "s.telegram.botToken.hint": "The bot token from @BotFather, like 123456:ABC\u2026 \u2014 confidential.",
     "s.dingtalk.webhookUrl": "Webhook URL",
@@ -602,9 +745,13 @@ function optionalText(t, key) {
 var PANE_VIEWS = ["general", "channels"];
 var DEFAULT_VIEW = "channels";
 var ADVANCED_KEYS = {
-  feishu: ["webhookPort", "webhookPath"],
+  feishu: ["webhookPort", "webhookPath", "threadIsolation", "onboarding"],
   telegram: ["pollingTimeoutSeconds", "baseUrl"],
-  dingtalk: ["defaultAt"],
+  // `defaultAt` is not here and is not a field at all: it is an object, and the
+  // pane used to render it as a text input (showing `[object Object]` and
+  // writing a string back over it). It survives saves through
+  // `CHANNEL_PRESERVED_KEYS` instead — displayed nowhere, damaged nowhere.
+  dingtalk: ["stream.url", "stream.requireMention"],
   web: ["pollIntervalMs"]
 };
 function isAdvanced(channel, key) {
@@ -670,7 +817,7 @@ var h = React.createElement;
 var ALL_CHANNELS = Object.keys(CHANNEL_SECRET_FIELDS);
 var STYLE = `
 .dsh-connect-settings,.dsh-connect-settings *,.dsh-connect-settings *::before,.dsh-connect-settings *::after{box-sizing:border-box}
-.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);--ds-warn:var(--dsw-alias-state-error-primary,#b45309);--ds-nav-h:39px;display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);--ds-warn:var(--dsw-alias-state-error-primary,#b45309);--ds-ok:var(--dsw-alias-state-success-primary,#0f7b3f);--ds-nav-h:39px;display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 .dsh-connect-settings .ds-card{display:flex;flex-direction:column;gap:10px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg);padding:12px 14px}
 .dsh-connect-settings .ds-card-title{margin:0;font-size:13px;font-weight:600}
 .dsh-connect-settings .ds-note{margin:0;font-size:11px;line-height:1.5;color:var(--ds-muted)}
@@ -737,6 +884,7 @@ var STYLE = `
 .dsh-connect-settings .ds-issue{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-size:11px;line-height:1.5;color:var(--ds-warn,#b45309)}
 .dsh-connect-settings .ds-issue-reason{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all;color:var(--ds-muted)}
 .dsh-connect-settings .ds-badge.ds-badge-warn{border-color:var(--ds-warn,#b45309);color:var(--ds-warn,#b45309)}
+.dsh-connect-settings .ds-badge.ds-badge-ok{border-color:var(--ds-ok,#0f7b3f);color:var(--ds-ok,#0f7b3f)}
 .dsh-connect-settings .ds-btn{height:32px;padding:0 18px;border:0;border-radius:6px;background:var(--dsw-alias-button-primary-fill,var(--ds-accent));color:var(--dsw-alias-label-primary-foreground,#ffffff);font:inherit;font-weight:500;cursor:pointer}
 .dsh-connect-settings .ds-btn:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--ds-accent))}
 .dsh-connect-settings .ds-btn:disabled{opacity:.55;cursor:default}
@@ -843,6 +991,19 @@ function renderSecretField(ch, field, form, onChange, t) {
     hint ? h("p", { className: "ds-hint" }, hint) : null
   );
 }
+function connectionBadgeClass(state) {
+  if (state === "failed") return "ds-badge ds-badge-warn";
+  if (state === "connected" || state === "running") return "ds-badge ds-badge-ok";
+  return "ds-badge";
+}
+function connectionStatusLabel(status, t) {
+  const state = status.state;
+  const attempts = status.attempts ?? 0;
+  if (state === "reconnecting" && attempts > 0) {
+    return tr(t, "cs.reconnecting.n", t("cs.reconnecting")).replace("{n}", String(attempts));
+  }
+  return tr(t, `cs.${state}`, state);
+}
 function renderChannel(ch, ctx) {
   const { form, creds, unknownCreds, t, open, advOverride, setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced, onboarding, onOnboard, onOnboardCancel } = ctx;
   const name2 = tr(t, `channel.${ch}`, ch);
@@ -850,6 +1011,7 @@ function renderChannel(ch, ctx) {
   const isOpen = open.has(ch);
   const badCreds = unknownCreds.has(ch);
   const advOpen = advOverride?.has(ch) ?? false;
+  const connStatus = form.channelStatus?.[ch];
   const configFields = CHANNEL_CONFIG_FIELDS[ch] ?? [];
   const common = configFields.filter((f) => !isAdvanced(ch, f.key));
   const advanced = configFields.filter((f) => isAdvanced(ch, f.key));
@@ -896,6 +1058,18 @@ function renderChannel(ch, ctx) {
           "span",
           { className: badCreds ? "ds-badge ds-badge-warn" : "ds-badge" },
           badCreds ? t("credentialUnknown") : creds[ch] ? t("reachable") : t("unreachable")
+        ),
+        // The second badge, and a second badge rather than a rewrite of the
+        // first because the two answer different questions: the one above is
+        // about the store, this one is about the wire. A channel with perfect
+        // credentials and a socket that keeps dropping is 「已配置凭据」+
+        // 「重连中」, and one badge would have to call that working. Neither may
+        // absorb the other — a 「未配置凭据」 channel that is nonetheless running
+        // (secrets injected at boot from elsewhere) is just as real.
+        connStatus === void 0 ? null : h(
+          "span",
+          { className: connectionBadgeClass(connStatus.state) },
+          connectionStatusLabel(connStatus, t)
         ),
         // Drawn in CSS, never a text node: the bundle test reads rendered text as
         // user-visible copy, and a `▾` here would be collected as a stray string.
@@ -952,6 +1126,7 @@ var ONBOARD_POLL_LIMIT_MS = 16 * 60 * 1e3;
 var sleep = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
+var CHANNEL_STATUS_POLL_MS = 5e3;
 function renderOnboarding(ch, ctx) {
   const { t, onboarding, onOnboard, onOnboardCancel } = ctx;
   const manual = MANUAL_CREATE_URL[ch];
@@ -1031,6 +1206,15 @@ function renderIssue(issue, t) {
       issue.reason === void 0 ? null : h("code", { className: "ds-issue-reason" }, issue.reason)
     );
   }
+  if (issue.kind === "saveFailed") {
+    return h(
+      "li",
+      { className: "ds-issue", key: issue.key },
+      channel,
+      h("span", null, t(issue.code === "settingsSaveFailed" ? "saveFailedSettings" : "saveFailedCredentials")),
+      issue.reason ? h("code", { className: "ds-issue-reason" }, issue.reason) : null
+    );
+  }
   return h(
     "li",
     { className: "ds-issue", key: issue.key },
@@ -1084,6 +1268,10 @@ function renderGeneralCard(group, ctx) {
 function renderGeneralView(ctx) {
   return GENERAL_FIELD_GROUPS.map((group) => renderGeneralCard(group, ctx));
 }
+function rpcReason(error) {
+  const reason = error?.code ?? error?.message ?? String(error);
+  return typeof reason === "string" && reason.length > 0 ? reason : void 0;
+}
 function ConnectSettingsTab({ rpcCall, t }) {
   const [form, setForm] = React.useState(null);
   const [status, setStatus] = React.useState("loading");
@@ -1103,27 +1291,44 @@ function ConnectSettingsTab({ rpcCall, t }) {
       setNotices(snapshotIssues(snap));
       setStatus("idle");
     }).catch(() => alive && setStatus("error"));
+    const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      loadSettings(rpc).then((snap) => {
+        if (!alive || snap.channelStatus === void 0) return;
+        setForm((prev) => prev === null ? prev : { ...prev, channelStatus: { ...snap.channelStatus } });
+      }).catch(() => {
+      });
+    }, CHANNEL_STATUS_POLL_MS);
     return () => {
       alive = false;
+      clearInterval(timer);
     };
   }, [rpcCall]);
   const onSave = async () => {
     if (!form) return;
     setStatus("saving");
+    const failures = [];
+    let snap;
     try {
-      let snap = await saveSettings(rpc, buildConfigSave(form));
-      const warnings = new Set(snap.warnings ?? []);
-      for (const c of buildCredentialSaves(form)) {
-        snap = await saveCredentials(rpc, c.channel, c.values);
-        for (const code of snap.warnings ?? []) warnings.add(code);
-      }
-      setForm(snapshotToForm(snap));
-      setCreds(snap.credentials ?? {});
-      setNotices(snapshotIssues(snap, [...warnings]));
-      setStatus("saved");
-    } catch {
-      setStatus("error");
+      snap = await saveSettings(rpc, buildConfigSave(form));
+    } catch (error) {
+      failures.push({ kind: "saveFailed", code: "settingsSaveFailed", reason: rpcReason(error), key: "saveFailed:settings" });
     }
+    const warnings = new Set(snap?.warnings ?? []);
+    for (const c of buildCredentialSaves(form)) {
+      try {
+        snap = await saveCredentials(rpc, c.channel, c.values);
+      } catch (error) {
+        failures.push({ kind: "saveFailed", code: "credentialsSaveFailed", channel: c.channel, reason: rpcReason(error), key: `saveFailed:credentials:${c.channel}` });
+        continue;
+      }
+      for (const code of snap.warnings ?? []) warnings.add(code);
+    }
+    if (snap !== void 0 && failures.length === 0) setForm(snapshotToForm(snap));
+    if (snap !== void 0) setCreds(snap.credentials ?? {});
+    const carried = (snap === void 0 ? notices : snapshotIssues(snap, [...warnings])).filter((n) => n.kind !== "saveFailed");
+    setNotices([...carried, ...failures]);
+    setStatus(failures.length > 0 ? "error" : "saved");
   };
   const onOnboard = async () => {
     setOnboarding({ busy: true });

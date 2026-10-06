@@ -8,7 +8,8 @@
  * @module dsh-connect/settings/settings-model
  */
 import { CHANNEL_SECRET_KEYS } from "./credential-store.js";
-import type { ChannelName } from "./channels.js";
+import { readDotPath, writeDotPath, type ChannelName } from "./channels.js";
+import type { ChannelConnectionStatus } from "./channel-status.js";
 import type { SettingsSnapshot } from "./settings-rpc.js";
 
 /** Secret config-keys per channel, for rendering secret inputs. */
@@ -23,6 +24,14 @@ export const CHANNEL_SECRET_FIELDS = Object.fromEntries(
  * `options`, list → a non-empty `string[]`).
  */
 export interface ConfigField {
+  /**
+   * The field's identity **and** its path in the channel config. Most keys are
+   * flat (`transport`), but a key may be dotted when the adapter reads it from a
+   * sub-object (`stream.url`) — one rule, so no field needs a second lookup to
+   * find where its value lives. The form stores values under this same key, and
+   * only `snapshotToForm`/`buildConfigSave` translate to and from the nested
+   * config shape.
+   */
   key: string;
   kind: 'text' | 'number' | 'boolean' | 'select' | 'list';
   options?: string[];
@@ -41,6 +50,8 @@ export const CHANNEL_CONFIG_FIELDS = {
     { key: 'requireMention', kind: 'boolean', label: 'requireMention' },
     { key: 'dmMode', kind: 'select', options: ['open', 'allowlist', 'pair', 'disabled'], label: 'dmMode' },
     { key: 'language', kind: 'select', options: ['zh', 'en'], label: 'language' },
+    { key: 'threadIsolation', kind: 'boolean', label: 'threadIsolation' },
+    { key: 'onboarding', kind: 'boolean', label: 'onboarding' },
     { key: 'webhookPort', kind: 'number', label: 'webhookPort' },
     { key: 'webhookPath', kind: 'text', label: 'webhookPath' },
   ],
@@ -52,12 +63,37 @@ export const CHANNEL_CONFIG_FIELDS = {
   ],
   dingtalk: [
     { key: 'language', kind: 'select', options: ['zh', 'en'], label: 'language' },
-    { key: 'defaultAt', kind: 'text', label: 'defaultAt' },
+    // Nested, because that is where the adapter reads them (`config.stream.*`).
+    // DingTalk's `defaultAt` is deliberately *not* here — it is an object with a
+    // list inside, the pane has no control for it, and rendering it as text
+    // printed `[object Object]` and then wrote that string over the real value.
+    // It is carried through untouched instead; see `CHANNEL_PRESERVED_KEYS`.
+    { key: 'stream.url', kind: 'text', label: 'stream.url' },
+    { key: 'stream.requireMention', kind: 'boolean', label: 'stream.requireMention' },
   ],
   web: [
     { key: 'pollIntervalMs', kind: 'number', label: 'pollIntervalMs' },
   ],
 } as const satisfies Record<ChannelName, readonly ConfigField[]>;
+
+/**
+ * Declared channel config keys the pane must carry through *without* editing —
+ * dotted paths, read and written verbatim.
+ *
+ * These exist because a save is a whole-section replace: anything the host sent
+ * that the pane does not put back is gone from the profile. That is the bug this
+ * whole table exists to make impossible, and it applies just as much to a key
+ * with no control as to one with a control. The completeness test in
+ * `test/channel-config-coverage.test.mjs` proves every declared `Config` key is
+ * a field, a secret, or listed here.
+ */
+export const CHANNEL_PRESERVED_KEYS: Record<ChannelName, readonly string[]> = {
+  feishu: [],
+  telegram: [],
+  // `defaultAt` is `{ mobiles?: string[]; userIds?: string[]; all?: boolean }`.
+  dingtalk: ['defaultAt'],
+  web: [],
+};
 
 /** Channel-agnostic keys applied to every channel that doesn't set its own. */
 export const CHANNEL_DEFAULT_FIELDS: readonly ConfigField[] = [
@@ -112,6 +148,37 @@ export const GENERAL_FIELD_GROUPS: readonly { title: string; fields: readonly Co
 /** Flat view of the general settings fields, for projection and form code. */
 export const GENERAL_FIELDS: readonly ConfigField[] = GENERAL_FIELD_GROUPS.flatMap((g) => g.fields);
 
+/**
+ * Copy a config value so the form never aliases the snapshot it came from.
+ *
+ * Written out rather than `structuredClone` because this module also ships in
+ * the browser bundle, and because config values are JSON-shaped by construction
+ * (the settings schema rejects anything else) — so the plain recursion is total.
+ */
+function copyConfigValue<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(copyConfigValue) as unknown as T;
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = copyConfigValue(v);
+    return out as unknown as T;
+  }
+  return value;
+}
+
+/**
+ * Every path the pane owns for `channel`: its editable fields plus the keys it
+ * carries through untouched.
+ *
+ * The save payload is built from exactly this list, which is what makes the
+ * pane's surface and the persisted surface the same set — and what makes a
+ * `Config` key that is in neither list a *test* failure (see the completeness
+ * test) rather than a silent deletion at the next save.
+ */
+export function channelConfigPaths(channel: ChannelName): string[] {
+  const fields = (CHANNEL_CONFIG_FIELDS[channel] ?? []) as readonly ConfigField[];
+  return [...fields.map((f) => f.key), ...(CHANNEL_PRESERVED_KEYS[channel] ?? [])];
+}
+
 /** Normalize a raw form input for a field `kind` (empty → undefined = not saved). */
 export function coerceConfigValue(kind: ConfigField['kind'], raw: unknown): unknown {
   if (raw === undefined || raw === null || raw === '') return undefined;
@@ -149,6 +216,13 @@ export function coerceConfigValue(kind: ConfigField['kind'], raw: unknown): unkn
 export interface SettingsForm {
   channels: ChannelName[];
   channelDefaults: Record<string, unknown>;
+  /**
+   * Per-channel field values, keyed by `ConfigField.key` — which is the field's
+   * path in the channel config, so a nested field is stored flat here under its
+   * dotted key (`'stream.url'`) and only translated at the snapshot/save edges.
+   * Values are always copies of what the host sent; the pane mutates this object
+   * in place, and aliasing the snapshot would edit the host's own data.
+   */
   channelConfigs: Record<string, Record<string, unknown>>;
   /** Secret inputs the user is *typing*: written on save, never seeded by a read. */
   secrets: Record<string, Record<string, string>>;
@@ -196,6 +270,17 @@ export interface SettingsForm {
    * rendering an empty control.
    */
   agentModel?: { provider: string; model: string };
+  /**
+   * Per-channel access state, as composed by the host (`channelStatus` in the
+   * snapshot). Purely a display value: it is never part of a save payload, and
+   * the pane refreshes it on a timer while the channels view is open.
+   *
+   * Absent when the host does not provide one — which the pane renders by simply
+   * not drawing a status badge, rather than by inventing a 「未知」 state. This
+   * is why it is attached conditionally: an `undefined` key and a missing key
+   * would otherwise both survive a round trip and blur that distinction.
+   */
+  channelStatus?: Record<string, ChannelConnectionStatus>;
   settingsStatePath?: string;
   /** True when the section lives in the settings namespace: a save is immediate and durable. */
   live: boolean;
@@ -215,7 +300,20 @@ export function snapshotToForm(snapshot: SettingsSnapshot): SettingsForm {
   // values is also simply more honest than showing it blank.
   const channelConfigs: Record<string, Record<string, unknown>> = {};
   for (const ch of Object.keys(CHANNEL_CONFIG_FIELDS) as ChannelName[]) {
-    channelConfigs[ch] = (config[ch] ?? {}) as Record<string, unknown>;
+    const section = (config[ch] ?? {}) as Record<string, unknown>;
+    const cfg: Record<string, unknown> = {};
+    // Read one path at a time rather than copying the section wholesale: the
+    // form is what a save sends back, and seeding it with keys the pane has no
+    // control for would make it responsible for re-sending them. That is exactly
+    // the class of bug being fixed — a declared key missing from the tables is
+    // dropped on the next save (see the completeness test), so the fix is to put
+    // it in a table, not to smuggle it through the form.
+    for (const path of channelConfigPaths(ch)) {
+      const value = readDotPath(section, path);
+      if (value === undefined || value === null) continue;
+      cfg[path] = copyConfigValue(value);
+    }
+    channelConfigs[ch] = cfg;
   }
   // Seeded by field table rather than by copying the whole top-level config:
   // `config` also holds keys this pane does not edit (`stateDir`, `visionModel`,
@@ -239,6 +337,7 @@ export function snapshotToForm(snapshot: SettingsSnapshot): SettingsForm {
     // setters, and aliasing the snapshot here would edit the host's own object.
     sharedOverrideKeys: [...(snapshot.sharedOverrideKeys ?? [])],
     ...(snapshot.agentModel ? { agentModel: snapshot.agentModel } : {}),
+    ...(snapshot.channelStatus === undefined ? {} : { channelStatus: { ...snapshot.channelStatus } }),
     // Deliberately empty even though `secretPreviews` carries something: an
     // input is a place to *type a new* secret, and prefilling it with the mask
     // would either overwrite the stored secret with its own preview on save, or
@@ -275,8 +374,27 @@ export function buildConfigSave(form: SettingsForm): Record<string, unknown> {
   const defaults = stripEmpty(form.channelDefaults ?? {});
   if (Object.keys(defaults).length > 0) config.channelDefaults = defaults;
   for (const [ch, cfg] of Object.entries(form.channelConfigs ?? {})) {
-    const clean = stripEmpty(cfg ?? {});
-    if (Object.keys(clean).length > 0) config[ch] = clean;
+    // Written path by path into a fresh object, because a field's key is a
+    // *path*: `stream.url` has to leave here as `{ stream: { url } }` for the
+    // adapter to read it. A path whose value was cleared is simply absent, so a
+    // cleared box removes the key (returning it to its inherited value) instead
+    // of pinning `stream: { url: '' }` into the profile.
+    const out: Record<string, unknown> = {};
+    const known = new Set<string>();
+    for (const path of channelConfigPaths(ch as ChannelName)) {
+      known.add(path);
+      const value = cfg?.[path];
+      if (value === undefined || value === null) continue;
+      writeDotPath(out, path, value);
+    }
+    // A channel block the tables do not describe (a form built by some other
+    // caller) is carried verbatim rather than emptied: this function's job is to
+    // persist the form, not to police it.
+    for (const [k, v] of Object.entries(cfg ?? {})) {
+      if (known.has(k) || v === undefined || v === null) continue;
+      out[k] = v;
+    }
+    if (Object.keys(out).length > 0) config[ch] = out;
   }
   // General keys sit at the top level beside `channels` — they are plugin-wide
   // defaults, not per-channel options. Emitted only when set: an empty list is

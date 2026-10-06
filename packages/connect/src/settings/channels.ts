@@ -82,14 +82,98 @@ const NESTED_SECRET_KEYS: Record<ChannelName, Record<string, string>> = {
   web: {},
 };
 
-/** Read a value at a dotted path (e.g. `"stream.clientId"`), undefined if absent. */
-function readDotPath(obj: Record<string, unknown>, path: string): unknown {
+/**
+ * Where a channel secret actually lives in the channel config: its dotted path,
+ * or the config key itself when it sits at the root.
+ *
+ * Exported because the mapping is otherwise invisible outside this module — a
+ * credential table says `clientId`, the schema says `stream.clientId`, and only
+ * this map knows they are the same key. The completeness test needs exactly that
+ * translation to check every credential against the schema's `role("secret")`
+ * leaves, and re-deriving it there would be a second copy of the map free to
+ * drift from this one.
+ */
+export function secretConfigPath(channel: ChannelName, configKey: string): string {
+  return NESTED_SECRET_KEYS[channel]?.[configKey] ?? configKey;
+}
+
+/**
+ * Read a value at a dotted path (e.g. `"stream.clientId"`), undefined if absent.
+ *
+ * Exported for the settings model: a channel field table addresses nested config
+ * keys the same way this module addresses nested secret keys (`NESTED_SECRET_KEYS`),
+ * so both sides share one implementation rather than growing a second one.
+ */
+export function readDotPath(obj: Record<string, unknown>, path: string): unknown {
   let node: unknown = obj;
   for (const segment of path.split(".")) {
     if (node === null || typeof node !== "object") return undefined;
     node = (node as Record<string, unknown>)[segment];
   }
   return node;
+}
+
+/**
+ * Write `value` at a dotted path, creating the intermediate objects a missing
+ * segment needs (so `"stream.url"` can be set on a config that has no `stream`
+ * yet). Mutates and returns `target`; the caller owns cloning when it must not
+ * touch its input.
+ *
+ * A path that runs *through* a non-object (a scalar where a branch was
+ * expected) is left untouched rather than overwritten: clobbering a scalar the
+ * user set by hand to make room for a nested key would destroy data to store
+ * data.
+ */
+export function writeDotPath(
+  target: Record<string, unknown>,
+  path: string,
+  value: unknown,
+): Record<string, unknown> {
+  const segments = path.split(".");
+  let node: Record<string, unknown> = target;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const segment = segments[i]!;
+    const next = node[segment];
+    if (next === null || typeof next !== "object" || Array.isArray(next)) {
+      if (next !== undefined) return target;
+      const created: Record<string, unknown> = {};
+      node[segment] = created;
+      node = created;
+      continue;
+    }
+    node = next as Record<string, unknown>;
+  }
+  node[segments[segments.length - 1]!] = value;
+  return target;
+}
+
+/**
+ * Return a copy of `target` with the value at a dotted path removed. A path that
+ * is not there comes back as an unchanged copy.
+ *
+ * Non-mutating, unlike its `readDotPath`/`writeDotPath` siblings, and
+ * deliberately so: its caller is the snapshot's secret filter, which starts from
+ * a *shallow* copy of the live config. A mutating delete would reach through
+ * that copy into the running config and strip the credential the adapter is
+ * still using. Only the objects along the path are cloned; the rest is shared by
+ * reference, which is sound because nothing else is written.
+ *
+ * A branch left empty by removing its last key is kept (`stream: {}`): it is
+ * inert, and pruning would make this helper guess whether the user's own empty
+ * object was meant to be there.
+ */
+export function withoutDotPath(target: Record<string, unknown>, path: string): Record<string, unknown> {
+  const segments = path.split(".");
+  const head = segments[0]!;
+  if (segments.length === 1) {
+    const copy = { ...target };
+    delete copy[head];
+    return copy;
+  }
+  const child = target[head];
+  // A scalar where a branch was expected: leave it alone rather than replace it.
+  if (child === null || typeof child !== "object" || Array.isArray(child)) return { ...target };
+  return { ...target, [head]: withoutDotPath(child as Record<string, unknown>, segments.slice(1).join(".")) };
 }
 
 /**
@@ -106,11 +190,9 @@ export function extractConfigSecrets(
   secretKeys: Record<string, string>,
 ): Record<string, string> {
   if (!config || typeof config !== "object") return {};
-  const nested = NESTED_SECRET_KEYS[channel] ?? {};
   const out: Record<string, string> = {};
   for (const configKey of Object.keys(secretKeys)) {
-    const path = nested[configKey];
-    const value = path ? readDotPath(config, path) : config[configKey];
+    const value = readDotPath(config, secretConfigPath(channel, configKey));
     if (typeof value === "string" && value.length > 0) out[configKey] = value;
   }
   return out;

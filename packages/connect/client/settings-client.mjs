@@ -57,7 +57,7 @@ const ALL_CHANNELS = Object.keys(CHANNEL_SECRET_FIELDS);
 //    on a light shell for anyone whose OS is dark. Do not bring it back.
 const STYLE = `
 .dsh-connect-settings,.dsh-connect-settings *,.dsh-connect-settings *::before,.dsh-connect-settings *::after{box-sizing:border-box}
-.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);--ds-warn:var(--dsw-alias-state-error-primary,#b45309);--ds-nav-h:39px;display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.dsh-connect-settings{--ds-bg:var(--dsw-alias-bg-layer-3,#ffffff);--ds-bg-sub:var(--dsw-alias-bg-layer-1,#f6f7f9);--ds-text:var(--dsw-alias-label-primary,#1f2329);--ds-muted:var(--dsw-alias-label-tertiary,#646a73);--ds-border:var(--dsw-alias-border-l2,#e2e4e8);--ds-border-2:var(--dsw-alias-border-l3,#c8cbd0);--ds-accent:var(--dsw-alias-state-business-primary,#3b82f6);--ds-hover:var(--dsw-alias-interactive-bg-hover,#2631480f);--ds-warn:var(--dsw-alias-state-error-primary,#b45309);--ds-ok:var(--dsw-alias-state-success-primary,#0f7b3f);--ds-nav-h:39px;display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--ds-text);font:13px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 .dsh-connect-settings .ds-card{display:flex;flex-direction:column;gap:10px;border:1px solid var(--ds-border);border-radius:10px;background:var(--ds-bg);padding:12px 14px}
 .dsh-connect-settings .ds-card-title{margin:0;font-size:13px;font-weight:600}
 .dsh-connect-settings .ds-note{margin:0;font-size:11px;line-height:1.5;color:var(--ds-muted)}
@@ -124,6 +124,7 @@ const STYLE = `
 .dsh-connect-settings .ds-issue{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-size:11px;line-height:1.5;color:var(--ds-warn,#b45309)}
 .dsh-connect-settings .ds-issue-reason{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all;color:var(--ds-muted)}
 .dsh-connect-settings .ds-badge.ds-badge-warn{border-color:var(--ds-warn,#b45309);color:var(--ds-warn,#b45309)}
+.dsh-connect-settings .ds-badge.ds-badge-ok{border-color:var(--ds-ok,#0f7b3f);color:var(--ds-ok,#0f7b3f)}
 .dsh-connect-settings .ds-btn{height:32px;padding:0 18px;border:0;border-radius:6px;background:var(--dsw-alias-button-primary-fill,var(--ds-accent));color:var(--dsw-alias-label-primary-foreground,#ffffff);font:inherit;font-weight:500;cursor:pointer}
 .dsh-connect-settings .ds-btn:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--ds-accent))}
 .dsh-connect-settings .ds-btn:disabled{opacity:.55;cursor:default}
@@ -229,6 +230,49 @@ function renderSecretField(ch, field, form, onChange, t) {
 // A plain function rather than a child component, deliberately: the bundle test
 // supplies hook values *positionally*, so every `useState` in the tree has to
 // live in `ConnectSettingsTab` in a fixed order. Nothing in here may call a hook.
+/**
+ * The access badge's class: which states get a colour, and which do not.
+ *
+ * Only the two ends are coloured. `connected`/`running` earn the success border
+ * so a working channel reads as working at a glance — that glance is the entire
+ * reason this badge exists — and `failed` keeps the warn border the credentials
+ * badge already uses for a bad state. The middle states stay default-coloured
+ * on purpose: 「连接中」/「重连中」 are the SDK retrying on its own and are not yet
+ * a problem to draw attention to, and 「未启用」/「未运行」 are the user's own
+ * doing. Painting those red would make an ordinary disabled channel look broken.
+ */
+function connectionBadgeClass(state) {
+  if (state === 'failed') return 'ds-badge ds-badge-warn';
+  if (state === 'connected' || state === 'running') return 'ds-badge ds-badge-ok';
+  return 'ds-badge';
+}
+
+/**
+ * The badge's text for one status, resolving the one state that carries data.
+ *
+ * `reconnecting` has two keys: the bare word, and `cs.reconnecting.n` with a
+ * `{n}` placeholder substituted here. The substitution lives at the call site
+ * rather than in the locale because `t()` is a plain key lookup with no
+ * formatting, and it is deliberately not done by string-splicing a translated
+ * sentence — an English 「Reconnecting (attempt 3)」 and a Chinese 「重连中（第 3 次）」
+ * put the number in different places, which is exactly what a placeholder is
+ * for. The locale test asserts `{n}` survives in both languages, so a
+ * translation that drops it fails the suite instead of silently rendering a
+ * sentence with no count in it.
+ */
+function connectionStatusLabel(status, t) {
+  const state = status.state;
+  const attempts = status.attempts ?? 0;
+  if (state === 'reconnecting' && attempts > 0) {
+    return tr(t, 'cs.reconnecting.n', t('cs.reconnecting')).replace('{n}', String(attempts));
+  }
+  // An unrecognised state falls back to the host's own token rather than to a
+  // friendly word: the client is served by the host it is talking to, so this
+  // can only be a version skew, and naming the state we do not know is the
+  // honest report. Claiming 「运行中」 here would invent a state of health.
+  return tr(t, `cs.${state}`, state);
+}
+
 function renderChannel(ch, ctx) {
   const { form, creds, unknownCreds, t, open, advOverride, setChannels, setField, setChannelConfig, toggleOpen, toggleAdvanced, onboarding, onOnboard, onOnboardCancel } = ctx;
   const name = tr(t, `channel.${ch}`, ch);
@@ -241,6 +285,13 @@ function renderChannel(ch, ctx) {
   // problem.
   const badCreds = unknownCreds.has(ch);
   const advOpen = advOverride?.has(ch) ?? false;
+  // The access state, when the host reports one. Absent means *the host cannot
+  // say* — not "unknown channel" — so no badge is drawn at all. A 「状态未知」
+  // placeholder here would be a claim, and the wrong one: it would read as
+  // something wrong with this channel rather than with the host that has no
+  // probe. The credentials badge beside it already covers "we cannot tell" for
+  // the store, in the one place that is true.
+  const connStatus = form.channelStatus?.[ch];
   const configFields = CHANNEL_CONFIG_FIELDS[ch] ?? [];
   // The split is what keeps a common case on one screen: two credentials and the
   // behavioural switches, with the set-once fields one disclosure deeper.
@@ -280,6 +331,15 @@ function renderChannel(ch, ctx) {
         h('span', { className: 'ds-channel-name' }, name),
         h('span', { className: badCreds ? 'ds-badge ds-badge-warn' : 'ds-badge' },
           badCreds ? t('credentialUnknown') : creds[ch] ? t('reachable') : t('unreachable')),
+        // The second badge, and a second badge rather than a rewrite of the
+        // first because the two answer different questions: the one above is
+        // about the store, this one is about the wire. A channel with perfect
+        // credentials and a socket that keeps dropping is 「已配置凭据」+
+        // 「重连中」, and one badge would have to call that working. Neither may
+        // absorb the other — a 「未配置凭据」 channel that is nonetheless running
+        // (secrets injected at boot from elsewhere) is just as real.
+        connStatus === undefined ? null : h('span', { className: connectionBadgeClass(connStatus.state) },
+          connectionStatusLabel(connStatus, t)),
         // Drawn in CSS, never a text node: the bundle test reads rendered text as
         // user-visible copy, and a `▾` here would be collected as a stray string.
         h('span', { className: 'ds-chevron' }))),
@@ -331,6 +391,13 @@ const MANUAL_CREATE_URL = {
 const ONBOARD_POLL_MS = 1500;
 const ONBOARD_POLL_LIMIT_MS = 16 * 60 * 1000;
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+// How often the channel cards re-read their access state while the pane is open.
+// Five seconds is the user's own number, chosen against the two ends that
+// matter: a reconnect cycle on Feishu's websocket is a handful of seconds, so a
+// slower tick would show 「已连接」 for most of an outage, and a faster one would
+// poll a socket state that cannot change materially faster than this.
+const CHANNEL_STATUS_POLL_MS = 5000;
 
 // The one-click creation block inside a channel card's body.
 //
@@ -413,6 +480,19 @@ function renderIssue(issue, t) {
       issue.appId === undefined ? null : h('code', { className: 'ds-issue-reason' }, issue.appId),
       issue.reason === undefined ? null : h('code', { className: 'ds-issue-reason' }, issue.reason));
   }
+  // A save whose write did not land. One line per half, because the two halves
+  // are independent documents and the pane attempts both: seeing only 「保存失败」
+  // is what left a user unable to tell a secret that was never stored from one
+  // that was stored and refused by Feishu. The reason is the host's code (an
+  // `RpcError.code`), rendered verbatim for the same reason `channelFailed`
+  // renders its adapter message — it is the only part that distinguishes a
+  // refused write from a dropped connection.
+  if (issue.kind === 'saveFailed') {
+    return h('li', { className: 'ds-issue', key: issue.key },
+      channel,
+      h('span', null, t(issue.code === 'settingsSaveFailed' ? 'saveFailedSettings' : 'saveFailedCredentials')),
+      issue.reason ? h('code', { className: 'ds-issue-reason' }, issue.reason) : null);
+  }
   // A host warning. `w.<code>`: a code shipped without its locale entry prints
   // the code — searchable, and visibly untranslated — rather than `undefined`.
   return h('li', { className: 'ds-issue', key: issue.key },
@@ -478,6 +558,21 @@ function renderGeneralView(ctx) {
   return GENERAL_FIELD_GROUPS.map((group) => renderGeneralCard(group, ctx));
 }
 
+/**
+ * Why a save failed, in the one form this pane may display: a code.
+ *
+ * On the host path it is always a public code — `settings-rpc.ts` deliberately
+ * replaces any unrecognised host error with `settings-failed` and drops the raw
+ * message, precisely so a failure cannot carry plugin internals (or a submitted
+ * payload) back into the UI. A transport failure never reached the host at all,
+ * so its message names no value we sent. Either way it is short, searchable, and
+ * the only thing that tells 「宿主拒绝了这次写入」 apart from 「连接断了」.
+ */
+function rpcReason(error) {
+  const reason = error?.code ?? error?.message ?? String(error);
+  return typeof reason === 'string' && reason.length > 0 ? reason : undefined;
+}
+
 // Thin React renderer over the tested settings-model helpers.
 export function ConnectSettingsTab({ rpcCall, t }) {
   const [form, setForm] = React.useState(null);
@@ -514,34 +609,95 @@ export function ConnectSettingsTab({ rpcCall, t }) {
       setNotices(snapshotIssues(snap));
       setStatus('idle');
     }).catch(() => alive && setStatus('error'));
-    return () => { alive = false; };
+
+    // Access state is the one thing on this page that changes with nobody
+    // touching anything: a socket drops, the SDK retries, an adapter dies on a
+    // reconcile. Without this the badge would be a reading taken whenever the
+    // pane happened to open, which for the question the badge exists to answer
+    // is the one answer certain to be stale by the time it matters.
+    //
+    // Only `channelStatus` is merged, and that is the whole discipline of this
+    // loop. Every other field in the snapshot has an owner on this page
+    // already — the inputs hold what the user is part-way through typing, and
+    // `notices` holds the line the last save just raised — so a poll that
+    // re-seeded the form would quietly delete unsaved edits every five seconds,
+    // and one that re-seeded the notices would erase a 保存失败 the user is
+    // reading. Status is the lone field with no editor, hence the only one that
+    // is safe to overwrite.
+    const timer = setInterval(() => {
+      // A hidden tab is not being read; the poll would only cost the host an
+      // adapter probe per channel per tick for nobody.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      loadSettings(rpc).then((snap) => {
+        if (!alive || snap.channelStatus === undefined) return;
+        setForm((prev) => (prev === null ? prev : { ...prev, channelStatus: { ...snap.channelStatus } }));
+      }).catch(() => {
+        // A dropped poll is not something to report: the next tick is five
+        // seconds away and the pane still shows the last state it saw.
+      });
+    }, CHANNEL_STATUS_POLL_MS);
+    return () => { alive = false; clearInterval(timer); };
   }, [rpcCall]);
 
   const onSave = async () => {
     if (!form) return;
     setStatus('saving');
+    // A save is two writes to two documents — the config section and the
+    // credential store — and they are attempted independently, each reporting its
+    // own outcome. One try/catch around the pair is how release 1.0.3 discarded
+    // what the user had typed: `settings.save` threw, the catch jumped straight
+    // to the error status, and the `credentials.save` loop below it never ran at
+    // all. The pane then said only 「保存失败」, over a Feishu channel that stayed
+    // 未设置, with nothing on screen to say whether the appId/appSecret had been
+    // stored and rejected or never written in the first place.
+    //
+    // The last snapshot in the chain wins: it is the one that reflects every
+    // write this save performed. Re-seeding the form from it also drops the
+    // typed secret values (their inputs are write-only by design) and picks up
+    // the new presence flags. That re-seed happens only when *both* halves
+    // landed: a snapshot taken after a failed config write still holds the
+    // host's old config, so seeding from it would replace everything the user
+    // typed with the state they were trying to change — losing their input a
+    // second time, now silently.
+    //
+    // `warnings` is the one report that has to be *accumulated* across the
+    // chain rather than read off the last snapshot: the error lists describe
+    // the state of the world and the host re-derives them on every call, but a
+    // warning is about the single call that raised it — a credential save whose
+    // reconcile failed would otherwise be erased by the next channel's save.
+    const failures = [];
+    let snap;
     try {
-      // The last snapshot in the chain wins: it is the one that reflects every
-      // write this save performed. Re-seeding the form from it also drops the
-      // typed secret values (their inputs are write-only by design) and picks up
-      // the new presence flags.
-      //
-      // `warnings` is the one report that has to be *accumulated* across the
-      // chain rather than read off the last snapshot: the error lists describe
-      // the state of the world and the host re-derives them on every call, but a
-      // warning is about the single call that raised it — a credential save whose
-      // reconcile failed would otherwise be erased by the next channel's save.
-      let snap = await saveSettings(rpc, buildConfigSave(form));
-      const warnings = new Set(snap.warnings ?? []);
-      for (const c of buildCredentialSaves(form)) {
+      snap = await saveSettings(rpc, buildConfigSave(form));
+    } catch (error) {
+      failures.push({ kind: 'saveFailed', code: 'settingsSaveFailed', reason: rpcReason(error), key: 'saveFailed:settings' });
+    }
+    const warnings = new Set(snap?.warnings ?? []);
+    for (const c of buildCredentialSaves(form)) {
+      try {
         snap = await saveCredentials(rpc, c.channel, c.values);
-        for (const code of snap.warnings ?? []) warnings.add(code);
+      } catch (error) {
+        failures.push({ kind: 'saveFailed', code: 'credentialsSaveFailed', channel: c.channel, reason: rpcReason(error), key: `saveFailed:credentials:${c.channel}` });
+        continue;
       }
-      setForm(snapshotToForm(snap));
-      setCreds(snap.credentials ?? {});
-      setNotices(snapshotIssues(snap, [...warnings]));
-      setStatus('saved');
-    } catch { setStatus('error'); }
+      for (const code of snap.warnings ?? []) warnings.add(code);
+    }
+    if (snap !== undefined && failures.length === 0) setForm(snapshotToForm(snap));
+    if (snap !== undefined) setCreds(snap.credentials ?? {});
+    // A snapshot replaces the notices wholesale — it is the current state of the
+    // world. When the very first write failed there is no snapshot at all, so
+    // the previous list survives it; either way this attempt's own failures are
+    // appended last, and the previous attempt's are dropped so that retrying
+    // replaces a stale line rather than stacking a second copy of it.
+    const carried = (snap === undefined ? notices : snapshotIssues(snap, [...warnings]))
+      .filter((n) => n.kind !== 'saveFailed');
+    // A credential write that landed when the config write did not still shows:
+    // `creds` is refreshed from that snapshot, so the channel's own
+    // 凭据状态 badge flips to stored while this line says the settings were not.
+    // (Not the 接入状态 badge beside it — that one follows the transport probe
+    // and this code must not touch it.)
+    setNotices([...carried, ...failures]);
+    setStatus(failures.length > 0 ? 'error' : 'saved');
   };
 
   // Start a one-click run, then watch it. The polling life is in this handler

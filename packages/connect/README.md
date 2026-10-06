@@ -312,6 +312,21 @@ restarts. A key that `dsh.shared.config.json` actually overrides carries a note
 saying the pane cannot win; the current model is shown read-only, because DSH
 owns it and switching it belongs inside DSH.
 
+Every channel card is headed by **two badges** (1.0.5). The first is the
+credentials badge — whether the channel *has* the credentials it needs, which is
+what it has always meant. The second is **access status**, answering a different
+question: whether the bot is *connected right now*. It reads
+`Connected / Connecting / Reconnecting (attempt N) / Idle / Running / Not running /
+Connection failed / Not enabled`, and the card's issue bar below carries the
+adapter's own reason when something failed. **Only Feishu reports a real
+transport state** (`LarkChannel.getConnectionStatus()`); the other three have no
+probe to ask, so they report only what the runtime can evidence rather than
+inventing a "connected" nobody checked. When the host offers no status at all,
+the second badge is not rendered — an 「unknown」 placeholder would be a claim.
+The channels view polls while it is open, so a reconnect appears on its own; the
+poll merges the status keys only, which is what keeps it from overwriting edits
+you have not saved yet.
+
 | Channels & credentials | General |
 |---|---|
 | ![dsh-connect settings pane: the primary navigation above the channel tab strip, the Feishu card expanded with its credential fields, and folded channel cards each showing a credentials badge](docs/images/settings-overview-zh.png) | ![the General view: four cards of settings, one per row, each noting that a change takes effect after dsh restarts](docs/images/settings-general-zh.png) |
@@ -571,6 +586,10 @@ Logs come from the DSH host logger (run `dsh web` in a terminal); plugin message
 | `connect: could not write the one-shot import marker at <path> …` | The import itself succeeded; the marker that records it could not be written (usually a read-only home). Not harmless: with no marker every start re-runs the whole migration and layers the legacy values back over whatever you changed in the pane after upgrading — which shows up as settings reverting on their own. Fix the profile directory's write permission, or create the marker file by hand. |
 | `connect: the import marker at <path> could not be read …` | A marker exists but cannot be read. It is treated as **already imported** and reported: better to skip an import than to re-apply old values over your newer settings. Delete the marker and restart to trigger the import again. |
 | Saving the pane fails with *`Configuration for "connect" is overridden by a home patch or command-line overlay`* | The pane writes the profile patch, but resolution layers `bundle → profile → $DSH_HOME/cordis.patch.yml → --patch`, so a value set in one of the last two wins over anything the pane saves and DSH refuses the write rather than let a save that could never take effect look successful. Edit the home patch (or drop the overlay) if you want the pane to own these settings. |
+| The pane takes a save but the channel still reads *Credentials missing*, and no **credentials status** line ever appears | Fixed in **1.0.4**: the plugin's `Config` schema was a *named export* only, so the loader never attached it to the plugin object, and DSH refused **every** pane write with `No configurable plugin entry "connect"`. The appId/appSecret you had just typed were dropped and the channel stayed unconfigured — and because the refusal happened before the credential write, nothing on screen said which of the two failed. **1.0.3 ships in this state and cannot save any setting at all**; upgrade. On 1.0.4 the save bar names each half separately (settings vs. credential) and appends the host's own error code. |
+| A channel setting you never touched is gone after saving the pane | Fixed in **1.0.5**. A save rewrites the channel's whole section, and the section was projected through a per-field allowlist — so any declared key the pane did not render was *reset*, not preserved, the first time you saved anything. Feishu lost `threadIsolation` and `onboarding`, DingTalk lost `stream.url` and `stream.requireMention`. DingTalk's `defaultAt` was worse than lost: rendered as `[object Object]` and then written back over the real object as that string. The declared keys now each fall into exactly one of *editable*, *secret* or *carried through*, and a completeness test derives the check from the schema so a new key cannot be forgotten. Upgrade and re-set the values the pane dropped. |
+| The Feishu card shows a credentials badge but you cannot tell whether the bot is actually connected | Fixed in **1.0.5**, which adds a second **access status** badge to every channel card. Before it, the header answered only 「are credentials configured」 — a channel with a valid appSecret and a dead socket looked exactly like a healthy one. Upgrade, then look for the badge beside the credentials one; the channels view also refreshes it on its own while open. |
+| `/send <path>` pastes the path as text instead of sending the file | Fixed in **1.0.5**: the retry wrapper rebuilt the adapter as an object literal carrying a fixed set of members, and `sendFile` was not among them, so `adapter.sendFile` was always `undefined` on the wrapper the runner holds and every `/send` silently degraded to a text message. Upgrade. |
 | Menu cards don't update / expire | Cards auto-close after 60 s idle by design; re-open the menu. Question and approval cards behave the same — see [Questions and approvals in a conversation](#questions-and-approvals-in-a-conversation). |
 
 **Rollback** — reinstall a previous release (`dsh plugin --profile web add dsh-connect@<version>` after removing the current one), or `git checkout` the pinned commit in a source install.

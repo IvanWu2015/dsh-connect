@@ -20,6 +20,10 @@ import type {
 } from "../../types.js";
 import type { Language } from "../../i18n.js";
 import { baseChatId, encodeChatKey } from "../../chat-key.js";
+import {
+  isChannelConnectionState,
+  type ChannelConnectionStatus,
+} from "../../settings/channel-status.js";
 import { feishuMessages, type FeishuMessages } from "./i18n.js";
 
 /** Zero-width / variation-selector chars that render at width 0. */
@@ -380,6 +384,22 @@ export class FeishuAdapter implements ChannelAdapter {
 
   onInbound(handler: (msg: InboundMessage) => void | Promise<void>): void {
     this.handler = handler;
+  }
+
+  /**
+   * The SDK's own view of the socket, which is the only honest source for
+   * 「已连接」 — the runtime can say a channel started, not that it is up.
+   *
+   * `undefined` covers both "the transport holds no socket" (webhook mode) and
+   * "the SDK has nothing to report yet"; the settings pane renders those as
+   * `running`, i.e. what the runtime actually knows. A state the SDK adds later
+   * is narrowed out rather than passed through, so an unrecognized string can
+   * never reach the pane as an untranslated badge.
+   */
+  connectionStatus(): ChannelConnectionStatus | undefined {
+    const status = this.channel.getConnectionStatus();
+    if (status === undefined || !isChannelConnectionState(status.state)) return undefined;
+    return { state: status.state, attempts: status.reconnectAttempts };
   }
 
   /** Resource types downloadable via `im.v1.messageResource.get`. Stickers are not supported by the Feishu API. */

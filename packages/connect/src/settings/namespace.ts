@@ -42,8 +42,8 @@
  */
 
 import z from "@deepseek-ai/schemastery";
-import { CHANNELS, type ChannelName, type LoggerLike } from "./channels.js";
-import { CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, GENERAL_FIELDS } from "./settings-model.js";
+import { CHANNELS, readDotPath, writeDotPath, type ChannelName, type LoggerLike } from "./channels.js";
+import { CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, GENERAL_FIELDS, channelConfigPaths } from "./settings-model.js";
 
 /**
  * The section key the pre-0.2 harness read from `$DSH_HOME/settings.yaml`, keyed
@@ -165,11 +165,46 @@ export function paneConfigFields(): Record<string, z<any>> {
   for (const field of CHANNEL_DEFAULT_FIELDS) defaults[field.key] = z.any().volatile();
   fields.channelDefaults = z.object(defaults);
   for (const name of CHANNELS) {
-    const channel: Record<string, z<any>> = {};
-    for (const field of CHANNEL_CONFIG_FIELDS[name]) channel[field.key] = z.any().volatile();
-    if (Object.keys(channel).length > 0) fields[name] = z.object(channel);
+    // Paths, not flat keys: a pane field may be dotted (`stream.url`), and the
+    // schema has to declare the *nesting* or the host's settings layer strips the
+    // value on the way in — the pane would report a successful save of a key
+    // that never reached the profile.
+    const spec: PaneFieldSpec = {};
+    for (const path of channelConfigPaths(name)) declarePanePath(spec, path);
+    if (Object.keys(spec).length > 0) fields[name] = paneFieldSchema(spec);
   }
   return fields;
+}
+
+/**
+ * A nested spec of pane paths: `true` at a leaf, a nested object at a branch.
+ *
+ * The intermediate representation exists because a dotted path has to become a
+ * real nested `z.object`, and building that bottom-up while reading paths is
+ * more code than walking a plain object once.
+ */
+type PaneFieldSpec = { [key: string]: true | PaneFieldSpec };
+
+function declarePanePath(spec: PaneFieldSpec, path: string): void {
+  const parts = path.split('.');
+  let node = spec;
+  for (const part of parts.slice(0, -1)) {
+    const child = node[part];
+    if (typeof child === 'object') node = child;
+    else node = node[part] = {};
+  }
+  const leaf = parts[parts.length - 1];
+  // A leaf that is already a branch keeps its branch: `stream` followed by
+  // `stream.url` must not collapse into `stream: true`.
+  if (typeof node[leaf] !== 'object') node[leaf] = true;
+}
+
+function paneFieldSchema(spec: PaneFieldSpec): z<any> {
+  const shape: Record<string, z<any>> = {};
+  for (const [key, value] of Object.entries(spec)) {
+    shape[key] = value === true ? z.any().volatile() : paneFieldSchema(value);
+  }
+  return z.object(shape);
 }
 
 /**
@@ -310,8 +345,16 @@ export function sectionOf(config: unknown, options: SectionOptions = {}): Connec
   for (const name of CHANNELS) {
     const raw = (source[name] ?? {}) as Record<string, unknown>;
     const projected: Record<string, unknown> = {};
-    for (const field of CHANNEL_CONFIG_FIELDS[name]) {
-      if (raw[field.key] !== undefined) projected[field.key] = raw[field.key];
+    // Path by path, over the *union* of the editable fields and the preserved
+    // keys: a field key may be dotted (`stream.url`) and read from a sub-object,
+    // and a preserved key (`defaultAt`) has no control in the pane at all. Both
+    // are declared Config keys, and this loop is the only thing standing between
+    // them and deletion — everything that writes a section comes through here,
+    // and a replace-semantics save resets whatever this projection omits.
+    for (const path of channelConfigPaths(name)) {
+      const value = readDotPath(raw, path);
+      if (value === undefined || value === null) continue;
+      writeDotPath(projected, path, value);
     }
     if (Object.keys(projected).length > 0) section[name] = projected;
   }

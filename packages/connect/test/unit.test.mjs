@@ -602,6 +602,86 @@ test("withOutboundRetry: retries deliveries, passes streamText/start/stop throug
   assert.equal(await wrapped.stop(), "stopped");
 });
 
+test("withOutboundRetry forwards every optional member instead of dropping it", async () => {
+  // The wrapper builds a fresh object literal, so an optional member it does not
+  // name is *gone* from the adapter the service holds — and `service.ts` stores
+  // the wrapped one. That is not hypothetical: `sendFile` went missing this way,
+  // and because `runner.ts` uses `adapter.sendFile === undefined` as the
+  // capability test, `/send <path>` silently degraded to sending the path as
+  // text on every channel. Add an optional member to `ChannelAdapter` and it
+  // must be forwarded here too; this test is what says so.
+  const calls = [];
+  const raw = {
+    id: "stub",
+    start: async () => {}, stop: async () => {}, onInbound: () => {},
+    sendText: async () => {}, sendCard: async () => {},
+    promptChoice: async () => ({ choice: "x", messageId: "m" }),
+    closeMenu: async () => {}, streamText: async () => {},
+    sendFile: async (target, filePath, opts) => { calls.push([target.chatKey, filePath, opts]); },
+    connectionStatus: () => ({ state: "connected", reconnectAttempts: 2 }),
+  };
+  const wrapped = withOutboundRetry(raw, { attempts: 2, baseDelayMs: 1, maxDelayMs: 2 });
+
+  assert.equal(wrapped.sendFile === undefined, false, "sendFile was dropped by the wrapper");
+  assert.equal(wrapped.connectionStatus === undefined, false, "connectionStatus was dropped by the wrapper");
+
+  // Not just present — wired to the real adapter, arguments intact.
+  await wrapped.sendFile({ chatKey: "c", chatType: "p2p" }, "C:/tmp/a.txt", { filename: "a.txt" });
+  assert.deepEqual(calls, [["c", "C:/tmp/a.txt", { filename: "a.txt" }]]);
+  assert.deepEqual(wrapped.connectionStatus(), { state: "connected", reconnectAttempts: 2 });
+});
+
+test("a member the adapter omits is still omitted after wrapping", () => {
+  // The other half of the contract: presence is the feature test, so a channel
+  // with no probe must not acquire a stub one that answers `undefined` forever
+  // — that would turn 「没有探针」 into 「探针说未知」 at every call site.
+  const bare = {
+    id: "bare",
+    start: async () => {}, stop: async () => {}, onInbound: () => {},
+    sendText: async () => {}, sendCard: async () => {},
+    promptChoice: async () => ({ choice: "x", messageId: "m" }),
+    closeMenu: async () => {}, streamText: async () => {},
+  };
+  const wrapped = withOutboundRetry(bare);
+  assert.equal("sendFile" in wrapped, false);
+  assert.equal("connectionStatus" in wrapped, false);
+});
+
+test("withOutboundRetry: optional members survive the wrap, and only when present", async () => {
+  // This wrapper builds a fresh object literal, so any member it does not
+  // explicitly forward is dropped from the adapter the service actually holds.
+  // `sendFile` was lost this way, which made runner.ts's `adapter.sendFile ===
+  // undefined` check always true and degraded `/send <path>` to sending the
+  // path as text on every channel. Presence is itself the capability test, so
+  // absence matters as much as presence.
+  const sent = [];
+  const raw = {
+    id: "stub",
+    start: async () => {},
+    stop: async () => {},
+    sendText: async () => {},
+    sendCard: async () => {},
+    streamText: async () => {},
+    promptChoice: async () => ({ choice: undefined, messageId: "m" }),
+    closeMenu: async () => {},
+    onInbound: () => {},
+    sendFile: async (target, filePath, options) => { sent.push([target.chatKey, filePath, options]); },
+    connectionStatus: () => ({ state: "connected", attempts: 0 }),
+  };
+  const wrapped = withOutboundRetry(raw, { attempts: 1, baseDelayMs: 1 });
+
+  assert.equal(typeof wrapped.sendFile, "function", "sendFile is forwarded");
+  await wrapped.sendFile({ chatKey: "c", chatType: "p2p" }, "/tmp/a.txt", { filename: "a.txt" });
+  assert.deepEqual(sent, [["c", "/tmp/a.txt", { filename: "a.txt" }]], "sendFile args are passed through");
+
+  assert.equal(typeof wrapped.connectionStatus, "function", "connectionStatus is forwarded");
+  assert.deepEqual(wrapped.connectionStatus(), { state: "connected", attempts: 0 });
+
+  const bare = withOutboundRetry({ ...raw, sendFile: undefined, connectionStatus: undefined }, { attempts: 1 });
+  assert.equal(bare.sendFile, undefined, "an adapter without sendFile stays without one");
+  assert.equal(bare.connectionStatus, undefined, "an adapter without a probe stays without one");
+});
+
 // ── /export surface (A6) ──────────────────────────────────────────────────
 
 test("parseCommand: /export accepts markdown; pdf falls back to markdown", () => {

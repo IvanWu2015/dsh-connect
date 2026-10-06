@@ -8,10 +8,17 @@ import { loadSettings, saveSettings, saveCredentials } from "../lib/settings/rpc
 import { createSettingsRpcHandler } from "../lib/settings/settings-rpc.js";
 import { createSettingsService } from "../lib/settings/settings-service.js";
 import { createCredentialStore } from "../lib/settings/credential-store.js";
-import { injectSecrets, CHANNELS } from "../lib/settings/channels.js";
+import { injectSecrets, readDotPath, writeDotPath, CHANNELS } from "../lib/settings/channels.js";
 import { createFeishuOnboarding, enableFeishuConfig } from "../lib/settings/feishu-onboarding.js";
-import { sectionOf, materializeConfig } from "../lib/settings/namespace.js";
-import { GENERAL_FIELDS, buildConfigSave } from "../lib/settings/settings-model.js";
+import { sectionOf, materializeConfig, installConnectSection } from "../lib/settings/namespace.js";
+import {
+  CHANNEL_CONFIG_FIELDS,
+  CHANNEL_DEFAULT_FIELDS,
+  CHANNEL_PRESERVED_KEYS,
+  GENERAL_FIELDS,
+  buildConfigSave,
+  snapshotToForm,
+} from "../lib/settings/settings-model.js";
 
 function tmpFile() {
   const dir = fsN.mkdtempSync(path.join(os.tmpdir(), "dsh-connect-rt-"));
@@ -346,3 +353,197 @@ test("a run whose credentials landed but whose adapter did not reports both halv
   assert.equal(snap.credentials.feishu, true);
   assert.equal(snap.channelErrors.feishu, "Error: app id is empty");
 });
+
+// --- every declared field, round-tripped on both planes --------------------
+//
+// 「配置的值也需要能正确保存，显示」 as a mechanical claim rather than a spot
+// check. One row per declared field, driven from the field tables themselves, so
+// a key added to `GENERAL_FIELDS` / `CHANNEL_CONFIG_FIELDS` is covered the
+// moment it is declared — and a key the pane can render but not store fails
+// here instead of in someone's profile.
+//
+// Run on both planes on purpose. They do not have the same write semantics: the
+// JSON fallback *merges* (`{ ...readConfig(), ...config }`, so an omitted key
+// survives by accident), while the namespace plane *replaces* (so an omitted
+// declared key is reset to its inherited value). A round trip that passes on
+// the loose plane can still fail on the live one, which is the plane every
+// real install uses.
+
+/** A value of the right shape for a field, distinct per key where the type allows. */
+function sampleFor(field) {
+  if (field.kind === "select") return field.options?.[0] ?? "sample";
+  if (field.kind === "number") return 4321;
+  if (field.kind === "boolean") return true;
+  if (field.kind === "list") return ["alpha", "beta"];
+  return `sample-value:${field.key}`;
+}
+
+/** The namespace plane: a `replace()` that commits a section, and a service over it. */
+function makeLiveBackend() {
+  const provider = fakeProvider();
+  const store = createCredentialStore(provider);
+  // The section store the host owns. `replace()` resets and reapplies, which is
+  // the semantics that made the dropped-key bug destructive — a fake that only
+  // merged would not be able to reproduce it.
+  const doc = { channels: [...CHANNELS] };
+  const settings = {
+    async replace(_ns, section) {
+      for (const key of Object.keys(doc)) delete doc[key];
+      Object.assign(doc, section);
+    },
+  };
+  const installed = installConnectSection({
+    owner: { logger: { warn() {} } },
+    settings,
+    config: doc,
+    ns: "connect",
+    onChange: () => {},
+  });
+  assert.equal(installed.live, true, "the live plane did not wire up");
+  const service = createSettingsService({
+    statePath: tmpFile(),
+    credentialStore: store,
+    live: () => installed.handle,
+  });
+  const handler = createSettingsRpcHandler(service);
+  return { provider, store, rpcCall: (endpoint, payload, signal) => handler(endpoint, payload, signal) };
+}
+
+const PLANES = [
+  { name: "json fallback", make: makeHostBackend },
+  { name: "settings namespace", make: makeLiveBackend },
+];
+
+for (const plane of PLANES) {
+  test(`${plane.name}: every general key survives display -> edit -> save -> reload, twice`, async () => {
+    const { rpcCall } = plane.make();
+    for (const pass of [1, 2]) {
+      // Built from the snapshot each time, so the second pass also proves the
+      // value comes back *into the control* — a save that stores a field the
+      // pane cannot then display is only half the round trip.
+      const form = snapshotToForm(await loadSettings(rpcCall));
+      for (const field of GENERAL_FIELDS) form.general[field.key] = sampleFor(field);
+
+      await saveSettings(rpcCall, buildConfigSave(form));
+      const after = await loadSettings(rpcCall);
+
+      for (const field of GENERAL_FIELDS) {
+        assert.deepEqual(
+          after.config[field.key],
+          sampleFor(field),
+          `${field.key} did not survive round trip ${pass} on the ${plane.name} plane`,
+        );
+      }
+    }
+  });
+
+  test(`${plane.name}: every channel config field survives display -> edit -> save -> reload, twice`, async () => {
+    const { rpcCall } = plane.make();
+    for (const pass of [1, 2]) {
+      const form = snapshotToForm(await loadSettings(rpcCall));
+      for (const [channel, fields] of Object.entries(CHANNEL_CONFIG_FIELDS)) {
+        for (const field of fields) form.channelConfigs[channel][field.key] = sampleFor(field);
+      }
+
+      await saveSettings(rpcCall, buildConfigSave(form));
+      const after = await loadSettings(rpcCall);
+
+      for (const [channel, fields] of Object.entries(CHANNEL_CONFIG_FIELDS)) {
+        for (const field of fields) {
+          // Read by *path*: `stream.url` has to come back out of `{ stream: {
+          // url } }`, and a flat read of the snapshot would find nothing and
+          // call the field absent instead of misplaced.
+          assert.deepEqual(
+            readDotPath(after.config[channel] ?? {}, field.key),
+            sampleFor(field),
+            `${channel}.${field.key} did not survive round trip ${pass} on the ${plane.name} plane`,
+          );
+        }
+      }
+    }
+  });
+
+  test(`${plane.name}: the channel defaults survive the same trip`, async () => {
+    // The defaults tab is a third editable surface with its own projection
+    // (`sectionOf` writes it through `CHANNEL_DEFAULT_FIELDS`), and it is the one
+    // a user reaches for first — 「回复的简略程度」 lives here.
+    const { rpcCall } = plane.make();
+    const form = snapshotToForm(await loadSettings(rpcCall));
+    for (const field of CHANNEL_DEFAULT_FIELDS) form.channelDefaults[field.key] = sampleFor(field);
+
+    await saveSettings(rpcCall, buildConfigSave(form));
+    const after = await loadSettings(rpcCall);
+
+    for (const field of CHANNEL_DEFAULT_FIELDS) {
+      assert.deepEqual(
+        (after.config.channelDefaults ?? {})[field.key],
+        sampleFor(field),
+        `channelDefaults.${field.key} did not survive the round trip on the ${plane.name} plane`,
+      );
+    }
+  });
+
+  test(`${plane.name}: a key the pane has no control for is carried through, not rewritten`, async () => {
+    // `defaultAt` is an object of arrays with no control in the pane, and it used
+    // to be declared `kind: 'text'` — which rendered `[object Object]` and wrote
+    // that string back over the object on the next save. It is now a *preserved*
+    // path: invisible in the UI, copied verbatim on the way through.
+    const DEFAULT_AT = { mobiles: ["13800000000"], userIds: ["manager1"], all: false };
+    const { rpcCall } = plane.make();
+    await saveSettings(rpcCall, {
+      channels: ["dingtalk"],
+      dingtalk: { stream: { url: "https://oapi.dingtalk.com/robot/send" }, defaultAt: DEFAULT_AT },
+    });
+
+    const form = snapshotToForm(await loadSettings(rpcCall));
+    // The display half: what the pane holds is the object, not its `String()`.
+    assert.deepEqual(form.channelConfigs.dingtalk.defaultAt, DEFAULT_AT);
+    assert.deepEqual(form.channelConfigs.dingtalk["stream.url"], "https://oapi.dingtalk.com/robot/send");
+
+    // An edit that has nothing to do with dingtalk — the save that used to lose
+    // these keys by not mentioning them.
+    form.general.language = "en";
+    await saveSettings(rpcCall, buildConfigSave(form));
+
+    const after = await loadSettings(rpcCall);
+    const stored = after.config.dingtalk ?? {};
+    assert.deepEqual(readDotPath(stored, "defaultAt"), DEFAULT_AT, "the preserved object was not carried through");
+    assert.equal(typeof readDotPath(stored, "defaultAt"), "object");
+    assert.equal(readDotPath(stored, "stream.url"), "https://oapi.dingtalk.com/robot/send");
+  });
+
+  test(`${plane.name}: every preserved path is carried through generically`, async () => {
+    // Derived from `CHANNEL_PRESERVED_KEYS` rather than from the one entry that
+    // exists today, so a second preserved key is covered as soon as it is
+    // declared — including the `null`/`undefined` rule, which is what keeps a
+    // preserved-but-unset path from being stamped into the profile.
+    const { rpcCall } = plane.make();
+    const seedConfig = {};
+    const seeded = [];
+    for (const [channel, paths] of Object.entries(CHANNEL_PRESERVED_KEYS)) {
+      for (const path of paths) {
+        // An object either way, because the only shapes a preserved path can
+        // have are ones the pane has no control for.
+        const value = path === "defaultAt" ? { all: true } : { kept: path };
+        seedConfig[channel] ??= {};
+        writeDotPath(seedConfig[channel], path, value);
+        seeded.push({ channel, path, value });
+      }
+    }
+    assert.ok(seeded.length > 0, "CHANNEL_PRESERVED_KEYS is empty — this test would prove nothing");
+
+    await saveSettings(rpcCall, { ...seedConfig, channels: [...CHANNELS] });
+    const form = snapshotToForm(await loadSettings(rpcCall));
+    form.general.language = "en";
+    await saveSettings(rpcCall, buildConfigSave(form));
+
+    const after = await loadSettings(rpcCall);
+    for (const { channel, path, value } of seeded) {
+      assert.deepEqual(
+        readDotPath(after.config[channel] ?? {}, path),
+        value,
+        `${channel}.${path} is declared preserved but did not survive a save`,
+      );
+    }
+  });
+}

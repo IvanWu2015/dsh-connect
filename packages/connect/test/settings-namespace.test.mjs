@@ -22,8 +22,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { CHANNELS } from "../lib/settings/channels.js";
-import { CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, GENERAL_FIELDS } from "../lib/settings/settings-model.js";
+import { CHANNELS, readDotPath, secretConfigPath, writeDotPath } from "../lib/settings/channels.js";
+import { CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, GENERAL_FIELDS, channelConfigPaths } from "../lib/settings/settings-model.js";
+import { CHANNEL_SECRET_KEYS } from "../lib/settings/credential-store.js";
 import {
   installConnectSection,
   materializeConfig,
@@ -75,9 +76,15 @@ function volatileConfig(profile = {}) {
   const defaults = {};
   for (const field of CHANNEL_DEFAULT_FIELDS) defaults[field.key] = slot(profile.channelDefaults?.[field.key]);
   config.channelDefaults = defaults;
+  // Placed by *path*, not by flat key: the loader declares `stream.url` as a
+  // nested leaf, so a fixture that stuffed the dotted string into a flat key
+  // would be a config `sectionOf` could not read — and every assertion about
+  // those fields would pass by finding nothing.
   for (const name of CHANNELS) {
     const channel = {};
-    for (const field of CHANNEL_CONFIG_FIELDS[name]) channel[field.key] = slot(profile[name]?.[field.key]);
+    for (const path of channelConfigPaths(name)) {
+      writeDotPath(channel, path, slot(readDotPath(profile[name] ?? {}, path)));
+    }
     config[name] = channel;
   }
   // The general settings, top-level and volatile like the real schema. Derived
@@ -98,7 +105,9 @@ function volatileConfig(profile = {}) {
     config.channels.commit(section.channels);
     for (const field of CHANNEL_DEFAULT_FIELDS) defaults[field.key].commit(section.channelDefaults?.[field.key]);
     for (const name of CHANNELS) {
-      for (const field of CHANNEL_CONFIG_FIELDS[name]) config[name][field.key].commit(section[name]?.[field.key]);
+      for (const path of channelConfigPaths(name)) {
+        readDotPath(config[name], path).commit(readDotPath(section[name] ?? {}, path));
+      }
     }
     // The real loader resets a declared-but-omitted leaf to its inherited
     // value; here that is `undefined`, which is what makes a partial section
@@ -288,6 +297,91 @@ test("sectionOf keeps an empty channel list — 'none' is a choice, not an omiss
   assert.deepEqual(sectionOf({ channels: [] }).channels, []);
 });
 
+// --- the loss probe: a declared key must survive a save -------------------
+
+/**
+ * A profile with a value at *every* path each channel declares — the editable
+ * fields and the preserved keys — so that 「改了却没存住」 has one reproducible
+ * shape instead of being re-argued per field.
+ */
+function populatedProfile() {
+  const profile = { channels: [...CHANNELS] };
+  for (const name of CHANNELS) {
+    const channel = {};
+    for (const path of channelConfigPaths(name)) {
+      // `defaultAt` is genuinely an object of arrays; a string would round-trip
+      // just as well and prove considerably less.
+      writeDotPath(
+        channel,
+        path,
+        path === "defaultAt"
+          ? { mobiles: ["13800000000"], userIds: ["manager1"], all: false }
+          : `value:${name}.${path}`,
+      );
+    }
+    profile[name] = channel;
+  }
+  return profile;
+}
+
+/** The given config with a credential planted at every declared secret path. */
+function withCredentials(config) {
+  for (const name of CHANNELS) {
+    for (const key of Object.keys(CHANNEL_SECRET_KEYS[name])) {
+      writeDotPath(config[name], secretConfigPath(name, key), `secret:${name}.${key}`);
+    }
+  }
+  return config;
+}
+
+test("no declared channel key is lost on the write path — except the credentials", () => {
+  // The failure this reproduces: `sectionOf` projects path by path and a save
+  // replaces the whole declared section, so a `Config` key in no pane table is
+  // silently deleted the next time the user saves *anything*. Derived from the
+  // same tables the projection reads, so a field added to one side and not the
+  // other fails here rather than in someone's profile.
+  const store = volatileConfig(populatedProfile());
+  const section = sectionOf(withCredentials(materializeConfig(store.config)));
+
+  const missing = [];
+  for (const name of CHANNELS) {
+    for (const path of channelConfigPaths(name)) {
+      if (readDotPath(section[name] ?? {}, path) === undefined) missing.push(`${name}.${path}`);
+    }
+  }
+  assert.deepEqual(missing, [], "a save would delete these declared keys from the profile");
+
+  // The credentials travel the other way — out of the section, never in — and
+  // it is the same projection doing both, so the two checks belong together.
+  const text = JSON.stringify(section);
+  for (const name of CHANNELS) {
+    for (const key of Object.keys(CHANNEL_SECRET_KEYS[name])) {
+      assert.ok(!text.includes(`secret:${name}.${key}`), `${name}.${key} leaked into the section`);
+    }
+  }
+});
+
+test("a preserved key the pane never shows survives a save made for another reason", () => {
+  // `defaultAt` used to be a `kind: 'text'` field, which rendered it as
+  // `[object Object]` and wrote that string back over the object. It has no
+  // control at all now, so this is the moment it is most at risk: the pane is
+  // not even looking at it when it saves. Asserted on the *stored* value after
+  // the write replays the loader's reset, not on the payload alone — the payload
+  // is only half the path.
+  const store = volatileConfig(populatedProfile());
+  store.commit(sectionOf(materializeConfig(store.config)));
+
+  const after = materializeConfig(store.config);
+  assert.deepEqual(readDotPath(after.dingtalk, "defaultAt"), {
+    mobiles: ["13800000000"],
+    userIds: ["manager1"],
+    all: false,
+  });
+  // ...and its neighbour on the same nested branch, which reaches the adapter
+  // through a dotted path rather than a flat key.
+  assert.equal(readDotPath(after.dingtalk, "stream.url"), "value:dingtalk.stream.url");
+});
+
 // --- materializeConfig: refs in, plain data out ---------------------------
 
 test("materializeConfig resolves every reference to its current snapshot", () => {
@@ -307,7 +401,12 @@ test("materializeConfig resolves every reference to its current snapshot", () =>
     // resolve a channel as `{...channelDefaults, ...overrides}`, where `{}` is
     // a no-op — so it is pinned rather than worked around.
     telegram: {},
-    dingtalk: {},
+    // The same rule one level down: `stream.url` and `stream.requireMention` are
+    // both unset, so the branch they live in survives empty while its leaves go.
+    // Also harmless — `readDotPath({stream:{}}, "stream.url")` is undefined, and
+    // so is what the adapter reads — but it is the shape the loader really
+    // produces, so it is pinned rather than papered over in the fixture.
+    dingtalk: { stream: {} },
     web: {},
     settingsStatePath: "state.json",
     appSecret: "profile-secret",

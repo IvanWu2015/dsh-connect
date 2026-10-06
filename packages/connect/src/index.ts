@@ -25,6 +25,7 @@ import {
   type ChannelsConfig,
 } from "./settings/channels.js";
 import { ChannelRuntime } from "./settings/channel-runtime.js";
+import { composeChannelStatus } from "./settings/channel-status.js";
 import {
   CONNECT_PRESENTATION,
   installConnectSection,
@@ -567,6 +568,23 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
     // that is not running. Read after the reconcile above (`write`/the hook are
     // both awaited now), so this describes the config the user just saved.
     channelFailures: () => runtime.failures(),
+    // The second badge: whether each channel is switched on, up, and actually
+    // connected. Deliberately *not* the credentials badge's question — perfect
+    // credentials over a socket that keeps dropping is 「已配置凭据」+
+    // 「重连中」, and a single badge would have to call that working.
+    //
+    // `active()`/`failures()` are the runtime's own account of itself, so a
+    // channel with no probe still gets a true answer; the probe only refines
+    // 「运行中」 into a real transport state where the channel can report one
+    // (Feishu's websocket). `enabled` arrives from the service, which is the
+    // same array its snapshot reports, so the badge and the checkbox agree.
+    channelStatus: (enabled) => composeChannelStatus({
+      channels: CHANNELS,
+      enabled,
+      active: runtime.active(),
+      failures: runtime.failures(),
+      probe: (id) => connect.getAdapter(id)?.connectionStatus?.(),
+    }),
     // Read per call, so the registry below can be built after this service
     // (it saves *through* it) without the service ever seeing a partial object.
     onboarding: () => onboarding.registry,
@@ -634,13 +652,37 @@ export async function apply(ctx: Context, config: ConnectSettingsConfig | null =
 
 // The DSH loader (cordis-plugin-loader) resolves a plugin entry to the module's
 // DEFAULT export via `unwrapExports()` (`exports.default ?? exports`), then
-// hands it to `ctx.registry.plugin()`. An object `{ apply, name, inject }` makes
-// the loader route through `apply` — the function that activates the channel
-// adapters and installs the web-settings RPC.
+// hands it to `ctx.registry.plugin()`. An object `{ apply, name, inject, Config }`
+// makes the loader route through `apply` — the function that activates the
+// channel adapters and installs the web-settings RPC — and read `Config` off
+// *that same object*.
 //
-// Previously the default export was the `ConnectService` class. That "worked"
-// on the surface (the class was constructed, no error) but `apply` was never
-// called, so `activateChannels` and `installSettingsRpc` were silently skipped:
-// no channel was bound and no `/dsh-connect` RPC route was mounted (the web
-// settings pane hung on "加载中"). Routing through `apply` fixes it.
-export default { apply, name, inject };
+// Both halves of this line have now each caused a silent, field-reported bug,
+// and neither showed up in a unit test that calls `apply` on a bare context:
+//
+// 1. `apply` must be reachable. The default export used to be the
+//    `ConnectService` class. That "worked" on the surface (the class was
+//    constructed, no error) but `apply` was never called, so `activateChannels`
+//    and `installSettingsRpc` were silently skipped: no channel was bound and
+//    no `/dsh-connect` RPC route was mounted (the web settings pane hung on
+//    "加载中").
+//
+// 2. `Config` must be a property of *this object*, not merely a named export of
+//    the module. cordis copies it onto the runtime as `runtime.Config =
+//    plugin.Config`, and that one field is what the host reads to decide a
+//    plugin is configurable at all (`settings/plugin.ts` resolves an entry's
+//    schema as `entry.fiber?.runtime?.Config`). Because the named `Config`
+//    export above was dropped by `unwrapExports` (a `default` exists, so the
+//    namespace is not the plugin), `runtime.Config` was `undefined` and every
+//    write was refused with `No configurable plugin entry "connect"`: a pane
+//    save threw before it could store the credentials the user had just typed,
+//    so the channel stayed "未设置" and no 接入状态 ever rendered.
+//
+// It is also what makes the `.volatile()` declarations do anything. The loader
+// hot-commits a pane edit only when `equalExceptVolatile(legacy, next,
+// runtime.Config)` recognises the change as volatile-only, and `_commitVolatile`
+// walks the refs `resolveConfig` produced — with no schema it returns the raw
+// config unchanged, finds no references, and every save degrades to a full
+// remount. Declaring `.volatile()` without exporting `Config` from the plugin
+// object is therefore a no-op.
+export default { apply, name, inject, Config };

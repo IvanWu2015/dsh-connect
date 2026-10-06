@@ -3,6 +3,9 @@
  * channel adapter (Feishu first, DingTalk/WeChat later).
  * @module dsh-connect/types
  */
+// Type-only: erased at compile time, so this leaf module stays dependency-free
+// while the connection-state vocabulary keeps a single definition.
+import type { ChannelConnectionStatus } from "./settings/channel-status.js";
 
 /** Coarse chat surface classification: one-on-one or group. */
 export type ChatType = "p2p" | "group";
@@ -186,4 +189,15 @@ export interface ChannelAdapter {
   closeMenu(messageId: string, summary: string): Promise<void>;
   /** Register the inbound handler; called for every normalized message. */
   onInbound(handler: (msg: InboundMessage) => void | Promise<void>): void;
+  /**
+   * Live transport state, for channels whose long-connection library can report
+   * one (Feishu delegates to the SDK's `getConnectionStatus`). Optional, and its
+   * *absence* is meaningful: a channel that cannot answer leaves the settings
+   * pane reporting only what the runtime knows (`running`/`stopped`/`failed`),
+   * rather than a hard-coded 「已连接」 nobody verified.
+   *
+   * Returns `undefined` when the transport exists but has nothing to say yet —
+   * e.g. the webhook transport, which holds no socket.
+   */
+  connectionStatus?(): ChannelConnectionStatus | undefined;
 }

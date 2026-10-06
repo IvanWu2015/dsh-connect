@@ -64,16 +64,17 @@
 ## 三、各渠道（子配置）
 
 ### `feishu`
-| 键 | 说明 |
-|---|---|
-| `appId` / `appSecret` | **必填**，飞书应用凭据 |
-| `transport` | 传输方式（长连接/webhook） |
-| `verificationToken` / `encryptKey` | webhook 校验/加密 |
-| `webhookPort` / `webhookPath` | webhook 监听 |
-| `requireMention` | 是否需 @ 才响应 |
-| `dmMode` | 私聊模式 |
-| `threadIsolation` | 线程隔离 |
-| `language` | 渠道默认语言 |
+| 键 | 面板 | 说明 |
+|---|---|---|
+| `appId` / `appSecret` | 🔑 掩码输入 | **必填**，飞书应用凭据（只进凭据库） |
+| `transport` | ✅ 可改 | 传输方式（长连接/webhook） |
+| `verificationToken` / `encryptKey` | 🔑 掩码输入（1.0.5 起） | webhook 校验/加密（只进凭据库） |
+| `webhookPort` / `webhookPath` | ✅ 可改 | webhook 监听 |
+| `requireMention` | ✅ 可改 | 是否需 @ 才响应 |
+| `dmMode` | ✅ 可改 | 私聊模式 |
+| `threadIsolation` | ✅ 可改（1.0.5 起） | 线程隔离 |
+| `onboarding` | ✅ 可改（1.0.5 起） | 是否允许加载期交互式引导 |
+| `language` | ✅ 可改 | 渠道默认语言 |
 
 > **一键创建（1.0.0；1.0.2 起位于卡片正文最顶端）**：设置页的飞书卡片里有一个「一键创建并配置飞书机器人」按钮，走飞书官方的 OAuth 2.0 设备授权流（`@larksuiteoapi/node-sdk` 的 `registerApp`）：点一下 → 在浏览器里确认 → 应用建好、权限（收发/读历史消息、`im.message.receive_v1` 事件）配好、凭据存进 DSH 凭据库，并把 `feishu` 写进 `channels`、把 `transport` 定为 `websocket`（长连接，不需要公网地址）。展开飞书卡片，第一眼看到的就是它。
 >
@@ -84,27 +85,31 @@
 > **Telegram 和钉钉没有对应的官方「创建机器人」API**，所以它们的卡片里只放一个指向官方创建入口的链接（`https://t.me/BotFather` / `https://open-dev.dingtalk.com/`）和一句「把拿到的凭据粘到下面的字段里」——和飞书一样放在卡片正文顶端（1.0.2 起）。这两个渠道的配置方式与以前完全一样，没有自动化的部分。
 
 ### `telegram`
-| 键 | 说明 |
-|---|---|
-| `botToken` | **必填** |
-| `language` / `requireMention` | |
-| `pollingTimeoutSeconds` / `baseUrl` | 长轮询/代理 |
+| 键 | 面板 | 说明 |
+|---|---|---|
+| `botToken` | 🔑 掩码输入 | **必填**（只进凭据库） |
+| `language` / `requireMention` | ✅ 可改 | |
+| `pollingTimeoutSeconds` / `baseUrl` | ✅ 可改 | 长轮询/代理 |
 
 ### `dingtalk`
-| 键 | 说明 |
-|---|---|
-| `webhookUrl` / `secret` | webhook 推送机器人（**平铺**在 `dingtalk` 顶层） |
-| `stream.clientId` / `stream.clientSecret` | **stream 双向模式**应用凭据（**嵌套在 `stream` 下**） |
-| `stream.url` / `stream.requireMention` | stream 网关地址 / 是否需 @ 才响应 |
-| `defaultAt.mobiles` / `defaultAt.userIds` / `defaultAt.all` | 推送默认 @ 目标 |
-| `language` | 渠道默认语言 |
+| 键 | 面板 | 说明 |
+|---|---|---|
+| `webhookUrl` / `secret` | 🔑 掩码输入 | webhook 推送机器人（**平铺**在 `dingtalk` 顶层） |
+| `stream.clientId` / `stream.clientSecret` | 🔑 掩码输入 | **stream 双向模式**应用凭据（**嵌套在 `stream` 下**） |
+| `stream.url` / `stream.requireMention` | ✅ 可改（1.0.5 起） | stream 网关地址 / 是否需 @ 才响应 |
+| `defaultAt.mobiles` / `defaultAt.userIds` / `defaultAt.all` | ⛔ 刻意不可改 | 推送默认 @ 目标：对象含三个列表，面板没有对应控件，**原样保留**（见下） |
+| `language` | ✅ 可改 | 渠道默认语言 |
+
+> **`defaultAt` 为什么不做成可编辑（1.0.5）**：它是个对象（`{ mobiles?, userIds?, all? }`），而面板一个字段只对应一个控件；此前它被当成 `kind:'text'` 渲染，界面上显示成 `[object Object]`，保存时又把这个字符串**写回覆盖掉真正的对象**——显示它比不显示它更糟。现在它进「原样保留」表：面板不渲染它、不解释它，但保存时会一字不差地带着它走，不再被抹掉也不再被写坏。做成可编辑需要一整套子表单，不在这一版。
 
 > 钉钉的 stream 密钥在配置与凭据库里都是**嵌套在 `stream` 下**的（不是平铺的 `clientId`），否则 stream 适配器收不到它们——`dsh-connect` 的 `injectSecrets` 已按此结构注入。
 
 ### `web`
-| 键 | 说明 |
-|---|---|
-| `pollIntervalMs` | 轮询间隔 |
+| 键 | 面板 | 说明 |
+|---|---|---|
+| `pollIntervalMs` | ✅ 可改 | 轮询间隔 |
+
+> **上表的口径（1.0.5 起）**：每个**已声明**的 `Config` 键都恰好属于三类之一——**✅ 可改**（进 `CHANNEL_CONFIG_FIELDS`，面板有控件）、**🔑 掩码输入**（进 `CHANNEL_SECRET_KEYS`，只写凭据库，永不落 profile patch 或 JSON 状态文件）、**⛔ 刻意不可改**（进 `CHANNEL_PRESERVED_KEYS`，原样带过）。这是**保存语义**决定的：一次保存是整段替换，宿主发来的、面板没有放回去的键会**从 profile 里消失**——所以「面板没渲染」绝不等于「可以不要」。完整性测试（`test/channel-config-coverage.test.mjs`）从 schemastery 自省出发双向对账，任何新增的 `Config` 键忘了归类都会让它变红。
 
 ---
 
@@ -122,6 +127,8 @@
 
 - **通用设置**：就是上表标 ✅ 的那 10 个键，分四组卡片（语言/通知与进度、工作目录/工作区、访问控制、智能体）。改完**必须重启 `dsh`** 才生效（原因见上表下方那条说明），每个字段的说明里都写着。被 `dsh.shared.config.json` 压过的键会额外显示一行来源提示。最上面还有一行**只读**的当前模型（`provider / model`），提示「此值由 DSH 管理，请在 DSH 里切换」——面板**刻意不做**模型写入口（`saveSelection()` 存在且可写，但改写会波及其他会话）；宿主读不到当前选择时整行不渲染。
 - **机器人渠道**：渠道 Tab 条 + 可折叠卡片（低频字段收在二级「高级」折叠里，保存/状态固定在底部）；每个凭据字段旁边有一行只读的 `当前值：…` 掩码预览（`未配置` 表示空），掩码在宿主侧生成。钉钉的两个传输方式（webhook 推送 / stream 模式）互为互斥的凭据**组**（组内 all-of，组间 any-of）；`web` 渠道没有任何凭据，按定义即为「已配置」。
+- **每张卡片头部有两个徽章（1.0.5 起）**，从左到右：**凭据**（`已配置凭据`，语义未变）与**接入状态**。后者回答的是另一个问题——「机器人现在连上没有」：`已连接 / 连接中 / 重连中（第 N 次）/ 空闲 / 运行中 / 未运行 / 接入失败 / 未启用`。**只有飞书有真实传输探针**（`LarkChannel.getConnectionStatus()`），其余三个渠道没有可问的东西，就只报告 runtime 能实证的状态（未运行 / 接入失败 / 运行中 / 未启用），**不编造「已连接」**；宿主不提供状态信息时整个徽章不渲染（不画「未知」占位）。渠道接入失败时，下方原有的问题栏给出适配器的**原始原因**。
+- **渠道页每 5 秒自动刷新一次接入状态（1.0.5 起）**：只合并 `channelStatus` 这一个键，`creds`、错误提示和其余表单字段一律不碰——否则会把用户还没保存的编辑、或刚弹出还没读的保存失败提示冲掉。标签页不可见时跳过该拍。
 
 **1.0.0 起**：设置项一律**单列**（`grid-template-columns:minmax(0,1fr)`，一行一个，不再按宽度自动排 2–3 列）；页签/导航条 `position:sticky` 钉在滚动区顶部、正文从它下面滚过去（1.0.2 的导航条与渠道 Tab 条是两层粘贴，偏移量各有不同，所以滚到卡片中部时两层都还在）。**1.0.2 起**：飞书卡片正文的最顶端就是「一键创建并配置飞书机器人」按钮，App ID / App Secret 排在它**下面**——先给一键路径，再给手填路径，不让人填完才发现有自动的。
 

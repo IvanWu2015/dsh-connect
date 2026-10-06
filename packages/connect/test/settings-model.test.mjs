@@ -4,7 +4,12 @@ import assert from "node:assert/strict";
 import { snapshotToForm, buildConfigSave, buildCredentialSaves, CHANNEL_SECRET_FIELDS, CHANNEL_CONFIG_FIELDS, CHANNEL_DEFAULT_FIELDS, GENERAL_FIELD_GROUPS, GENERAL_FIELDS, coerceConfigValue } from "../lib/settings/settings-model.js";
 
 test("CHANNEL_SECRET_FIELDS exposes per-channel secret field names", () => {
-  assert.deepEqual(CHANNEL_SECRET_FIELDS.feishu, ["appId", "appSecret"]);
+  // The verification token and encrypt key are the *webhook* transport's
+  // secrets. They belong here like appId/appSecret do — the pane has to be able
+  // to render and save them — even though they are deliberately absent from
+  // CREDENTIAL_GROUPS.feishu, which answers the narrower 「has what it needs to
+  // be reached」 question. See the note on that table.
+  assert.deepEqual(CHANNEL_SECRET_FIELDS.feishu, ["appId", "appSecret", "verificationToken", "encryptKey"]);
   assert.deepEqual(CHANNEL_SECRET_FIELDS.telegram, ["botToken"]);
   assert.deepEqual(CHANNEL_SECRET_FIELDS.web, []);
 });
@@ -74,9 +79,13 @@ test("snapshotToForm defaults to the file plane when the host doesn't say", () =
 });
 
 test("buildConfigSave emits channels, defaults, non-empty channel configs, path", () => {
-  const form = { channels: ["feishu"], channelDefaults: { language: "zh" }, channelConfigs: { feishu: { appId: "cli_1" }, telegram: {} }, secrets: {}, settingsStatePath: "s.json" };
+  // The value used to be `appId`, which is a *credential* — it belongs to the
+  // credential store, not to the config section, so writing it here was always
+  // the wrong example. The payload builder now only emits keys on the channel's
+  // own field/preserved table, and that is the behaviour under test.
+  const form = { channels: ["feishu"], channelDefaults: { language: "zh" }, channelConfigs: { feishu: { transport: "websocket" }, telegram: {} }, secrets: {}, settingsStatePath: "s.json" };
   const cfg = buildConfigSave(form);
-  assert.deepEqual(cfg, { channels: ["feishu"], channelDefaults: { language: "zh" }, feishu: { appId: "cli_1" }, settingsStatePath: "s.json" });
+  assert.deepEqual(cfg, { channels: ["feishu"], channelDefaults: { language: "zh" }, feishu: { transport: "websocket" }, settingsStatePath: "s.json" });
 });
 
 test("buildCredentialSaves collects only channels with secret values", () => {
@@ -86,7 +95,7 @@ test("buildCredentialSaves collects only channels with secret values", () => {
 });
 
 test("CHANNEL_CONFIG_FIELDS exposes editable non-secret fields per channel", () => {
-  assert.deepEqual(CHANNEL_CONFIG_FIELDS.feishu.map((f) => f.key), ["transport", "requireMention", "dmMode", "language", "webhookPort", "webhookPath"]);
+  assert.deepEqual(CHANNEL_CONFIG_FIELDS.feishu.map((f) => f.key), ["transport", "requireMention", "dmMode", "language", "threadIsolation", "onboarding", "webhookPort", "webhookPath"]);
   assert.equal(CHANNEL_CONFIG_FIELDS.feishu.find((f) => f.key === "transport").options.includes("websocket"), true);
   assert.deepEqual(CHANNEL_CONFIG_FIELDS.telegram.map((f) => f.key), ["requireMention", "language", "pollingTimeoutSeconds", "baseUrl"]);
   assert.deepEqual(CHANNEL_CONFIG_FIELDS.web.map((f) => f.key), ["pollIntervalMs"]);

@@ -5,8 +5,10 @@ import path from "node:path";
 import fsN from "node:fs";
 
 import { createSettingsService } from "../lib/settings/settings-service.js";
-import { createCredentialStore } from "../lib/settings/credential-store.js";
+import { createCredentialStore, CHANNEL_SECRET_KEYS } from "../lib/settings/credential-store.js";
 import { snapshotToForm, buildConfigSave } from "../lib/settings/settings-model.js";
+import { isMaskedSecret } from "../lib/settings/secret-disclosure.js";
+import { CHANNELS, readDotPath, secretConfigPath, writeDotPath } from "../lib/settings/channels.js";
 
 function tmpFile() {
   const dir = fsN.mkdtempSync(path.join(os.tmpdir(), "dsh-connect-settings-"));
@@ -211,6 +213,115 @@ test("a secret hand-written into the plugin entry never reaches the pane", async
   assert.equal(section.feishu.appId, "cli_a1b2c3d4");
 });
 
+test("no declared secret survives a read or a save, on either plane", async () => {
+  // Derived from the credential table rather than hand-listed, because the two
+  // tests above each name one key and the table has since grown twice: feishu
+  // gained the webhook transport's `verificationToken` and `encryptKey`, and a
+  // hand-written list would have gone on certifying a filter that no longer
+  // covers the keys the adapter actually reads. Every channel, every declared
+  // key, planted at the key's *config path* — which is where the adapter looks
+  // for it, and therefore where a leak would surface.
+  const planted = [];
+  const section = { channels: [...CHANNELS] };
+  for (const channel of CHANNELS) {
+    for (const key of Object.keys(CHANNEL_SECRET_KEYS[channel] ?? {})) {
+      // Long enough that the mask has a middle to hide — a short value falls into
+      // the all-bullets branch and would let "the value never appears" pass
+      // without the head/tail logic ever running.
+      const value = `leak_${channel}_${key}_0123456789abcdef`;
+      writeDotPath(section, `${channel}.${secretConfigPath(channel, key)}`, value);
+      planted.push({ channel, key, value });
+    }
+  }
+  assert.ok(planted.length >= 9, `the sweep planted only ${planted.length} values — CHANNEL_SECRET_KEYS shrank`);
+
+  // The same values in the credential store, where a secret is *supposed* to
+  // live. Both places at once is the realistic worst case: the startup migration
+  // copies config secrets into the store and the profile may still carry them.
+  const provider = mapProvider();
+  const credentialStore = createCredentialStore(provider);
+  // `save` is keyed by the store *ref*, not by the config key, even though `get`
+  // answers in config keys — mapping one to the other is the ref table's whole
+  // job. Passing the config key here would silently store nothing.
+  for (const { channel, key, value } of planted) {
+    await credentialStore.save(channel, { [CHANNEL_SECRET_KEYS[channel][key]]: value });
+  }
+  assert.equal(provider.store.size, planted.length, "the credential store did not take every planted secret");
+
+  const liveSection = { ...section };
+  const file = tmpFile();
+  fsN.writeFileSync(file, JSON.stringify({ ...section, settingsStatePath: file }));
+  const PLANES = [
+    { name: "settings namespace", svc: createSettingsService({ statePath: tmpFile(), credentialStore, live: () => ({ read: () => liveSection, write: async () => {} }) }) },
+    { name: "json fallback", svc: createSettingsService({ statePath: file, credentialStore }) },
+  ];
+
+  /**
+   * Every claim this sweep makes about one snapshot, in one place so the *read*
+   * and the save's *answer* are held to the same standard — they are the same
+   * object type from the same builder, and a leak that only ever shows up on the
+   * save path is the one a read-only check would miss.
+   */
+  function assertSnapshotCarriesNoSecret(snap, where) {
+    for (const { channel, key, value } of planted) {
+      // `snap.config` is the part the pane builds a save payload from, so a secret
+      // sitting here is not a display wart — it is a credential that gets written
+      // back into the profile on the next click. Asserted per *path* rather than
+      // by substring so a failure names the offending key instead of dumping a
+      // whole snapshot into the diff.
+      assert.equal(
+        readDotPath(snap.config[channel] ?? {}, secretConfigPath(channel, key)),
+        undefined,
+        `${where}: ${channel}.${key} is in the config the pane re-emits on save`,
+      );
+
+      // The other half of the report: the pane must still be able to say the key
+      // *is* stored. A filter that stripped the value and the flag together
+      // would look identical on the wire and would send the user to re-enter a
+      // secret that is already there.
+      assert.equal(snap.secrets[channel]?.[key], true, `${where}: ${channel}.${key} is stored but reported as unset`);
+
+      // The masked preview is the one place a stored secret is allowed to appear.
+      // Identifiers are exempt *by design* — `disclosureOf` calls `appId`/`clientId`
+      // `full` because they appear in the URL of every outbound call and grant
+      // nothing alone, and showing them verbatim is the only way the user can tell
+      // a correct id from a typo. `isMaskedSecret` is the same predicate the host
+      // masks with, so this cannot drift from what the host actually did. It is
+      // also why the confidential branch checks the whole wire and the identifier
+      // branch does not: a blanket substring check would fail on a preview that is
+      // *supposed* to be verbatim, and a check loosened to accommodate that would
+      // stop catching the leaks it exists for.
+      const preview = snap.secretPreviews[channel]?.[key];
+      assert.ok(preview, `${where}: ${channel}.${key} has no preview`);
+      if (isMaskedSecret(key)) {
+        assert.ok(preview !== value && !preview.includes(value), `${where}: ${channel}.${key} preview is not masked`);
+        assert.ok(!JSON.stringify(snap).includes(value), `${where}: ${channel}.${key} reached the pane snapshot in clear text`);
+      } else {
+        assert.equal(preview, value, `${where}: ${channel}.${key} is an identifier and should be shown in full`);
+      }
+    }
+  }
+
+  for (const plane of PLANES) {
+    const snap = await plane.svc.get();
+    assertSnapshotCarriesNoSecret(snap, plane.name);
+
+    // And the filter is load-bearing for writes, not only for display: the pane
+    // builds its form from `snap.config` and re-emits whatever it finds there.
+    // The payload carries no previews, so a plain substring check is exact here
+    // and catches a secret at a path this test never thought to name.
+    const payload = buildConfigSave(snapshotToForm(snap));
+    assert.ok(!JSON.stringify(payload).includes("leak_"), `${plane.name}: a save payload carries a secret back`);
+    assertSnapshotCarriesNoSecret(await plane.svc.save({ channels: [...CHANNELS] }), `${plane.name} (save answer)`);
+  }
+
+  // Nothing was deleted out of either document: the filter is on the way out,
+  // and a read that rewrote the profile would be a worse bug than the leak.
+  for (const { channel, key, value } of planted) {
+    assert.equal(readDotPath(section[channel], secretConfigPath(channel, key)), value, `${channel}.${key} was removed from the document`);
+  }
+});
+
 test("saveCredentials without a store throws not-configured", async () => {
   const svc = createSettingsService({ statePath: tmpFile() });
   await assert.rejects(svc.saveCredentials("feishu", { appId: "x" }), (e) => e.code === "not-configured");
@@ -232,7 +343,15 @@ test("snapshot reports secret presence and a host-masked preview, never a usable
   await svc.saveCredentials("feishu", { appId: APP_ID, appSecret: APP_SECRET });
   const snap = await svc.get();
   assert.equal(snap.credentials.feishu, true);
-  assert.deepEqual(snap.secrets.feishu, { appId: true, appSecret: true });
+  // Keyed by *every* secret the channel declares, so derived rather than
+  // hand-listed: feishu now declares the webhook transport's verificationToken
+  // and encryptKey beside the app credentials, and this save stored neither —
+  // `false` for those is the correct report, not a regression.
+  const stored = new Set(["appId", "appSecret"]);
+  assert.deepEqual(
+    snap.secrets.feishu,
+    Object.fromEntries(Object.keys(CHANNEL_SECRET_KEYS.feishu).map((k) => [k, stored.has(k)])),
+  );
   assert.deepEqual(snap.secrets.telegram, { botToken: false });
 
   // The user asked to be able to *confirm* what they filled in, and an appId is
@@ -457,6 +576,88 @@ test("shared-config overrides ride along only when a shared config really shadow
   const snap = await copying.get();
   source.push("language");
   assert.deepEqual(snap.sharedOverrideKeys, ["workDir"]);
+});
+
+// --- the access-state probe ------------------------------------------------
+//
+// 「接入状态」 is attached on an *opposite* rule to every other optional key in
+// this snapshot. `channelErrors`, `warnings` and `sharedOverrideKeys` appear
+// only when they have something to say, so an empty result is indistinguishable
+// from "the host cannot tell you". For access state that distinction is the
+// whole point: 「未启用」 and 「未运行」 are answers, and a channel missing from
+// the map would be a channel the pane has nothing to render — so the key is
+// present whenever the probe is wired, empty or not, and absent when it is not.
+
+test("the access-state probe is asked with the enabled list the snapshot reports", async () => {
+  // The same array object, not a copy of it: the badge's idea of "which
+  // channels are on" and the snapshot's `enabled` cannot drift if they are the
+  // same value, which is also why the probe takes `enabled` as an argument
+  // rather than reading the config again.
+  const asked = [];
+  const svc = createSettingsService({
+    statePath: tmpFile(),
+    channelStatus: (enabled) => {
+      asked.push(enabled);
+      return { feishu: { state: "connected" } };
+    },
+  });
+  await svc.save({ channels: ["feishu"], telegram: { requireMention: true } });
+  const snap = await svc.get();
+
+  assert.deepEqual(asked.at(-1), ["feishu"]);
+  assert.deepEqual(snap.enabled, ["feishu"]);
+  assert.deepEqual(snap.channelStatus, { feishu: { state: "connected" } });
+});
+
+test("a probe that reports only disabled channels still produces the key", async () => {
+  // The distinction the option's comment exists for. An empty map here means
+  // "every channel is off", which the pane renders as 「未启用」 — dropping the
+  // key instead would make the badge vanish and read as "no information".
+  const svc = createSettingsService({ statePath: tmpFile(), channelStatus: () => ({}) });
+  const snap = await svc.get();
+  assert.equal("channelStatus" in snap, true);
+  assert.deepEqual(snap.channelStatus, {});
+});
+
+test("without a probe the snapshot carries no access state at all", async () => {
+  const svc = createSettingsService({ statePath: tmpFile() });
+  assert.equal("channelStatus" in (await svc.get()), false);
+});
+
+test("a probe that throws degrades to no key, and the read still succeeds", async () => {
+  // Failing to *describe* a state is not the same claim as the state being
+  // empty, so it must not be reported as `{}` — and it must never turn a read,
+  // or a save that ends in one, into a failure.
+  const logs = [];
+  const svc = createSettingsService({
+    statePath: tmpFile(),
+    log: (m) => logs.push(m),
+    channelStatus: () => { throw new Error("the runtime never started"); },
+  });
+  const snap = await svc.get();
+  assert.equal("channelStatus" in snap, false);
+  assert.equal(logs.some((m) => m.includes("the runtime never started")), true);
+});
+
+test("a probe returning undefined is read as 'cannot say', not as an empty map", async () => {
+  // The other way a probe can decline. `{}` and `undefined` mean different
+  // things and only the probe knows which one it means.
+  const svc = createSettingsService({ statePath: tmpFile(), channelStatus: () => undefined });
+  assert.equal("channelStatus" in (await svc.get()), false);
+});
+
+test("the access state rides on a save's answer too, so the badge refreshes with it", async () => {
+  let state = "connecting";
+  const svc = createSettingsService({
+    statePath: tmpFile(),
+    channelStatus: () => ({ feishu: { state } }),
+  });
+  const first = await svc.save({ channels: ["feishu"] });
+  // `connecting` → `connected`, the transition the user actually watches for.
+  state = "connected";
+  const second = await svc.save({ channels: ["feishu"] });
+  assert.deepEqual(first.channelStatus, { feishu: { state: "connecting" } });
+  assert.deepEqual(second.channelStatus, { feishu: { state: "connected" } });
 });
 
 test("a shared-override getter that throws reads as 'nothing is overridden', and says so", async () => {
