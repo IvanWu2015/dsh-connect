@@ -66,7 +66,14 @@ test("the version is a plain semver at the top level, and appears exactly once",
   // assumed. (One line only: a top-level key, in this file's 2-space style.)
   const lines = text.split("\n").filter((line) => /^\s*"version"\s*:/.test(line));
   assert.equal(lines.length, 1, `expected one "version" line, found ${lines.length}`);
-  assert.equal(lines[0], `  "version": ${JSON.stringify(parsed.version)},`, "the version line is not in the anchored shape the bump script rewrites");
+  // The trailing CR is stripped before comparing: this asserts the line's *shape*,
+  // which is what the bump script's anchor depends on, and not the checkout's
+  // line-ending convention. With `core.autocrlf=true` — the default on Windows —
+  // every file in the working tree is CRLF, so comparing the raw line made this
+  // fail for every Windows contributor on a tree that is stored correctly as LF.
+  // The repository's bytes are unchanged either way; only the comparison was wrong.
+  const versionLine = lines[0].replace(/\r$/, "");
+  assert.equal(versionLine, `  "version": ${JSON.stringify(parsed.version)},`, "the version line is not in the anchored shape the bump script rewrites");
 });
 
 test("the bump script rewrites the manifest without a BOM and without a JSON round trip", () => {
