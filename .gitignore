@@ -12,3 +12,8 @@ dist/
 .dsh-connect/
 .dsh-connect-images/
 .pnpm-tools/
+
+# Scratch files from an interactive session (`.tmp-*.mjs`, test drivers, tag-message
+# drafts). They live at the repo root by convention and must never be committed —
+# a stray one already reached two commits before being noticed.
+.tmp-*
