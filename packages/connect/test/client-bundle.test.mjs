@@ -438,8 +438,28 @@ test("each secret field shows its hint and, when stored, its masked preview", ()
     }
   }
   // The whole point of the change: the user can see what they filled in.
-  assert.ok(text.includes(APP_ID), "the stored appId is not shown");
+  //
+  // Where it is visible differs by kind, so the assertion has to as well. An
+  // identifier is shown in its input's `value` (asserted positively in the test
+  // below), which is an *attribute*, not a text node — so `text` no longer
+  // contains it, and asserting on `text` here would fail a correct render.
+  const { elements: all } = render("zh");
+  const seeded = all
+    .filter((el) => el.type === "input")
+    .map((el) => String(el.props.value ?? ""));
+  assert.ok(seeded.includes(APP_ID), "the stored appId is not shown in its field");
+  // A confidential key is masked, and — because its own input is deliberately
+  // left empty — the masked value is shown as labelled text instead.
   assert.ok(text.includes("a1b2…z9y8"), "the stored appSecret is not previewed");
+  // `text` is an ARRAY of visible strings (one entry per text node), so
+  // `text.includes(s)` tests element identity, not substring presence. Joining
+  // first is what makes the assertion about the rendered page rather than about
+  // whether some node happens to equal the label exactly.
+  const visible = text.join("\n");
+  assert.ok(
+    visible.includes(localeTable.zh.currentMasked),
+    "the masked current value must be labelled for a confidential key",
+  );
   assert.ok(text.includes("https://oapi.dingtalk.com/robot/send?access_token=0123…cdef"), "the webhook keeps its host, path and parameter name");
   // A key with nothing stored says so rather than staying silent.
   assert.ok(text.includes(localeTable.zh.notConfigured));
@@ -463,26 +483,78 @@ test("an identifier is a plain input, a confidential key is a password input", (
   assert.ok(masked.includes("appSecret") && masked.includes("botToken"));
 
   for (const el of inputs) {
-    // The preview sits beside the input, never inside it: an empty input means
-    // "leave the stored value alone".
-    assert.equal(el.props.value, "");
+    // Replaced rather than accompanied: the value is shown once, in the field
+    // itself, so there is no separate "current value" line to keep in step.
     assert.ok(
-      [localeTable.zh.configured, localeTable.zh.notConfigured].includes(el.props.placeholder),
-      `unexpected placeholder ${JSON.stringify(el.props.placeholder)}`,
+      typeof el.props.placeholder === "string" && el.props.placeholder.length > 0,
+      `every credential input needs a placeholder; got ${JSON.stringify(el.props.placeholder)}`,
     );
   }
 });
 
-test("no secret value, masked or not, is ever placed in an input", () => {
+test("no masked value or secret is ever placed in an input", () => {
   // The structural half of "a mask can never be written back as a credential".
+  //
+  // Two different rules apply, and conflating them is what this test used to do:
+  //
+  // - A **confidential key** (appSecret) must never be seeded: the host returns a
+  //   mask, and a save would write that mask back as the real credential. Its
+  //   input stays empty.
+  // - An **identifier** (appId) is deliberately seeded with the real value — that
+  //   is the point of showing it, and it grants nothing without its paired secret.
+  //
+  // So the blanket "every input is empty" assertion is gone; what remains is the
+  // invariant that actually protects the credential, checked against every input
+  // regardless of which field it belongs to.
   const { elements: els } = render("zh");
   for (const el of els) {
     if (el.type !== "input") continue;
     const value = String(el.props.value ?? "");
     assert.ok(!value.includes("…"), `an input was seeded with a masked value: ${value}`);
-    assert.ok(!value.includes(APP_ID) && !value.includes(APP_SECRET.slice(0, 8)), `an input was seeded with a stored secret: ${value}`);
-    assert.ok(value === "", `input has a value: ${value}`);
+    // Only the *confidential* value is forbidden here. The identifier is
+    // expected to be present (asserted positively below), so forbidding it would
+    // contradict the feature rather than protect anything.
+    //
+    // Checked on the secret's *tail*, not its head: the fixtures share the
+    // prefix `a1b2c3d4` (the id is `cli_a1b2c3d4…`, the secret `a1b2c3d4…`), so a
+    // head-based check flagged the correctly-seeded identifier as a leaked
+    // secret. `m3n4z9y8` appears only in the secret.
+    assert.ok(
+      !value.includes(APP_SECRET.slice(-8)),
+      `an input was seeded with the stored secret: ${value}`,
+    );
   }
+});
+
+test("the confidential key's input is empty, and the identifier's is seeded", () => {
+  // The two halves stated positively, so a change that quietly stops showing the
+  // identifier (the bug the user reported) fails here rather than passing as
+  // "still not leaking".
+  const { elements: els } = render("zh");
+  const inputFor = (label) => {
+    const field = els.find(
+      (el) => el.props.className === "ds-field" && JSON.stringify(el).includes(label),
+    );
+    assert.ok(field, `no field rendered for ${label}`);
+    const inputs = [];
+    const walk = (node) => {
+      for (const child of node.children ?? []) {
+        if (child && typeof child === "object") {
+          if (child.type === "input") inputs.push(child);
+          walk(child);
+        }
+      }
+    };
+    walk(field);
+    assert.equal(inputs.length, 1, `expected one input under ${label}`);
+    return inputs[0];
+  };
+  // appId is an identifier: shown in full, in the box.
+  assert.equal(inputFor("appId").props.value, APP_ID, "the identifier must be visible in its field");
+  assert.equal(inputFor("appId").props.type, "text", "an identifier is not a password box");
+  // appSecret is confidential: never seeded, and masked while typing.
+  assert.equal(inputFor("appSecret").props.value, "", "the confidential key must not be seeded");
+  assert.equal(inputFor("appSecret").props.type, "password", "a confidential key is a password box");
 });
 
 /** The element rendered with this exact id, wherever it sits in the tree. */

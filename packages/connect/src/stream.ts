@@ -63,6 +63,23 @@ export interface StreamState {
  */
 export type NotifyLevel = "full" | "important" | "result";
 
+/**
+ * Whether a level permits *continuous live status chatter* — the per-minute
+ * "still processing" heartbeat and the periodic progress reminder.
+ *
+ * Only `full` does. The two quieter levels describe themselves in terms of
+ * discrete events, not a running commentary:
+ *   - `important` — 「只推送关键节点：思考开始、工具调用、最终回答」 (three things)
+ *   - `result`   — 「只在任务结束后发送最终结果」 (one thing)
+ * A "still processing (3 min)" line every minute is not a milestone, so it
+ * belongs to neither. This predicate exists so the answer is defined in one
+ * place rather than as a `!== "result"` check repeated at each timer — which is
+ * exactly how `important` came to receive heartbeat spam it never asked for.
+ */
+export function showsLiveStatus(level: NotifyLevel): boolean {
+  return level === "full";
+}
+
 /** One assistant chunk event of interest to the streaming bridge. */
 export interface StreamChunkLike {
   type: string;
@@ -94,6 +111,22 @@ function expandLineBreaks(text: string): string {
 export function applyStreamChunk(state: StreamState, thinkingHint: string, chunk: StreamChunkLike, level: NotifyLevel = "full"): void {
   if (chunk.type === "text-delta" || chunk.type === "reasoning-delta") {
     const isReasoning = chunk.type === "reasoning-delta";
+    // The answer is a *milestone*, not a stream, on both quiet levels.
+    // `result` promises "only the final result when the task finishes";
+    // `important` promises 「最终回答」 as one of three discrete events. Typing
+    // the answer in token by token satisfies neither — it is the live narration
+    // the levels exist to suppress, and it was reachable at `important` because
+    // only `result` was checked here.
+    // The text is still accumulated into `lastText` (silently, without pushing)
+    // because the runner falls back to it when the settled events carry no
+    // answer, and losing it here would turn a deliberately quiet turn into an
+    // empty one.
+    if (!isReasoning && !showsLiveStatus(level)) {
+      state.lastText += chunk.text ?? "";
+      state.reasoning = false;
+      state.lastIndex = chunk.index;
+      return;
+    }
     // Reasoning content is only streamed in `full` mode; `important` shows
     // just the thinking hint and `result` shows nothing until the answer.
     if (isReasoning && level !== "full") {
@@ -148,6 +181,15 @@ export function applyStreamChunk(state: StreamState, thinkingHint: string, chunk
         state.pushedAny = true;
         state.lastPushAt = Date.now();
       }
+      return;
+    }
+    // The whole-block fallback for the answer obeys the same `result` rule as
+    // the deltas above: captured into `lastText`, never pushed to the live card.
+    if (blockType !== "reasoning" && !showsLiveStatus(level) && typeof text === "string" && text.length > 0
+      && (index === undefined || index !== state.lastIndex)) {
+      state.lastText += text;
+      state.lastIndex = index;
+      state.reasoning = false;
       return;
     }
     if (typeof text === "string" && text.length > 0 && (index === undefined || index !== state.lastIndex)) {

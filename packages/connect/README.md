@@ -12,7 +12,16 @@ The **all-in-one plugin** for connecting [DeepSeek Harness](https://github.com/d
 
 - **Session binding & routing** — one chat ⇄ one agent session, persisted in a `bindings.json` route store; sessions can be created, resumed, switched, cleared and mirrored to the DSH Web GUI.
 - **Streaming replies** — the model's live deltas are bridged into the channel's native streaming (Feishu typewriter cards): the thinking hint opens the reasoning phase, reasoning streams live with readable paragraph breaks, tool calls appear as `🔧` progress lines, and a liveness heartbeat keeps the card moving even through long silent stretches (long first-token waits, heavy tool runs) so it never sits frozen on "Thinking…". The runner keeps two subscriptions, because `0.1.5-rc.2` split what used to be one: the durable `session/event` stream carries turns, tools and settlement, while the transient `agent/assistant-stream` frames carry the deltas — the `assistant/chunk` session event that used to carry both is gone.
-- **Notification levels** — per-chat control over how much of the process is streamed: `尽量输出过程` (full process) / `输出重要节点` (key milestones) / `只输出结果` (result only). Switch any time via the settings menu or `/notify`; the choice is persisted per chat and applies immediately.
+- **Notification levels** — per-chat control over how much of the process is streamed: `尽量输出过程` (full process) / `输出重要节点` (key milestones) / `只输出结果` (result only). **Only `full` sends repeating status lines**; the two quieter levels send discrete events instead (see the table below). Switch any time via the settings menu or `/notify`; the choice is persisted per chat and applies immediately.
+| Level | Thinking hint | Reasoning text | Tool-call lines | Liveness heartbeat | 5-min progress reminder | Final answer |
+|---|---|---|---|---|---|---|
+| `尽量输出过程` `full` | once | streamed live | streamed live | sent on a timer | sent, with the step count | streamed live |
+| `输出重要节点` `important` | once | not sent | not sent | **not sent** | **sent**, with the step count | sent once, whole, at task end |
+| `只输出结果` `result` (default) | not sent | not sent | not sent | **not sent** | **sent**, with the step count | sent once, whole, at task end |
+
+The **liveness heartbeat** is repeating chatter ("still here"), so only `full` gets it. The **5-minute progress reminder** is a status report you configured with `progressTimeoutMs`, so it runs at every level — set it to `0` to turn it off everywhere. Both edit the streaming card in place rather than posting a new bubble.
+
+- **Automatic context compaction** — optional, off by default. With `autoCompact` on, a session is compacted automatically at the end of a turn once context usage reaches `autoCompactThresholdPct` (default 80%), so a long unattended run does not stop on a full window. The task-end card states which rule is active. Toggle it per chat with `/autocompact on|off|<1-99>`.
 - **Task-end stats** — after every task a compact card reports the model used, input/output tokens, elapsed time and context-window usage, and suggests `/compact` when the context is getting full.
 - **Interactive menus** — button cards for status, tasks, history, goals, schedule, model/effort switching, workspace picking, language, and more (see the in-chat `/` commands).
 - **Media handling** — downloads user images/attachments, passes them to a vision-capable model (or a configured vision model) so text-only main models never stall on images.
@@ -181,7 +190,7 @@ A fully reproducible example is the [`examples/`](examples/) folder plus the rep
 
 When the agent needs a decision from you it stops and asks, and the asking happens in the chat — no switching to the Web GUI:
 
-- **A question with options** renders as a card with one button per option. One tap answers it and the card immediately moves on to the next question.
+- **A question with options** renders as a card with one button per option. One tap answers it and the card immediately moves on to the next question. **Once every question is answered the card is replaced by a summary** of each question and the answer given, and the buttons disappear — leaving them live made the card look like it was still waiting, and a tap on one did nothing at all, because a tap on a retired card is deliberately absorbed rather than reported as expired.
 - **A question without options** has no buttons to offer: the bot sends the question as a prompt and you **reply in the chat**. That message is the answer.
 - **A tool approval** (an action that needs your go-ahead) is a card too, with **Allow once** / **Reject** buttons. This one accepts **only a tap** — a plain chat message sent while an approval is waiting is not recorded as its result.
 
@@ -202,13 +211,17 @@ Configuration lives in the DSH profile patch (`cordis.patch.yml`) under the plug
 | `workspaces` | `[]` | Extra workspaces offered by the `/dir` picker |
 | `visionModel` | auto-detected | `{ provider, model }` used to describe images when the main model can't see them |
 | `language` | `zh` | User-facing message language: `zh` / `en` |
-| `allowUsers` | `[]` | Sender allowlist (open_id). Empty = allow all |
-| `allowChats` | `[]` | Chat allowlist (chat_id). Empty = allow all |
+| `allowUsers` | `[]` | **Fallback** sender allowlist, used only by a channel that sets none of its own. Identifiers are channel-specific, so each channel has its own list on its card; a channel declaring an empty list allows everyone, overriding this |
+| `allowChats` | `[]` | **Fallback** chat allowlist; a channel's own list wins. See `allowUsers` |
+| `<channel>.allowUsers` | `[]` | That channel's sender allowlist, in that channel's own id format (Feishu `ou_…`, Telegram numeric). Empty = no restriction for this channel; absent = use the fallback above |
+| `<channel>.allowChats` | `[]` | That channel's chat allowlist. Empty = every chat; absent = use the fallback |
 | `stateDir` | `.dsh-connect` | Directory holding the `bindings.json` route store (env `DSH_CONNECT_STATE_DIR` overrides) |
 | `autoMirror` | `true` | Automatically create a Web GUI mirror for every new session |
 | `streamHeartbeatMs` | `60000` | Liveness heartbeat interval (ms) for the streaming card; `0` disables it |
+| `autoCompact` | `false` | Compact the session automatically at the end of a turn once context usage reaches `autoCompactThresholdPct`. Off by default: compaction rewrites the history. Per-chat override via `/autocompact on\|off` |
+| `autoCompactThresholdPct` | `80` | Context-window usage (the same percentage the task-end card reports) at which `autoCompact` fires; clamped to 1–99. Per-chat override via `/autocompact <1-99>` |
 | `notifyLevel` | `result` | Default notification level: `full` (stream everything) / `important` (key milestones) / `result` (answer only, the default); per-chat override via settings menu or `/notify` |
-| `progressTimeoutMs` | `300000` | Proactive progress-notice interval (ms): when a turn has sent no standalone card/text for this long, a status card reports the latest milestone; `0` disables; per-chat override via settings menu or `/progress` |
+| `progressTimeoutMs` | `300000` | Proactive progress-notice interval (ms): when a turn has sent no standalone card/text for this long, a status card reports the latest milestone; `0` disables; per-chat override via settings menu or `/progress`. **Runs at every notification level** — it is a status report you configured, not liveness chatter (which is the separate, `full`-only heartbeat). Its milestone is a tool-free step count. `0` disables it everywhere |
 
 ### Shared (all channels)
 
@@ -326,6 +339,11 @@ the second badge is not rendered — an 「unknown」 placeholder would be a cla
 The channels view polls while it is open, so a reconnect appears on its own; the
 poll merges the status keys only, which is what keeps it from overwriting edits
 you have not saved yet.
+
+> The captures below were taken before 1.0.5, so each channel header shows only the
+> **credentials** badge; the **access status** badge described above renders beside it
+> at runtime. The two-badge header is covered by the client-bundle tests rather than
+> a screenshot.
 
 | Channels & credentials | General |
 |---|---|
@@ -591,6 +609,7 @@ Logs come from the DSH host logger (run `dsh web` in a terminal); plugin message
 | The Feishu card shows a credentials badge but you cannot tell whether the bot is actually connected | Fixed in **1.0.5**, which adds a second **access status** badge to every channel card. Before it, the header answered only 「are credentials configured」 — a channel with a valid appSecret and a dead socket looked exactly like a healthy one. Upgrade, then look for the badge beside the credentials one; the channels view also refreshes it on its own while open. |
 | `/send <path>` pastes the path as text instead of sending the file | Fixed in **1.0.5**: the retry wrapper rebuilt the adapter as an object literal carrying a fixed set of members, and `sendFile` was not among them, so `adapter.sendFile` was always `undefined` on the wrapper the runner holds and every `/send` silently degraded to a text message. Upgrade. |
 | Menu cards don't update / expire | Cards auto-close after 60 s idle by design; re-open the menu. Question and approval cards behave the same — see [Questions and approvals in a conversation](#questions-and-approvals-in-a-conversation). |
+| Progress notices stop, but `/status` still says a task is running | Fixed in **1.0.7**. Two faults in `/status`, not in the notices: the reported completion time was stamped with the clock at the moment you asked (so any old turn looked freshly finished), and a task that nothing was driving was reported as 「正在处理任务」. If you are on 1.0.7 and still see this, the task really was interrupted — the status now says so explicitly, and the progress notices live inside the turn that drives them, so a restart mid-task ends them by construction. Re-send the message to start a fresh turn. |
 
 **Rollback** — reinstall a previous release (`dsh plugin --profile web add dsh-connect@<version>` after removing the current one), or `git checkout` the pinned commit in a source install.
 

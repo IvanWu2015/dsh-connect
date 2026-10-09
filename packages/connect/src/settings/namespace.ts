@@ -243,6 +243,10 @@ export interface ConnectSection {
   notifyLevel?: string;
   /** Silence a quiet run for this long before warning, in ms. */
   progressTimeoutMs?: number;
+  /** Compact the session automatically at `autoCompactThresholdPct`. */
+  autoCompact?: boolean;
+  /** Context usage percentage that triggers auto-compaction. */
+  autoCompactThresholdPct?: number;
   /** Default working directory for new sessions. */
   workDir?: string;
   /** Additional workspace roots offered to new sessions. */

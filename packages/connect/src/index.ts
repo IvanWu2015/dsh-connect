@@ -56,7 +56,7 @@ export { AgentRunner, resolveConnectConfig } from "./runner.js";
 export { MenuController } from "./menu-controller.js";
 export type { MenuHost } from "./menu-controller.js";
 export type { ConnectConfig, ResolvedConnectConfig } from "./runner.js";
-export { applyStreamChunk, applyToolCall, classifyError, questionTextOf, summarizeTurn, toolCallSummary } from "./stream.js";
+export { applyStreamChunk, applyToolCall, classifyError, questionTextOf, showsLiveStatus, summarizeTurn, toolCallSummary } from "./stream.js";
 export type { ErrorCategory, NotifyLevel, StreamChunkLike, StreamState } from "./stream.js";
 export { InteractionBridge, decodeTextAnswer } from "./interaction.js";
 export type { AskQuestionLike } from "./interaction.js";
@@ -292,6 +292,18 @@ export const Config = z.object({
   allowUsers: z.array(z.string()).volatile(),
   /** Chat allowlist; empty = all chats allowed. */
   allowChats: z.array(z.string()).volatile(),
+  /**
+   * Per-channel access control. Identifiers are channel-specific — a Feishu
+   * `ou_…` open id is meaningless to Telegram, whose user ids are numeric — so a
+   * single global list cannot be correct for two channels at once. A channel
+   * declared here overrides `allowUsers`/`allowChats` for itself.
+   */
+  // `z.any()` rather than `z.dict(z.object(...))`: the per-channel shape is
+  // resolved and validated in `resolveConnectConfig`, and a nested `z.dict` here
+  // leaks a cosmokit type into the `Config` export (TS2742 — the declaration
+  // stops being nameable). `paneConfigFields` uses the same convention for its
+  // nested objects.
+  channelAccess: z.any().volatile(),
   /** Directory for the bindings.json routing store. */
   stateDir: z.string(),
   /** Automatically create a Web mirror for new sessions (default: true). */
@@ -302,6 +314,13 @@ export const Config = z.object({
   notifyLevel: z.union([z.const("full"), z.const("important"), z.const("result")]).volatile(),
   /** Proactive progress-notice interval ms when a turn stays silent (default: 300000 = 5 min; 0 disables). */
   progressTimeoutMs: z.number().volatile(),
+  /** Compact the session automatically when context usage crosses `autoCompactThresholdPct` (default: false). */
+  autoCompact: z.boolean().volatile(),
+  /**
+   * Context-window usage (`inputTokens / contextWindow`, as a percentage) at
+   * which `autoCompact` fires (default: 80).
+   */
+  autoCompactThresholdPct: z.number().volatile(),
   /**
    * Channels to activate, shared `channelDefaults`, and the per-channel options
    * the settings pane edits. Spread from `paneConfigFields()` rather than

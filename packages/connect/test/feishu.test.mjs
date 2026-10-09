@@ -43,6 +43,39 @@ test("buildButtonGrid marks ❌ labels as danger buttons", () => {
   assert.equal(rows[0].columns[0].elements[0].type, "danger");
 });
 
+test("buildButtonGrid gives long labels a full-width row", () => {
+  // Reported bug: a question's options rendered as their own truncated prefixes, so
+  // the user was asked to choose between sentences they could not read. Two columns
+  // is right for short menu items and wrong for whole-sentence options — the label
+  // does not fit a half-width button and the renderer wraps and elides it.
+  const long = [
+    { id: "a", label: "整块「对这家来源的动作」卡片全部去掉（推荐）" },
+    { id: "b", label: "只去掉与账号重复的：扫码登录、立刻开一批、暂停" },
+  ];
+  const rows = buildButtonGrid(long, 2);
+  assert.equal(rows.length, 2, "one option per row when the labels are long");
+  for (const row of rows) {
+    assert.equal(row.columns.length, 1, "a long label gets the full card width");
+    assert.equal(row.columns[0].elements.length, 1);
+  }
+  // The label itself is untouched: widening the row must not mangle the text.
+  assert.equal(rows[0].columns[0].elements[0].text.content, "整块「对这家来源的动作」卡片全部去掉（推荐）");
+});
+
+test("buildButtonGrid keeps multi-column rows for short labels", () => {
+  // The heuristic must not narrow the ordinary menu, which is almost all short
+  // labels and reads better as a grid.
+  const rows = buildButtonGrid([{ id: "a", label: "状态" }, { id: "b", label: "任务" }], 2);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].columns.length, 2);
+});
+
+test("buildButtonGrid honours an explicit single column regardless of label width", () => {
+  const rows = buildButtonGrid([{ id: "a", label: "短" }, { id: "b", label: "也很短" }], 1);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].columns.length, 1);
+});
+
 test("buildChoiceElements splits options into titled sections + rest", () => {
   const prompt = {
     title: "菜单",
@@ -649,6 +682,45 @@ test("feishu swallows a tap that lands while the card is being redrawn", async (
   tap();
   await tick();
   assert.equal(fake.sends.length, 1, "no stale notice inside the redraw window");
+});
+
+test("feishu closeMenu swallows a tap that lands during the closing redraw", async (t) => {
+  // Reported bug: after answering the last question the card was replaced by a
+  // summary, and 「⚠️ 此操作已失效」 then arrived *after* the acknowledgement.
+  // `closeMenu` updated the card but left no absorber, so a tap still in flight
+  // found neither a pending choice nor a redraw window and fell through to the
+  // "genuinely stale" branch — telling the user their action failed when it had
+  // in fact succeeded.
+  const { adapter, fake } = await startedAdapter();
+  t.after(() => adapter.stop());
+  const result = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "Pick", options: [{ id: "a", label: "A" }] },
+  );
+  await waitFor(() => adapter["pendingChoices"].size === 1, "prompt registration");
+  const card = fake.sends[0];
+  fake.handlers.cardAction({ messageId: card.messageId, chatId: "oc_chat", action: { tag: "button", value: { choice: "a" } } });
+  await result;
+
+  // The tap that answered the prompt started a 5s absorption window. The bridge
+  // then does work before closing the card — in the reported case it sent the
+  // acknowledgement first — so by the time `closeMenu` runs that window can have
+  // lapsed, which is exactly when a late tap became a 「已失效」 notice.
+  adapter["absorbingChoices"].delete(card.messageId);
+  const sendsBefore = fake.sends.length;
+  await adapter.closeMenu(card.messageId, "done");
+  // A stray tap while the closing update is in flight.
+  fake.handlers.cardAction({ messageId: card.messageId, chatId: "oc_chat", action: { tag: "button", value: { choice: "a" } } });
+  await tick();
+  assert.equal(
+    fake.sends.length,
+    sendsBefore,
+    "a tap during the closing redraw must not produce a stale notice",
+  );
+  assert.ok(
+    fake.cardUpdates.some((u) => u.messageId === card.messageId),
+    "the card must still be replaced by the summary",
+  );
 });
 
 test("feishu re-binding a card cancels its absorption window", async (t) => {

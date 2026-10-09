@@ -65,10 +65,12 @@ export function padLabels(options: readonly ChoiceOption[]): ChoiceOption[] {
  * actions (labels starting with ❌) render as red danger buttons.
  */
 export function buildButtonGrid(options: readonly ChoiceOption[], columnsPerRow: number = 2): unknown[] {
+  // Narrowed per set, not per row: see `columnsForLabels`.
+  const perRow = columnsForLabels(options, columnsPerRow);
   const padded = padLabels(options);
   const rows: unknown[] = [];
-  for (let i = 0; i < padded.length; i += columnsPerRow) {
-    const group = padded.slice(i, i + columnsPerRow);
+  for (let i = 0; i < padded.length; i += perRow) {
+    const group = padded.slice(i, i + perRow);
     const columns = group.map((opt) => ({
       tag: "column",
       width: "weighted",
@@ -83,7 +85,7 @@ export function buildButtonGrid(options: readonly ChoiceOption[], columnsPerRow:
         },
       ],
     }));
-    while (columns.length < columnsPerRow) {
+    while (columns.length < perRow) {
       columns.push({ tag: "column", width: "weighted", weight: 1, vertical_align: "center", elements: [] });
     }
     rows.push({
@@ -178,6 +180,28 @@ export function buildChoiceElements(prompt: ChoicePrompt, defaultColumns: number
     elements.push(...buildButtonGrid(rest, defaultColumns));
   }
   return elements;
+}
+
+/**
+ * How many buttons fit on one row, given how wide their labels are.
+ *
+ * Every choice card used to be a fixed 2-column grid. That is right for short
+ * labels (`/menu` items like 「状态」/「任务」) and wrong for a *question* whose
+ * options are whole sentences — a 44-unit label in a half-width button does not
+ * fit, and the renderer wraps and elides it, so the user is asked to choose
+ * between options they cannot read. The measured failure was an option rendering
+ * as its own truncated prefix, which reads as duplicated text rather than as one
+ * label that was cut off.
+ *
+ * Full-width (one per row) whenever any label is too wide for a half-width
+ * button, so a question with long options stays legible. Uniform across the set:
+ * mixing row widths inside one card looks like a layout bug.
+ */
+const HALF_WIDTH_LABEL_BUDGET = 18;
+function columnsForLabels(options: readonly ChoiceOption[], requested: number): number {
+  if (requested <= 1) return 1;
+  const widest = Math.max(0, ...options.map((o) => displayWidth(o.label)));
+  return widest > HALF_WIDTH_LABEL_BUDGET ? 1 : requested;
 }
 
 /** Collect a Node.js readable stream into a single Buffer with a size cap and a hard timeout. */
@@ -860,6 +884,18 @@ export class FeishuAdapter implements ChannelAdapter {
   }
 
   async closeMenu(messageId: string, summary: string): Promise<void> {
+    // Retire and absorb BEFORE the redraw, for the same reason `promptChoice` binds
+    // its listener before updating: a tap that lands while `updateCard` is still in
+    // flight would otherwise find no pending choice and no absorber, fall through to
+    // the "genuinely stale" branch, and post 「此操作已失效」 about a card the user
+    // had just answered correctly. That is what produced the stale notice arriving
+    // *after* 「已收到你的回答」.
+    const live = this.pendingChoices.get(messageId);
+    if (live !== undefined) {
+      this.pendingChoices.delete(messageId);
+      clearTimeout(live.timer);
+    }
+    this.absorbChoice(messageId);
     await this.channel
       .updateCard(messageId, {
         header: { title: { tag: "plain_text", content: this.t.doneHeader }, template: "green" },

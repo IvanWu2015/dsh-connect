@@ -195,16 +195,31 @@ function renderConfigField(field, value, onChange, t, options = {}) {
     hint ? h('p', { className: 'ds-hint' }, hint) : null);
 }
 
-// Render one secret field: a write-only input, plus a read-only preview of the
-// stored value so the user can confirm what they configured.
+// Render one secret field.
 //
-// The preview is plain text, never the input's `value`. The host already masked
-// it, and seeding an input with a mask would let a save write the mask *back* as
-// the credential. Keeping the input blank also keeps "empty" meaning "leave the
-// stored value alone", which is what a password field is expected to do.
+// The stored value is shown **once**, and where it goes depends on whether the
+// host will hand the real value back:
+//
+// - An **identifier** (`appId`, `clientId` — `disclosure === 'full'`) comes back
+//   verbatim, so it is seeded straight into the input. That is the value the user
+//   needs to compare against the vendor console, and a blank box plus a separate
+//   "current value" line made them read the same thing in two places.
+// - A **confidential key** (`appSecret`, `botToken` — `disclosure === 'mask'`)
+//   comes back already masked by the host, and is NEVER seeded into the input: a
+//   save would write the mask back as the credential and silently destroy it.
+//   Its input stays empty and the masked value rides in the placeholder, so the
+//   user still sees something to confirm against — just not in an editable box
+//   that would corrupt it if they pressed save.
+//
+// Either way the separate `当前值` preview line is gone: it duplicated what is now
+// in the field itself.
 function renderSecretField(ch, field, form, onChange, t) {
   const preview = form.secretPreviews?.[ch]?.[field] ?? '';
+  const masked = isMaskedSecret(field);
   const hint = optionalText(t, `s.${ch}.${field}.hint`);
+  // Seeding is what makes the value visible in the box; it is allowed only where
+  // the host returned the real value rather than a mask.
+  const seeded = masked ? '' : preview;
   return h('div', { className: 'ds-field', key: `sec-${ch}-${field}` },
     h('label', { className: 'ds-control' },
       tr(t, `s.${ch}.${field}`, field),
@@ -212,15 +227,21 @@ function renderSecretField(ch, field, form, onChange, t) {
         className: 'ds-input',
         // Confidential keys stay masked while typing; identifiers (appId,
         // clientId) don't, so a typo is visible before it is ever saved.
-        type: isMaskedSecret(field) ? 'password' : 'text',
+        type: masked ? 'password' : 'text',
         autoComplete: 'off',
-        placeholder: preview ? t('configured') : t('notConfigured'),
-        value: form.secrets?.[ch]?.[field] ?? '',
+        // For an identifier this is redundant while a value exists (the box
+        // already shows it) and only useful when unset; for a key it is the sole
+        // way the masked value is displayed.
+        placeholder: preview ? (masked ? preview : t('configured')) : t('notConfigured'),
+        value: form.secrets?.[ch]?.[field] ?? seeded,
         onChange: (e) => onChange(e.target.value),
       })),
-    h('p', { className: 'ds-preview' },
-      h('b', null, t('current')),
-      preview === '' ? t('notConfigured') : preview),
+    // Written for every secret field, because the box now holds a value the user
+    // can overwrite — "setting this replaces what is stored" has to be said where
+    // the typing happens, not only in a hint about the vendor console. It is also
+    // the only place the masked value is named for a confidential key, whose box
+    // is deliberately left empty.
+    h('p', { className: 'ds-hint' }, masked && preview ? `${t('replaceHint')} ${t('currentMasked')}${preview}` : t('replaceHint')),
     hint ? h('p', { className: 'ds-hint' }, hint) : null);
 }
 

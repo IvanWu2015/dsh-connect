@@ -22,6 +22,13 @@ export const Config = z.object({
   requireMention: z.boolean(),
   pollingTimeoutSeconds: z.number().min(1).max(60),
   baseUrl: z.string(),
+  /**
+   * Access control for *this* channel. Telegram's user and chat ids are numeric,
+   * so they cannot share a list with Feishu's `ou_`/`oc_` ids. Empty means
+   * "everyone"; absent falls back to the top-level `allowUsers`/`allowChats`.
+   */
+  allowUsers: z.array(z.string()),
+  allowChats: z.array(z.string()),
 });
 
 interface ConnectLike {

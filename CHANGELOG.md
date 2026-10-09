@@ -2,6 +2,219 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.14] - 2026-10-09
+
+The freeze, reported a second time and this time precisely: 「还是容易卡住，我现在一个对话，卡在第一个问题，一直不动」「怎么选，都不会变」. I had already looked at this area twice and found nothing, because I was reading the tap path. The fault was not in the tap path at all — it was in the loop that waits for it, and it is reproducible in one line.
+
+### Fixed
+
+- **A question whose card never resolves held the interaction open forever, and a typed reply could not break it.** `askOne` awaited `promptChoice` and *nothing else*. So when a card came back with no tap — unresponsive buttons, a lost action, an adapter that never calls back — the loop sat inside that single `await` with no timeout and no alternative, and the question never advanced. Worse, the escape route that exists for exactly this case did not work: `answerText` (any ordinary chat message) recorded the answer into `answers`, but the only thing that ever looked at `answers` was `askByText`, the *option-free* path. A question **with** options therefore had no way out: the tap did nothing and the text answer was accepted into a variable nobody read. The card and the text path are two ways to answer one question, and they now race (5 s), so whichever the user uses wins.
+- **An unusable tap looped in total silence.** A choice that matched no option was dropped with a bare `continue`: the card redrew identically, nothing was logged, nothing was said. From the user's side that is indistinguishable from a freeze, and it left nothing to diagnose. It is now logged, and the user gets one notice per question explaining that the tap did not register and that replying with the number or the text also works.
+- **A tap for an earlier question was discarded.** The card is reused across questions, so a tap can land after the card has moved on — the user aims at what they can still see. That is a real answer, and it is now recorded rather than dropped. The distinction matters: a stale tap for a *still-unanswered* question is recorded and the loop keeps waiting for the one on screen, whereas returning failure there would turn a late answer into a lost interaction.
+- **A text reply that could not be used as an answer was swallowed.** The service consumed any non-command message while a question was pending and returned unconditionally, even when `answerText` declined. The message vanished: no answer recorded, no reply, no route to the agent. It now falls through to the normal path when the text is not usable.
+
+### Notes
+
+- **Why the earlier investigations missed it.** Both previous rounds examined the *tap*: whether `cardAction` fires, whether the option id round-trips, whether `updateCard` lands. All of that was correct — which is why the reports kept coming back. The defect was one level up, in a loop that only ever listened to one of its two inputs.
+- **Reproduced before it was fixed**, with the real `InteractionBridge` over an adapter whose `promptChoice` never resolves: `answerText` returned `true`, `pendingFor` stayed `true`, and the flow never completed. After the race, the same script shows `pending for: false` and a completed answer.
+
+### Testing
+
+- **623 tests, 30 suites, all green** (was 620), plus SMOKE OK and E2E OK. The regression test for the freeze — `a text reply unblocks a question whose card never resolves` — was verified to *hang* the suite against the pre-fix code rather than merely fail, which is what the bug did in production.
+
+## [1.0.13] - 2026-10-09
+
+Two defects visible in one screenshot of a two-question card, both from the round-1.0.12 work on the same card.
+
+### Fixed
+
+- **A question's options rendered as their own truncated prefixes.** Every choice card was a fixed 2-column button grid. That is right for a menu (`状态`/`任务`) and wrong for a *question*, whose options are whole sentences: a 44-unit label does not fit a half-width button, so the renderer wrapped and elided it and the user was asked to choose between sentences they could not read. The reported card showed each option as its own cut-off copy, which reads as duplicated text rather than as one label that was truncated. Rows are now one column wide whenever any label is too wide for a half-width button, decided per set so a card never mixes row widths.
+- **「⚠️ 此操作已失效」 arrived *after* 「✅ 已收到你的回答」.** `closeMenu` replaced the card with a summary but left no tap absorber. A tap still in flight — or one landing while the closing redraw was in flight — therefore found neither a pending choice nor an absorption window and fell through to the "genuinely stale" branch, telling the user their action had failed when it had in fact succeeded. `closeMenu` now retires the live listener and installs the absorber **before** the redraw, the same ordering `promptChoice` already uses for its own card updates and for the same reason.
+
+### Notes
+
+- **The absorption window is 5 s, and the bridge does work between the tap and the close** (it sends the acknowledgement). So the window can lapse before `closeMenu` runs, which is why this was reachable on a slow turn and not on a fast one.
+- **The option text itself was never wrong.** Our code sent each label exactly once; the duplication in the report was the renderer eliding an over-long button label. The fix is the layout, not the string.
+
+### Testing
+
+- **620 tests, 30 suites, all green** (was 616), plus SMOKE OK and E2E OK. Both fixes were verified to go red against the code they guard:
+  - Three `buildButtonGrid` tests: long labels take a full-width row, short labels keep the grid, and an explicit `1` column is honoured regardless of width (the heuristic must not override a caller that asked for one).
+  - One closeMenu test, which **had to be rewritten before it meant anything**. Its first version passed against the unfixed code, because the tap that answers a prompt starts a 5 s absorption window all by itself — so the card was already absorbing and `closeMenu`'s missing absorber could not be observed. It now clears that window first, reproducing the lapse that makes the bug reachable; only then does it fail without the fix.
+
+## [1.0.12] - 2026-10-09
+
+A report about the interactive question cards: 「交互部分没处理好… 2，（问题 1/2）到第二个问题的时候，问题序号没更新 2。到最后个选项选择完后，应该关闭交互的选择按钮，要不然用户以为还没关闭。」
+
+Two claims, and they did not turn out to be equally well founded. One is fixed and pinned; the other I could not reproduce, and saying so is more useful than pretending otherwise.
+
+### Fixed
+
+- **The question card kept its live buttons after the last answer.** Every question had been answered, but nothing replaced the card — so the options stayed on screen and the user reasonably concluded the interaction was still open. Worse, a tap on those buttons was **silently absorbed** (the adapter deliberately swallows taps on a retired card so a rapid second tap is not reported as "this action has expired"), so pressing one did nothing at all, with no feedback. The card is now replaced with a 「✅ 已提交你的选择」 summary that recaps each question and the answer given — which is also the moment the user is most likely to want to check what they sent. An approval card already did this; a question card did not.
+
+### Not reproduced
+
+- **The step number not advancing to the second question.** I could not reproduce this, and I will not claim a fix I cannot demonstrate. The bridge builds each question's card from the interaction's current index at the moment of presentation, and three tests now pin that: two button-answered questions give 1/2 then 2/2; a **text**-answered first question followed by a button question still gives 2/2 (the mixed path, the one a shared counter would most plausibly get wrong); and a card that expires and is re-presented keeps the right number. All three pass against the pre-existing code.
+  - What I did change is defensive: the option card now **rebuilds its text on every presentation** instead of hoisting it out of the retry loop. With the current design the counter cannot advance *within* one question, so this is observationally identical today — it removes a trap rather than fixing an observed fault, and the test comment says so rather than implying more.
+  - **If a stale number still appears, a screenshot of the card would settle it**: whether the header still reads 1/2, whether the *options* belong to the first or the second question, and whether the card tapped was the original or one re-presented after the ~60 s expiry. Those three facts separate "the counter never advanced" from "the card was not redrawn" from "the tap went to a card that had already been replaced", and they lead to different fixes.
+
+### Notes
+
+- **A question with no options still gets no card**, and therefore nothing to close — the acknowledgement message is the whole response, and that path is unchanged.
+- **The closed card carries a summary, not a bare "done"**, because the answer text is otherwise gone the moment the card is replaced and the user has no way to confirm what was submitted.
+
+### Testing
+
+- **616 tests, 30 suites, all green** (was 611), plus SMOKE OK and E2E OK. Four new interaction tests, two of which were verified to go red against the unfixed code:
+  - **the last answer replaces the card with a done state** and **a single-question card is closed too** both failed before the fix and pass after. The single-question case is covered separately because it is the common one and must not be a special case that keeps its buttons.
+  - Two numbering tests pin the current behaviour. They pass either way, and their comments say they pin an observable contract rather than the implementation — a test that cannot fail should not be dressed up as one that can.
+
+## [1.0.11] - 2026-10-09
+
+Two more items from the pane review: 「1。设置中appid不需要先隐藏又在下面进行显示，直接显示就行，key也一样，显示部分就可以了，写明用户设置时会清除原有值就行。 2。访问控制 这里的账号设置有用吗，如果是针对相应渠道，那么也应该在渠道中，因为不同的渠道账号应该不同」
+
+The second question had a real answer, and the user's instinct was right.
+
+### Fixed
+
+- **A credential was displayed twice, in two different places.** Each secret field rendered a *blank* input with a 「已配置」 placeholder plus a separate 「当前值：…」 line underneath — the same fact stated twice, in the one place where the user is trying to compare a value against the vendor console. The value is now shown **once**:
+  - an **identifier** (`appId`, `clientId`) is seeded straight into its field, so it is visible and editable in the box itself;
+  - a **confidential key** keeps an empty field, with the masked value in the placeholder and named in the hint (`当前值（已脱敏）：a1b2…z9y8`), because the host only ever returns a *mask* and seeding it would let a save write that mask back as the credential, destroying it silently;
+  - every secret field now says so in words: 「重新填写会覆盖已保存的值；留空则不修改。」 — the part that an empty box previously only implied.
+- **Access control was global, so it could only ever be right for one channel.** `allowUsers`/`allowChats` were enforced across every channel at once; the old code literally discarded the channel argument (`void channel; // allowlists are global`). That cannot work: a Feishu `ou_…` open id is meaningless to Telegram, whose user ids are numeric. One list is therefore wrong for every enabled channel but one — either it locks everyone out of the others, or (with both id sets pasted in) it matches nobody and enforces nothing. **Each channel now carries its own `allowUsers`/`allowChats`**, editable on its own card exactly as the user suggested, with the top-level lists kept as the fallback for a channel that sets none.
+
+### Notes
+
+- **A channel that declares an empty list means "unrestricted"**, which is deliberately distinct from omitting the key (fall back to the global list). A channel can therefore opt out of a restrictive default without disturbing the others; N2 pins that distinction.
+- **The migration needs nothing from the user.** The top-level keys keep working as the fallback, so an existing profile behaves exactly as before until a per-channel list is set.
+- **`channelAccess` is derived from each channel's own config block** rather than kept as a second table, so the pane and the enforcement path cannot disagree about where a list lives.
+
+### Testing
+
+- **611 tests, 30 suites, all green** (was 608), plus SMOKE OK and E2E OK. Each new behaviour was verified to go red against the code it guards:
+  - **N1–N3** cover the per-channel gate: a channel's own list overrides the global one, an explicitly empty list means "everyone", and `allowChats` still reduces a thread-scoped key to its base chat id. Reverting the gate to global-only turns all three red.
+  - **`the confidential key's input is empty, and the identifier's is seeded`** states both halves positively, so a change that quietly stops showing the identifier fails rather than passing as "still not leaking".
+  - Three older assertions had to be corrected because they encoded the *old* contract, and one was **wrong in a way that would have hidden a real leak**: the "no secret in an input" check compared `APP_SECRET.slice(0, 8)`, which is `a1b2c3d4` — also the prefix of the appId fixture `cli_a1b2c3d4…`. It now compares the secret's unique tail. Another used `text.includes(s)` on an *array* of text nodes, which tests element identity rather than substring presence.
+
+## [1.0.10] - 2026-10-09
+
+Two follow-ups from the same report: 「现在虽然没有原来的流式实时输出，但还是有输出这种工具调用，这也没必要，一并去除。另外就是我设置了5分钟提醒进度，每隔5分钟是否会输出当前的简单状态。」
+
+The first was a genuine miss in 1.0.6–1.0.9: every gate was written as `!== "result"` or `=== "result"`, and the tool-call line was still gated on `=== 'result'` alone — so `important` kept narrating `🔧 调用工具 pwsh` even after three rounds of "remove the live status". The second turned out to be the more interesting question, because the answer was *no*, and the reason was a design mistake of the same family.
+
+### Fixed
+
+- **`important` still streamed a line per tool call.** The gate read `if (this.notifyLevel === 'result') return;`, so only the default level suppressed tool activity. It is now `showsLiveStatus(…)`, which admits `full` alone — the single predicate every other gate already uses, so this class of miss has one place left to happen instead of one per call site. The now-unreachable `notifyLevel === 'full' ? summary : undefined` ternary below it was removed rather than left as a second, silently diverging copy of the same decision.
+- **The 5-minute progress reminder never fired at a quiet level.** This is the one worth reading. The reminder was gated together with the liveness heartbeat on `showsLiveStatus`, on the reasoning that both "write progress chatter into the card". That reasoning is wrong: the heartbeat is *liveness chatter* — a line every 60s saying nothing but "still here", which the quiet levels exist to suppress — while the reminder is **a status report the user explicitly configured** via `progressTimeoutMs`, fires once per interval, and carries the elapsed time and the latest milestone. Gating it on the notification level meant that choosing a quieter level **silently discarded a setting the user had made on purpose**, which is why the answer to 「每隔5分钟是否会输出」 was no. The reminder now runs at every level; the heartbeat remains gated.
+
+### Notes
+
+- **The reminder no longer names the tool it last saw.** Its milestone was the tool name (`🔧 调用工具 pwsh`), which is precisely the activity detail the quiet levels suppress — so keeping the reminder at those levels would have smuggled the removed line back in through the one message the user kept. The milestone is now a tool-free step count (`🔧 已完成 12 步操作`), which conveys "work is still happening" without re-listing tools. The single exception is `ask_user_question`, which is not activity but a *request aimed at the user*, and hiding it would conceal the fact that the bot is waiting on them.
+- **`turn.milestone` is still updated before the early return**, so suppressing the tool *line* does not cost `/status` the state that makes it useful.
+- **The reminder edits the streaming card in place**, so a 5-minute tick does not add a bubble to the chat.
+
+### Testing
+
+- **607 tests, 30 suites, all green**, plus SMOKE OK and E2E OK. Both behaviours were verified to go red against the code they guard:
+  - **K8** (tool lines) was passing *vacuously* at first — the harness emitted no `tool/call` events, so there was nothing to suppress and the test could not fail. It now scripts `toolCalls: ["pwsh", "edit"]`, and only then does reverting the gate turn it red.
+  - **K4** was inverted from "the reminder stays silent at `result`" to "the reminder still fires at a quiet level, and the heartbeat does not", which is the corrected contract.
+
+## [1.0.9] - 2026-10-08
+
+A feature request in two parts: 「现在有没有上下文自动压缩功能，如果没有，你在设置中增加一个上下文自动压缩，打开后，到达80%长度时自动压缩。还有，每轮任务的结束，需要写清楚上下文的使用百分比。」
+
+There was no automatic compaction. A **manual** `/compact` and a **suggestion** that prompts at 75% both existed, and neither is what was asked for: the prompt still requires the user to be watching and to answer, which is exactly what does not happen on a long unattended run.
+
+### Added
+
+- **`autoCompact` — compact the session automatically at the end of a turn.** Off by default, because compaction rewrites the conversation history and that is not something to switch on behind the user's back. It runs at turn end rather than mid-turn for two reasons: compaction needs an idle agent, and the threshold is about what the *next* turn has to carry — the turn that fills the window still finishes with its full history.
+- **`autoCompactThresholdPct` — the trigger, default 80.** Clamped to 1–99 on resolve so a nonsense value cannot mean "compact on every turn" (0) or "never, even when the window is full" (100+).
+- **Both are editable in 通用设置**, under a new **上下文** group (the pane now renders five groups), carrying the same restart notice every other general row has. Each is also overridable per chat through the new `/autocompact` command: `/autocompact on`, `/autocompact off`, `/autocompact 85`, or a bare `/autocompact` to report the current state. A bare invocation reports rather than toggles, because a typo silently disabling a safety behaviour is the wrong default for a switch like this.
+- **The turn-end card names the active compaction rule.** With auto-compaction on it reads 「🤖 自动压缩已开启（达到 80% 时自动执行）」; once the threshold is passed, 「🤖 已达自动压缩阈值 80%」. Telling a user who enabled auto-compaction to send `/compact` by hand would be wrong, so the two lines are mutually exclusive rather than stacked.
+
+### Fixed
+
+- **The context-usage row was silently absent when the window size was unknown.** The old guard required *both* `contextSize` and `contextWindow`, so a host reporting only token counts produced a stats card with no context line at all — and a missing field reads as "nothing to worry about", the opposite of what a usage report is for. It now falls back to the token count with an explicit 「窗口大小未知」.
+
+### Notes
+
+- **Auto-compaction is deliberately silent on success.** It is maintenance the user asked to happen on its own, so it posts nothing; the turn-end card reports the resulting usage either way, which is where the effect is legible. A *failure* is still reported, because silently not compacting would leave the user believing they are protected.
+- **The manual and automatic paths share one service lookup** (`runCompaction`), so they cannot disagree about whether compaction is available — previously that lookup was inlined in the manual path alone.
+- **The threshold is a percentage of the reported window** — the same number the stats card shows, so the two always agree.
+
+### Testing
+
+- **607 tests, 30 suites, all green** (was 601 in 30), plus SMOKE OK and E2E OK. Six new tests in group M, and both directions of the switch were verified to go red against the code they guard:
+  - **M1** fires at 85% against an 80% threshold; **M2** proves nothing runs while the switch is off even at 95% (and waits for the turn to finish first, so it cannot pass merely by running before the code under test); **M3** proves 40% does not trip an 80% threshold.
+  - **M4** proves a per-chat binding overrides the plugin config.
+  - **M5** asserts every turn-end card carries the real percentage; **M6** asserts an armed chat is *not* told to send `/compact` by hand.
+  - The existing guards fired as designed while building this: `settings-model`, `settings-namespace` and `web-settings-roundtrip` each failed by name until the two new keys were added to the field table, the section projection and the round-trip fixture — which is what those tests exist for, since a general key missing from any of the three is silently *erased* on the user's next save.
+
+## [1.0.8] - 2026-10-08
+
+The report 「还是不对，已经是1.0.7了，但还是在流式实时回复当前的工作状态。这不符合我的设置。」 — and 1.0.7 *was* correctly installed in both profiles. The setting was 输出重要节点 (`important`), not 只输出结果, and `important` had never been gated at all. 1.0.6 and 1.0.7 checked `!== "result"` at every gate, which fixed the level named in the first report and left the other quiet level just as noisy.
+
+### Fixed
+
+- **`important` received the liveness heartbeat and the progress watchdog, so 输出重要节点 produced a running commentary.** Both timers were gated on `!== "result"`. The level is documented as 「只推送关键节点：思考开始、工具调用、最终回答」 — three *discrete* events — and a 「⏳ 仍在处理中（已运行约 N 分钟）」 line arriving every minute is not one of them. The two timers are now gated on a single `showsLiveStatus(level)` predicate that admits `full` alone, so the definition of "this level tolerates repeating status chatter" lives in one place instead of as a negated check copied onto each timer — which is precisely how one quiet level was fixed while the other stayed broken.
+- **`important` streamed the answer token by token into the live card.** The answer is a milestone at this level (「最终回答」), not a stream, and the check that held it back at `result` was written as `level === "result"` rather than "any quiet level". The text is still accumulated into `lastText`, so it is delivered whole on the turn-end card exactly as at `result`. The whole-block fallback for short answers obeys the same rule.
+
+### Notes
+
+- **`full` is unchanged**: reasoning, tool calls, heartbeats, progress reminders and the answer all stream live, which is what 尽量输出过程 promises.
+- **`important` now means what it says**: the thinking-start hint (once), a line per distinct tool, and the finished answer. Nothing repeats on a timer.
+- **The 1.0.6 and 1.0.7 fixes were not wrong, only incomplete** — they covered `result`, the default and the level named in the first report. `important` is what a user picks when they want *some* visibility, which is exactly why a per-minute heartbeat there is more surprising rather than less.
+
+### Testing
+
+- **601 tests, 30 suites, all green** (was 598 in 30), plus SMOKE OK and E2E OK. Each new test was verified to go red against the code it is meant to catch:
+  - The `unit.test.mjs` case for `important` previously asserted `["🤔 深度思考中…\n\n", "answer"]` — the test *encoded* the bug, so it had to be corrected before it could catch anything. It now asserts the hint alone, plus that `lastText` still holds the answer for the turn-end card.
+  - **`showsLiveStatus`** is pinned directly: `true` for `full` alone.
+  - **K8** runs a 100ms heartbeat and a 400ms watchdog on a chat set to `important` and asserts neither 「Still processing」 nor 「Still working on the task」 reaches the card *or* the chat, while the answer still arrives. This is the reported symptom stated as an assertion.
+
+## [1.0.7] - 2026-10-08
+
+A report that progress notices stopped after roughly 20 minutes on a long task: 「正在处理中，但到20分钟后就不报了，是你之前的修改生效了，还是原因有bug」. Investigated against the live session transcript rather than by reading code, and the answer is **neither of those two** — it was a third thing, plus a genuinely fabricated field that made the whole picture harder to read than it should have been.
+
+### Fixed
+
+- **`/status` reported 「上次任务：✅ 完成」 with the *current* wall-clock time as the completion time.** `getLastTurnInfo` located the real `turn/end` event, read its reason, and then stamped it with `new Date()` — the moment the user asked — instead of `event.time`. The field was therefore always "a few seconds ago", including for a turn that had never finished at all. This is the worst kind of wrong: not a missing value but a plausible fabricated one, and it is what made a 25-minute in-flight task look like a completed one. It now formats the event's own timestamp, and falls back to `—` (rather than inventing an hour) for an event shape that lacks one.
+- **`/status` claimed 「🔄 正在处理任务」 for a task that nothing was driving.** `agent.status === "running"` is not proof that this process owns a turn: after a host restart the resumed session still holds a turn that was cut off mid-flight — no `turn/end` was ever written — so the agent reads "running" indefinitely while no `driveAgent` call exists and no progress notice can ever be produced. That pairing is what makes a dead task indistinguishable from a live one. `/status` now reports a distinct 「⚠️ 上次任务已中断（宿主重启或进程退出），没有任务在运行」 when the agent is busy but this process is neither draining the queue nor holding turn state.
+
+### Notes
+
+- **The notices stopping at ~20 minutes was not a bug in the notice logic.** The watchdog was working as designed. The session transcript for the reported chat shows the turn starting at 19:16:52 and holding until 19:41:28, and `progressTimeoutMs: 300_000` puts the ticks at +5/+10/+15/+20/+25 min — 19:21:52 / 19:26:52 / 19:31:52 / 19:36:52 / 19:41:52. The user received the notices through the +20 min tick; the host was restarted between 19:41:28 (the last event ever recorded) and 19:44, so the +25 min tick never had a process to fire in. The transcript ends mid-`tool/call` with no matching `tool/result`, which is the signature of a process that exited while the turn was still open, not of a timer that stopped.
+- **The 1.0.6 level gating is unrelated and is confirmed working.** Both the heartbeat and the watchdog remain gated on `notifyLevel`; the notices above arrived on a chat set to a level that permits them.
+
+### Testing
+
+- **598 tests, 30 suites, all green** (was 596 in 30), plus SMOKE OK and E2E OK. Two new tests, both verified to go red against the code they are meant to catch:
+  - **K6** scripts a `turn/end` stamped two hours in the past and asserts `/status` reports *that* time. The first version of this test passed even against the buggy code, because the harness emitted the event at the current instant and "now" was indistinguishable from the real answer — a test that cannot fail. It needed a new `turnEndedAtMs` harness option before it meant anything, which is the whole reason that option exists.
+  - **K7** puts the agent in the post-restart state (busy, with no turn state this process owns) and asserts `/status` says the previous task was interrupted rather than claiming to be processing.
+
+## [1.0.6] - 2026-10-08
+
+A bug report about the notification levels: 「我已经在设置中选择了只通知结果、或重要节点，但是我发完信息后，还是不断的流式生成当前处理的详细内容，并没有按我的要求进行。另外，最后有一个整体的结果进行单独的回复，但又没有输出完整的内容，只输出了一部分。」 Two separate defects, one per sentence — and the first one had *three* independent causes, because the level was honoured on some paths and not on others.
+
+### Fixed
+
+- **`result` still streamed the answer into the live card as it was produced.** The level gated reasoning text and tool calls, but `applyStreamChunk` pushed every `text-delta` unconditionally — so the one thing the user had explicitly turned off, a running narration of the turn, was the one thing that always came through. The answer is now captured into `lastText` (silently, because the runner falls back to it when the settled events carry no answer, and dropping it there would turn a deliberately quiet turn into an empty one) and delivered once at the end. The `block-end` fallback for short blocks obeyed the same rule, or a short answer would still have leaked into the card.
+- **The progress watchdog ignored the notification level.** It is gated on the level exactly like the liveness heartbeat now. This was the subtlest of the three: a turn that ran longer than `progressTimeoutMs` kept writing 「仍在处理中」 milestones into the streaming card no matter what the level said — so 「只输出结果」 was a lie for exactly the long tasks where it matters most. The heartbeat had been gated since it was written; the watchdog, added later, was not.
+- **The final result was clipped at 300 characters.** Both the task-end stats card and the failure/abort summary called `truncate(outcome.text, 300)`. Under `result` — where that card is the *only* place the answer appears — a long answer therefore shipped as its first third and read as the agent having stopped mid-sentence. Both cards now carry the whole answer.
+
+### Notes
+
+- **`result` now means what it says.** 「只在任务结束后发送最终结果」: nothing is typed into the live card while the turn runs, and the answer arrives once, whole, on the task-end card. The streaming card is still opened (the turn's progress is still observable in the Web GUI) — it simply stays quiet.
+- **`progressTimeoutMs` has no effect at `result`.** The config table said the watchdog reports a milestone after the interval with no mention of the level; it now states the exception, because an interval that silently does nothing is the same class of surprise this release is fixing.
+
+### Testing
+
+- **596 tests, 30 suites, all green** (was 592 in 30), plus SMOKE OK and E2E OK. Four new tests, and each was verified to go red against the code it is meant to catch — a regression test that cannot fail is worse than none:
+  - `unit.test.mjs` replaces the old "result streams only the answer" expectation (which had *encoded the bug*) with three: `result` pushes nothing while capturing the text, the whole-block fallback obeys the same rule, and `full` still streams live.
+  - `runner.test.mjs` **K2** asserts nothing reaches the card at the default level *and* that the answer still arrives on the task-end card — the second half rules out an implementation that passes by simply dropping the output.
+  - **K4** runs a 400ms watchdog interval on a chat left at the default level and asserts no milestone appears.
+  - **K5** scripts a 400-character answer with a unique tail and asserts the tail is delivered.
+
 ## [1.0.5] - 2026-10-06
 
 The second half of 1.0.4's bug report: 「需要明确显示插件的设置，并能有效保存。还有也要显示出具体的连接状态。包括其他的可配置项，配置的值也需要能正确保存，显示。」 1.0.4 made the pane's saves *reach* the host; this one makes them *say what they did* and stops the pane from quietly discarding the settings it was showing. Three things were wrong, and only the first was visible.

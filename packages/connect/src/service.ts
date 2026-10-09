@@ -319,7 +319,24 @@ export class ConnectService extends Service {
    * so rejected senders' files never touch disk.
    */
   isChatAllowed(channel: string, chatKey: string, senderKey: string): boolean {
-    if (this.config.allowUsers.length > 0 && !this.config.allowUsers.includes(senderKey)) return false;
+    // Per-channel lists, with the top-level `allowUsers`/`allowChats` as the
+    // fallback for a channel that declares none.
+    //
+    // The channel dimension is not decoration: an `open_id` (`ou_…`) means
+    // nothing to Telegram, whose user ids are numeric, and a Feishu `chat_id`
+    // (`oc_…`) is not a DingTalk conversation id. One global list therefore
+    // cannot be correct for two enabled channels at once — the ids from one are
+    // simply absent from the other, so the tighter list either locks everyone
+    // out of the second channel or (if the user adds both sets) never rejects
+    // anyone. The previous code discarded `channel` outright.
+    const perChannel = this.config.channelAccess?.[channel];
+    // A channel block that declares the key at all wins — including an empty
+    // list, which means "this channel allows everyone". `?? ` is therefore wrong
+    // here: it would treat `[]` as absent and re-apply a restrictive global
+    // fallback the user deliberately opted this channel out of.
+    const users = perChannel?.allowUsers ?? this.config.allowUsers;
+    const chats = perChannel?.allowChats ?? this.config.allowChats;
+    if (users.length > 0 && !users.includes(senderKey)) return false;
     // Compare on the base chat id. Adapters that scope a conversation more
     // finely (Feishu `threadIsolation` → `chatId:thread=<rootId>`) hand this
     // method the plain chat id in their pre-download check but the encoded key
@@ -327,8 +344,7 @@ export class ConnectService extends Service {
     // message through and the core then drops every thread of an allowlisted
     // chat. `allowChats` is documented as chat ids, so the base id is the
     // right unit for it.
-    if (this.config.allowChats.length > 0 && !this.config.allowChats.includes(baseChatId(chatKey))) return false;
-    void channel; // allowlists are global; kept for a future per-channel policy
+    if (chats.length > 0 && !chats.includes(baseChatId(chatKey))) return false;
     return true;
   }
 
@@ -352,12 +368,22 @@ export class ConnectService extends Service {
       return;
     }
 
-    // A question (ask_user_question) is waiting on this chat: plain text is
-    // the user's answer. Commands (starting with "/") still go to the runner
-    // so /stop etc. keep working while the agent waits.
+    // A question (ask_user_question) is waiting on this chat: plain text is the
+    // user's answer. Commands (starting with "/") still go to the runner so /stop
+    // etc. keep working while the agent waits.
+    //
+    // Only consume the message when it actually became an answer. `answerText`
+    // declines when the text decodes to nothing (empty after trimming) *and*
+    // whenever any question is unanswered but the pending state has moved on —
+    // and an unconditional `return` here swallowed the message in that case:
+    // no answer recorded, no reply, and the user's only escape route from an
+    // unresponsive card vanished into silence. Falling through to the normal
+    // path is strictly better: the text still reaches the agent as a message.
     if (!msg.text.trim().startsWith("/") && this.interaction.pendingFor(msg.chatKey)) {
-      this.interaction.answerText(msg.chatKey, msg.text);
-      return;
+      if (this.interaction.answerText(msg.chatKey, msg.text)) return;
+      this.ctx.logger?.warn?.(
+        `connect: text reply was not usable as an answer (${msg.channel}/${msg.chatKey}); passing it to the runner`,
+      );
     }
 
     // Make sure the DSH workspace registry knows about our work dirs and

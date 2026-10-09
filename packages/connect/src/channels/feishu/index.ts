@@ -33,6 +33,14 @@ export const Config = z.object({
   language: z.union([z.const("zh"), z.const("en")]),
   /** Set false to never enter the interactive one-click onboarding flow. */
   onboarding: z.boolean(),
+  /**
+   * Access control for *this* channel. Identifiers are channel-specific — a
+   * Feishu `ou_…` open id means nothing to Telegram, whose user ids are
+   * numeric — so each channel carries its own lists. Empty means "everyone",
+   * and absent means "fall back to the top-level `allowUsers`/`allowChats`".
+   */
+  allowUsers: z.array(z.string()),
+  allowChats: z.array(z.string()),
 });
 
 interface ConnectLike {

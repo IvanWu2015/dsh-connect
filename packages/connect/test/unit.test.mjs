@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer, classifyError, InboundDedup, retry, withOutboundRetry, isLockTimedOut, acquireLock, releaseLockState, lockCanWrite, DEFAULT_LOCK_TIMEOUT_MS, ReminderStore, parseRemindTime, formatRemindAt } from "../lib/index.js";
+import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, showsLiveStatus, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer, classifyError, InboundDedup, retry, withOutboundRetry, isLockTimedOut, acquireLock, releaseLockState, lockCanWrite, DEFAULT_LOCK_TIMEOUT_MS, ReminderStore, parseRemindTime, formatRemindAt } from "../lib/index.js";
 import { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces, menuRender } from "../lib/index.js";
 import { MenuController } from "../lib/index.js";
 
@@ -284,7 +284,7 @@ test("messages expose tool-call and heartbeat strings in both languages", () => 
   assert.equal(zh.processingHeartbeat(2), "⏳ 仍在处理中（已运行约 2 分钟）…");
 });
 
-test("applyStreamChunk with level=important streams only the hint, not reasoning", () => {
+test("applyStreamChunk with level=important pushes the thinking hint once, and nothing else", () => {
   const received = [];
   const state = {
     chunks: { push: (text) => received.push(text) },
@@ -299,11 +299,40 @@ test("applyStreamChunk with level=important streams only the hint, not reasoning
   applyStreamChunk(state, "🤔 深度思考中…\n\n", { type: "reasoning-delta", index: 0, text: "more" }, "important");
   applyStreamChunk(state, "🤔 深度思考中…\n\n", { type: "block-end", index: 0, block: { type: "reasoning", text: "full reasoning" } }, "important");
   applyStreamChunk(state, "🤔 深度思考中…\n\n", { type: "text-delta", index: 1, text: "answer" }, "important");
-  assert.deepEqual(received, ["🤔 深度思考中…\n\n", "answer"]);
-  assert.equal(state.lastText, "answer");
+  // 思考开始 is the milestone; the reasoning text behind it is not, and neither
+  // is the answer typed in token by token — 「最终回答」 is delivered whole at
+  // turn end. Before this fix the answer streamed here, which is what made
+  // 输出重要节点 produce a running commentary despite its label.
+  assert.deepEqual(received, ["🤔 深度思考中…\n\n"]);
+  assert.equal(state.lastText, "answer", "the answer must still be captured for the turn-end card");
 });
 
-test("applyStreamChunk with level=result streams only the answer", () => {
+test("applyStreamChunk with level=important captures a whole-block answer instead of streaming it", () => {
+  const received = [];
+  const state = {
+    chunks: { push: (text) => received.push(text) },
+    lastText: "",
+    reasoning: false,
+    hintPushed: true,
+    lastIndex: undefined,
+    pushedAny: true,
+    lastPushAt: 0,
+  };
+  applyStreamChunk(state, "🤔 深度思考中…\n\n", { type: "block-end", index: 3, block: { type: "text", text: "short answer" } }, "important");
+  assert.deepEqual(received, []);
+  assert.equal(state.lastText, "short answer");
+});
+
+test("showsLiveStatus is true for full alone, so the quiet levels never get status chatter", () => {
+  // The heartbeat and the progress watchdog are gated on this. Gating them on
+  // `!== "result"` instead is exactly how 输出重要节点 ended up receiving a
+  // "still processing" line every minute.
+  assert.equal(showsLiveStatus("full"), true);
+  assert.equal(showsLiveStatus("important"), false);
+  assert.equal(showsLiveStatus("result"), false);
+});
+
+test("applyStreamChunk with level=result pushes nothing — the answer is captured, not streamed", () => {
   const received = [];
   const state = {
     chunks: { push: (text) => received.push(text) },
@@ -316,8 +345,49 @@ test("applyStreamChunk with level=result streams only the answer", () => {
   };
   applyStreamChunk(state, "🤔 深度思考中…\n\n", { type: "reasoning-delta", index: 0, text: "secret" }, "result");
   applyStreamChunk(state, "🤔 深度思考中…\n\n", { type: "block-end", index: 0, block: { type: "reasoning", text: "secret" } }, "result");
+  applyStreamChunk(state, "🤔 深度思考中…\n\n", { type: "text-delta", index: 1, text: "the " }, "result");
   applyStreamChunk(state, "🤔 深度思考中…\n\n", { type: "text-delta", index: 1, text: "answer" }, "result");
-  assert.deepEqual(received, ["answer"]);
+  // "result" means only the final result, sent when the task finishes: nothing
+  // may be typed into the live card while the turn is still running.
+  assert.deepEqual(received, []);
+  // …but the text is still accumulated, because the runner falls back to
+  // `lastText` when the settled events carry no answer.
+  assert.equal(state.lastText, "the answer");
+});
+
+test("applyStreamChunk with level=result still captures a whole-block answer", () => {
+  const received = [];
+  const state = {
+    chunks: { push: (text) => received.push(text) },
+    lastText: "",
+    reasoning: false,
+    hintPushed: false,
+    lastIndex: undefined,
+    pushedAny: false,
+    lastPushAt: 0,
+  };
+  // A short block can arrive only as block-end; that fallback must obey the
+  // same rule as the deltas, or a short answer leaks into the live card.
+  applyStreamChunk(state, "🤔 深度思考中…\n\n", { type: "block-end", index: 3, block: { type: "text", text: "short answer" } }, "result");
+  assert.deepEqual(received, []);
+  assert.equal(state.lastText, "short answer");
+});
+
+test("applyStreamChunk with level=full still streams the answer live", () => {
+  const received = [];
+  const state = {
+    chunks: { push: (text) => received.push(text) },
+    lastText: "",
+    reasoning: false,
+    hintPushed: false,
+    lastIndex: undefined,
+    pushedAny: false,
+    lastPushAt: 0,
+  };
+  applyStreamChunk(state, "🤔 深度思考中…\n\n", { type: "text-delta", index: 1, text: "live " }, "full");
+  applyStreamChunk(state, "🤔 深度思考中…\n\n", { type: "text-delta", index: 1, text: "answer" }, "full");
+  assert.deepEqual(received, ["live ", "answer"]);
+  assert.equal(state.lastText, "live answer");
 });
 
 test("summarizeTurn collects model, tokens, context window, steps and duration", () => {

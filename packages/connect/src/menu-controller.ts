@@ -27,6 +27,8 @@ export interface MenuHost {
   readonly chatKey: string;
   readonly notifyLevel: NotifyLevel;
   readonly progressTimeoutMs: number;
+  readonly autoCompact: boolean;
+  readonly autoCompactThresholdPct: number;
   readonly ctx: Context;
   defaultSelection(): ModelSelection;
   listWorkspaces(): { path: string; title: string }[];
@@ -37,6 +39,7 @@ export interface MenuHost {
   setReasoning(effort: string | undefined, msg: InboundMessage): Promise<void>;
   setNotifyLevel(level: NotifyLevel, target: OutboundTarget, msg: InboundMessage): Promise<void>;
   setProgressTimeout(ms: number, target: OutboundTarget, msg: InboundMessage): Promise<void>;
+  setAutoCompact(on: boolean, target: OutboundTarget, pct?: number): Promise<void>;
   setModel(provider: string, model: string, msg: InboundMessage): Promise<void>;
   showStatus(target: OutboundTarget): Promise<void>;
   showTasks(target: OutboundTarget): Promise<void>;

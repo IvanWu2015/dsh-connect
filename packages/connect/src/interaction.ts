@@ -136,6 +136,19 @@ type PendingInteraction = PendingQuestion | PendingApproval;
 /** How one interactive prompt loop ended. */
 type LoopResult = "answered" | "stopped";
 
+/**
+ * How long one presentation of a question card waits for a text reply before it
+ * re-presents.
+ *
+ * The card and a typed answer are two independent ways to answer the same
+ * question, and only one of them can unblock the loop that awaits them. Racing
+ * them means a user who types instead of tapping is served immediately rather
+ * than after the card decides to expire; it also bounds how long the loop can sit
+ * inside a single `promptChoice` call, which is what let a card that never
+ * resolved hold the whole interaction open indefinitely.
+ */
+const ANSWER_RACE_MS = 5_000;
+
 /** How a wait for a text answer ended. */
 type WaitResult = "answered" | "timeout" | "stopped";
 
@@ -281,6 +294,20 @@ export class InteractionBridge {
       const answers = await this.runQuestions(interaction);
       if (answers === undefined) return next();
       const t = messages(interaction.language);
+      // Retire the question card before the acknowledgement. Every question has
+      // been answered, so leaving the buttons live would let the user tap a
+      // control whose answer can no longer go anywhere — and because a tap on a
+      // retired card is deliberately *absorbed* (see `absorbChoice`), it would
+      // appear to do nothing at all rather than fail loudly. Replacing it with a
+      // summary is what tells the user the interaction is over.
+      //
+      // Only when there is a card to close: an option-free question is answered
+      // by a plain message and never created one.
+      if (interaction.messageId !== undefined) {
+        await interaction.adapter
+          .closeMenu(interaction.messageId, t.answersSubmitted(this.questionSummaries(interaction)))
+          .catch(() => undefined);
+      }
       await interaction.adapter.sendText(this.outbound(interaction), t.answerReceived).catch(() => undefined);
       this.log(`connect: answered ${answers.length} question(s) from ${interaction.chatKey}`);
       return { answers };
@@ -315,25 +342,88 @@ export class InteractionBridge {
     });
   }
 
+  /**
+   * Record a tap that belongs to an *earlier* question of this same interaction.
+   *
+   * The card is reused across questions, so a tap can arrive after the card has
+   * already advanced: the user aims at the option they can still see, while the
+   * bridge has moved on to the next question. Treating that as "unrecognised"
+   * drops a real answer and leaves the flow waiting on a question the user
+   * believes they just answered.
+   *
+   * @returns true when the choice matched some question in this interaction.
+   */
+  private answerFromStaleCard(interaction: PendingQuestion, choice: string): boolean {
+    for (const other of interaction.questions) {
+      const answer = decodeChoice(other, choice);
+      if (answer === undefined) continue;
+      this.recordAnswer(interaction, other.id, answer);
+      this.log(
+        `connect: accepted a late tap for an earlier question ${JSON.stringify(other.id)} (${interaction.chatKey})`,
+      );
+      return true;
+    }
+    return false;
+  }
+
   private async askOne(interaction: PendingQuestion, q: AskQuestionLike): Promise<boolean> {
     const options = Array.isArray(q.options) ? q.options : [];
     if (options.length === 0) return this.askByText(interaction, q);
 
     const t = messages(interaction.language);
-    const prompt: ChoicePrompt = {
+    /**
+     * Rebuild the prompt on every presentation rather than hoisting it out of the
+     * loop. The description embeds the step number (「问题 2/3」), which is derived
+     * from `interaction.current` — so a prompt built once and re-presented after
+     * the card expires would re-assert whatever the counter said when it was first
+     * built. That is precisely the "the number never updated to 2" symptom: the
+     * re-presented card is the one the user reads after a tap, and it must reflect
+     * the current question, not the one that has since been answered.
+     */
+    const buildPrompt = (): ChoicePrompt => ({
       title: t.questionCardTitle,
       description: this.questionPromptText(interaction, q),
       options: options.map((o, i): ChoiceOption => ({ id: `q:${q.id}:${i}`, label: o.label })),
       footer: q.multiSelect === true ? `${t.questionCardHint}\n${t.questionMultiHint}` : t.questionCardHint,
-    };
+    });
 
+    // At most one "that tap was not usable" notice per question, so a user tapping a
+    // dead card repeatedly is told once rather than flooded.
+    let rejectedNoticed = false;
     while (!interaction.controller.signal.aborted && !interaction.settled) {
-      const { choice, messageId } = await interaction.adapter.promptChoice(
-        this.outbound(interaction),
-        prompt,
-        interaction.messageId,
-        interaction.controller.signal,
-      );
+      // A text reply (`answerText`) records the answer without any tap, and it may
+      // already have arrived — the user who typed instead of tapping, or who typed
+      // because the card would not respond. Checking here is what makes text a real
+      // escape route; without it a card that cannot be tapped stays stuck forever
+      // even though the answer is sitting in `answers`, because this loop only ever
+      // looks at what `promptChoice` returns.
+      if (interaction.answers.has(q.id)) return true;
+      // Race the card against a text reply. `promptChoice` can stay pending for as
+      // long as the user does not tap — including forever, if the card is on screen
+      // but unresponsive — so awaiting it alone made a typed answer unable to
+      // unblock the flow. Whichever arrives first wins; the loser is abandoned.
+      const raced = await Promise.race([
+        interaction.adapter
+          .promptChoice(
+            this.outbound(interaction),
+            buildPrompt(),
+            interaction.messageId,
+            interaction.controller.signal,
+          )
+          .then((result) => ({ kind: "card" as const, result })),
+        this.waitForAnswer(interaction, ANSWER_RACE_MS).then((r) => ({ kind: "text" as const, r })),
+      ]);
+      if (raced.kind === "text") {
+        // A recorded answer, a stop, or the race window elapsed. A recorded answer
+        // is the text-reply path succeeding.
+        if (interaction.answers.has(q.id)) return true;
+        if (raced.r === "stopped" || interaction.controller.signal.aborted || interaction.settled) break;
+        // Timed out with nothing recorded: keep presenting the card, but do not
+        // leave the loop without re-checking — the card call above was abandoned
+        // mid-flight, so present a fresh one on the next iteration.
+        continue;
+      }
+      const { choice, messageId } = raced.result;
       // An adapter aborted before presenting has no card to point at; keep the
       // last real id so the next round still targets the right message.
       if (messageId !== "") interaction.messageId = messageId;
@@ -342,6 +432,42 @@ export class InteractionBridge {
         if (answer !== undefined) {
           this.recordAnswer(interaction, q.id, answer);
           return true;
+        }
+        // A tap we cannot use. Two real cases, and they need different handling:
+        //
+        //  - It names a *different* question in this same interaction. That is a
+        //    stale card from an earlier step tapped after the card moved on — a
+        //    genuine answer the user meant to give, so record it rather than
+        //    discard it. Without this the tap is dropped silently and the user,
+        //    who is looking at a card that did not change, concludes the bot is
+        //    stuck; the interaction then waits for an answer that was already
+        //    given.
+        //  - It is genuinely unrecognised (a foreign card, a malformed id). Log it,
+        //    because the previous behaviour was to loop in total silence — which is
+        //    indistinguishable from a freeze and left nothing to diagnose.
+        // A tap naming another question in this interaction. If that question is
+        // still unanswered it is a real answer the user meant to give (a card that
+        // has already moved on, tapped a moment late) — record it. Either way we
+        // keep waiting for the question actually on screen: returning `false` here
+        // would abort the whole interaction, turning a late tap into a lost one.
+        if (this.answerFromStaleCard(interaction, choice)) {
+          if (interaction.answers.has(q.id)) return true;
+          continue;
+        }
+        this.log(
+          `connect: ignored an unrecognised choice ${JSON.stringify(choice)} for question ${JSON.stringify(q.id)} (${interaction.chatKey})`,
+        );
+        // Tell the user, at most once per question. Looping in silence is what made
+        // this indistinguishable from a freeze: the card redraws unchanged, so from
+        // the user's side nothing happened at all and there is no way to tell whether
+        // the tap registered. A tap that cannot be used is either a card the bot no
+        // longer owns or an id it does not recognise — both worth saying out loud,
+        // and both fixed by re-reading the card rather than by tapping again.
+        if (!rejectedNoticed) {
+          rejectedNoticed = true;
+          await interaction.adapter
+            .sendText(this.outbound(interaction), messages(interaction.language).answerNotRecognised)
+            .catch(() => undefined);
         }
         continue;
       }
@@ -393,6 +519,29 @@ export class InteractionBridge {
       // The signal may have fired between the loop check and this registration.
       if (interaction.controller.signal.aborted) finish("stopped");
     });
+  }
+
+  /**
+   * A one-line-per-question recap of what was answered, for the closed card.
+   *
+   * The card is replaced, so without this the user's choices disappear the moment
+   * they finish — leaving them unable to confirm what was sent, which is exactly
+   * the moment they are most likely to want to check.
+   */
+  private questionSummaries(interaction: PendingQuestion): string {
+    const lines: string[] = [];
+    for (const q of interaction.questions) {
+      const a = interaction.answers.get(q.id);
+      const custom = a?.custom?.trim();
+      const value = custom !== undefined && custom !== ""
+        ? custom
+        : (a?.selected ?? []).join(", ");
+      // A question that was answered with nothing (possible for a skipped
+      // optional one) is still listed: "not answered" is information.
+      const shown = value === "" ? messages(interaction.language).answerNotProvided : value;
+      lines.push(`${q.header ?? q.question}: ${shown}`);
+    }
+    return lines.join("\n");
   }
 
   private questionPromptText(interaction: PendingQuestion, q: AskQuestionLike): string {

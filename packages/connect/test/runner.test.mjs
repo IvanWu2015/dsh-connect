@@ -876,11 +876,11 @@ test("K1 a liveness heartbeat edits the streaming card instead of posting a bubb
     );
   }));
 
-test("K2 at the default notify level there is no heartbeat, and the answer still streams", () =>
+test("K2 at the default notify level nothing streams into the card, and the result arrives at the end", () =>
   withBridge({ config: { streamHeartbeatMs: 10 }, planFor: { whenIdleHoldMs: 120 } }, async (bridge) => {
     const adapter = bridge.addAdapter("stub");
     // No binding override, so this chat runs at the documented default of
-    // `result` (pinned by E2).
+    // `result` (pinned by E2) — "only the final result when the task finishes".
     await bridge.inbound(inboundFor("stub", "chat-no-heartbeat", { text: "something long" }));
     assert.ok(
       await waitFor(() => adapter.sent.some((m) => m.kind === "stream"), 5_000),
@@ -888,13 +888,23 @@ test("K2 at the default notify level there is no heartbeat, and the answer still
     );
 
     const card = streamedText(adapter);
-    // The positive half matters as much as the negative one: it rules out the
-    // explanation that the card is simply dead or the interval never started,
-    // leaving "the level gated it" as the only reading.
-    assert.ok(card.includes("answer"), `the answer must still stream; got ${JSON.stringify(card)}`);
+    // `result` must not type the answer into the live card as it is produced —
+    // that was the bug: the level was honoured for reasoning and tool calls but
+    // the answer itself still streamed, so the chat narrated the whole turn.
+    assert.ok(
+      !card.includes("answer"),
+      `the answer must not stream live at the result level; got ${JSON.stringify(card)}`,
+    );
     assert.ok(
       !card.includes("Still processing"),
       `a quiet chat must not be interrupted by heartbeats; got ${JSON.stringify(card)}`,
+    );
+    // The positive half: the answer is not lost, it is delivered once at the end
+    // by the task-end card. Without this, the assertions above would also pass
+    // for an implementation that simply dropped the output.
+    assert.ok(
+      cards(adapter).some((c) => c.markdown.includes("answer")),
+      `the final result must still be delivered; cards ${JSON.stringify(cards(adapter))}`,
     );
   }));
 
@@ -943,6 +953,376 @@ test("K3 the progress watchdog and the heartbeat both fire, both into the same c
           `${JSON.stringify(marker)} must not arrive as a separate message; sent ${JSON.stringify(texts(adapter))}`,
         );
       }
+    },
+  ));
+
+test("K4 the progress reminder still fires at a quiet level, and names no tool", () =>
+  // The reminder is a *configured* status report (`progressTimeoutMs`), not
+  // liveness chatter, so it survives a quieter notification level — gating it on
+  // the level would silently discard a setting the user made on purpose. What it
+  // must NOT do is re-list tool activity, which is the detail those levels
+  // suppress; its milestone is a step count instead of a tool name.
+  withBridge(
+    { config: { streamHeartbeatMs: 0 }, planFor: { whenIdleHoldMs: 900 } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-quiet-watchdog", { progressTimeoutMs: 400 }));
+
+      await bridge.inbound(inboundFor("stub", "chat-quiet-watchdog", { text: "a long task" }));
+      assert.ok(
+        await waitFor(() => adapter.sent.some((m) => m.kind === "stream"), 5_000),
+        "the turn must have opened a streaming card",
+      );
+      const card = streamedText(adapter);
+      assert.ok(
+        card.includes("Still working on the task"),
+        `the configured reminder must still fire at a quiet level; got ${JSON.stringify(card)}`,
+      );
+      // The heartbeat, unlike the reminder, is pure liveness and stays gated.
+      assert.ok(
+        !card.includes("Still processing"),
+        `the heartbeat must stay gated at a quiet level; got ${JSON.stringify(card)}`,
+      );
+    },
+  ));
+
+test("K5 a long result is delivered whole, not clipped at 300 characters", () =>
+  withBridge(
+    {
+      planFor: {
+        // Comfortably past the old 300-char cap, with a unique tail to look for.
+        answer: `${"x".repeat(400)}TAIL-UNIQUE-END`,
+      },
+    },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      await bridge.inbound(inboundFor("stub", "chat-long-result", { text: "produce a long answer" }));
+      // Wait for the *task-end* card, not merely for any output: the ack text
+      // arrives long before the turn settles, and asserting against it would
+      // race the very card this test is about.
+      assert.ok(
+        await waitFor(() => cards(adapter).some((c) => c.markdown.includes("TAIL-UNIQUE-END")), 5_000),
+        `the task-end card must carry the whole answer; got ${JSON.stringify(cards(adapter).map((c) => c.markdown.slice(0, 200)))}`,
+      );
+    },
+  ));
+
+test("K8 the important level gets milestones, not a running commentary", () =>
+  // The reported bug: with the setting on 输出重要节点 the chat still received
+  // live status chatter every minute. Both timers were gated on `!== "result"`,
+  // so `important` — a level documented as three discrete events — received the
+  // heartbeat and the watchdog.
+  withBridge(
+    {
+      config: { streamHeartbeatMs: 100 },
+      // Tool activity is scripted explicitly: without it there would be no tool
+      // lines to suppress and the assertions below would pass vacuously.
+      planFor: { whenIdleHoldMs: 900, toolCalls: ["pwsh", "edit"] },
+    },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(
+        bindingFor("stub", "chat-important", { notifyLevel: "important", progressTimeoutMs: 400 }),
+      );
+
+      await bridge.inbound(inboundFor("stub", "chat-important", { text: "a long task" }));
+      assert.ok(
+        await waitFor(() => adapter.sent.some((m) => m.kind === "stream"), 5_000),
+        "the turn must have opened a streaming card",
+      );
+      await waitFor(() => cards(adapter).length > 0, 5_000);
+
+      const card = streamedText(adapter);
+      // The heartbeat is liveness chatter: gated off at `important`.
+      assert.ok(
+        !card.includes("Still processing"),
+        `the heartbeat must not reach an important-level chat; got ${JSON.stringify(card)}`,
+      );
+      // Tool activity is the "current work status" the user removed; it must not
+      // appear as a stream line or as a separate bubble at this level.
+      for (const toolLine of ["调用工具", "Calling tool", "analyze", "report.md"]) {
+        assert.ok(
+          !card.includes(toolLine),
+          `tool activity ${JSON.stringify(toolLine)} must not stream at this level; got ${JSON.stringify(card)}`,
+        );
+      }
+      // The configured 5-minute reminder is NOT chatter and still fires.
+      assert.ok(
+        card.includes("Still working on the task"),
+        `the configured progress reminder must still fire; got ${JSON.stringify(card)}`,
+      );
+      assert.ok(
+        cards(adapter).some((c) => c.markdown.includes("answer")),
+        `the final answer must still be delivered; cards ${JSON.stringify(cards(adapter))}`,
+      );
+    },
+  ));
+
+test("K6 /status reports the turn's real completion time, not the moment it was asked", () =>
+  // The turn is scripted to have ended two hours ago. That gap is what makes
+  // this test able to fail: with the event stamped at the current time, an
+  // implementation that read `new Date()` instead of `event.time` would be
+  // indistinguishable from a correct one.
+  withBridge({ planFor: { turnEndedAtMs: Date.now() - 2 * 60 * 60_000 } }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    await bridge.inbound(inboundFor("stub", "chat-status-time", { text: "a task" }));
+    assert.ok(
+      await waitFor(() => cards(adapter).length > 0 || texts(adapter).length > 0, 5_000),
+      "the turn must have reported something",
+    );
+
+    const runner = bridge.runnerFor("stub", "chat-status-time");
+    assert.ok(runner, "the inbound must have created a runner");
+    assert.ok(
+      await waitFor(() => runner["agent"] !== undefined, 5_000),
+      "the runner must have attached an agent",
+    );
+    const target = { channel: "stub", chatKey: "chat-status-time" };
+    const sentBefore = texts(adapter).length;
+    await runner.showStatus(target);
+    const status = texts(adapter).slice(sentBefore).map((m) => m.text).join("\n");
+    // The bridge runs in English (`language: "en"`), so the line reads "Completed:".
+    assert.ok(status.includes("Completed:"), `the status must report the last turn; got ${JSON.stringify(status)}`);
+
+    const match = /Completed:\s*(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)?/.exec(status);
+    assert.ok(match, `the status must carry a completion time; got ${JSON.stringify(status)}`);
+    let h = Number(match[1]) % 12;
+    if (match[4] === "PM") h += 12;
+    const completed = new Date();
+    completed.setHours(h, Number(match[2]), Number(match[3]), 0);
+    const expected = new Date(Date.now() - 2 * 60 * 60_000);
+    const deltaMinutes = Math.abs(completed.getTime() - expected.getTime()) / 60_000;
+    assert.ok(
+      Math.min(deltaMinutes, 24 * 60 - deltaMinutes) < 2,
+      `the completion time must come from the turn/end event (${expected.toLocaleTimeString("en-US")}), not the clock; got ${match[0]}`,
+    );
+  }));
+
+test("K7 /status does not claim a task is running when this process is not driving one", () =>
+  withBridge({ planFor: { whenIdleHoldMs: 50 } }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    await bridge.inbound(inboundFor("stub", "chat-orphan", { text: "a task" }));
+    assert.ok(await waitFor(() => texts(adapter).length > 0, 5_000), "the turn must have started");
+
+    const runner = bridge.runnerFor("stub", "chat-orphan");
+    assert.ok(runner, "the inbound must have created a runner");
+    assert.ok(
+      await waitFor(() => runner["agent"] !== undefined, 5_000),
+      "the runner must have attached an agent",
+    );
+
+    // Simulate what a host restart leaves behind: the resumed session still
+    // holds a turn that was cut off mid-flight, so the agent reads "running"
+    // while nothing drives it and no progress notice can ever arrive.
+    runner["agent"].status = "running";
+    runner["turn"] = undefined;
+    runner["running"] = false;
+    const target = { channel: "stub", chatKey: "chat-orphan" };
+    const sentBefore = texts(adapter).length;
+    await runner.showStatus(target);
+    const status = texts(adapter).slice(sentBefore).map((m) => m.text).join("\n");
+
+    assert.ok(
+      !status.includes("Processing task"),
+      `an orphaned turn must not be reported as processing; got ${JSON.stringify(status)}`,
+    );
+    assert.ok(
+      status.includes("cut off"),
+      `the status must say the previous task was interrupted; got ${JSON.stringify(status)}`,
+    );
+  }));
+
+// ---------------------------------------------------------------------------
+// N. Per-channel access control
+// ---------------------------------------------------------------------------
+
+test("N1 a channel's own allowlist overrides the global one", () =>
+  withBridge(
+    {
+      config: {
+        channels: ["feishu", "telegram"],
+        // The global list names a Feishu id. Telegram must not be judged by it:
+        // a Feishu open_id can never equal a numeric Telegram user id, so one
+        // shared list would lock every Telegram sender out.
+        allowUsers: ["ou_feishu_only"],
+        telegram: { allowUsers: ["12345"] },
+      },
+    },
+    async (bridge) => {
+      const { service } = bridge;
+      assert.equal(service.isChatAllowed("telegram", "999", "12345"), true, "telegram's own list admits its user");
+      assert.equal(service.isChatAllowed("telegram", "999", "54321"), false, "and refuses one it does not name");
+      // Feishu's block never set the key, so it keeps the global fallback.
+      assert.equal(service.isChatAllowed("feishu", "oc_x", "ou_feishu_only"), true);
+      assert.equal(service.isChatAllowed("feishu", "oc_x", "ou_someone_else"), false);
+    },
+  ));
+
+test("N2 a channel declaring an empty list allows everyone, overriding the global one", () =>
+  withBridge(
+    {
+      config: {
+        channels: ["feishu", "telegram"],
+        allowUsers: ["ou_only_this"],
+        // Explicitly empty: "this channel is unrestricted". Reading it as
+        // "absent" would silently re-apply a restriction the user opted out of.
+        telegram: { allowUsers: [] },
+      },
+    },
+    async (bridge) => {
+      const { service } = bridge;
+      assert.equal(service.isChatAllowed("telegram", "999", "anyone"), true);
+      assert.equal(service.isChatAllowed("feishu", "oc_x", "anyone"), false);
+    },
+  ));
+
+test("N3 allowChats is per channel too, and compares on the base chat id", () =>
+  withBridge(
+    { config: { channels: ["feishu", "telegram"], telegram: { allowChats: ["777"] } } },
+    async (bridge) => {
+      const { service } = bridge;
+      assert.equal(service.isChatAllowed("telegram", "777", "u"), true);
+      assert.equal(service.isChatAllowed("telegram", "888", "u"), false);
+      // A thread-scoped key reduces to its base chat id, so a thread of an
+      // allowlisted chat is not dropped.
+      assert.equal(service.isChatAllowed("telegram", "777:thread=42", "u"), true);
+      // Feishu declared nothing, so it stays unrestricted.
+      assert.equal(service.isChatAllowed("feishu", "oc_x", "u"), true);
+    },
+  ));
+
+// ---------------------------------------------------------------------------
+// M. Automatic context compaction
+// ---------------------------------------------------------------------------
+
+/**
+ * A stand-in for DSH's compaction service. `compactNow` is the only entry point
+ * the runner uses; returning `null` is the real service's "nothing to compact"
+ * answer.
+ */
+function compactionService(calls) {
+  return {
+    serviceFor: (_agent, name) =>
+      name === "compaction"
+        ? {
+            async compactNow() {
+              calls.push(Date.now());
+              return { ok: true };
+            },
+          }
+        : undefined,
+  };
+}
+
+/** A plan reporting `pct` percent usage of a 100k window. */
+function planAtUsage(pct) {
+  return {
+    context: true,
+    contextWindow: 100_000,
+    usage: { inputTokens: pct * 1000, outputTokens: 10, cacheReadTokens: 0 },
+  };
+}
+
+test("M1 auto-compaction fires at turn end once usage crosses the threshold", () =>
+  withBridge(
+    { config: { autoCompact: true, autoCompactThresholdPct: 80 }, planFor: planAtUsage(85) },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      const calls = [];
+      bridge.ctx.provide("agentPresets", compactionService(calls));
+
+      await bridge.inbound(inboundFor("stub", "chat-autocompact", { text: "fill the window" }));
+      assert.ok(
+        await waitFor(() => calls.length > 0, 5_000),
+        "compaction must run: the turn reported 85% against an 80% threshold",
+      );
+    },
+  ));
+
+test("M2 auto-compaction stays off when the switch is off, even above the threshold", () =>
+  withBridge({ config: { autoCompact: false }, planFor: planAtUsage(95) }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    const calls = [];
+    bridge.ctx.provide("agentPresets", compactionService(calls));
+
+    await bridge.inbound(inboundFor("stub", "chat-nocompact", { text: "fill the window" }));
+    // Wait for the turn to finish before asserting the negative, or this would
+    // pass merely by running first.
+    assert.ok(
+      await waitFor(() => cards(adapter).length > 0, 5_000),
+      "the turn must have completed",
+    );
+    assert.equal(calls.length, 0, "compaction must not run while the switch is off");
+  }));
+
+test("M3 auto-compaction stays put below the threshold", () =>
+  withBridge(
+    { config: { autoCompact: true, autoCompactThresholdPct: 80 }, planFor: planAtUsage(40) },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      const calls = [];
+      bridge.ctx.provide("agentPresets", compactionService(calls));
+
+      await bridge.inbound(inboundFor("stub", "chat-under", { text: "a short turn" }));
+      assert.ok(await waitFor(() => cards(adapter).length > 0, 5_000), "the turn must have completed");
+      assert.equal(calls.length, 0, "40% must not trigger an 80% threshold");
+    },
+  ));
+
+test("M4 a per-chat override turns auto-compaction on for that chat", () =>
+  withBridge(
+    { config: { autoCompact: false, autoCompactThresholdPct: 80 }, planFor: planAtUsage(90) },
+    async (bridge) => {
+      bridge.addAdapter("stub");
+      const calls = [];
+      bridge.ctx.provide("agentPresets", compactionService(calls));
+      bridge.seedBinding(bindingFor("stub", "chat-override-on", { autoCompact: true }));
+
+      await bridge.inbound(inboundFor("stub", "chat-override-on", { text: "fill the window" }));
+      assert.ok(
+        await waitFor(() => calls.length > 0, 5_000),
+        "the binding's autoCompact must override the plugin config",
+      );
+      assert.equal(bridge.runnerFor("stub", "chat-override-on").autoCompact, true);
+    },
+  ));
+
+test("M5 every turn-end card reports the context percentage", () =>
+  withBridge({ planFor: planAtUsage(85) }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    await bridge.inbound(inboundFor("stub", "chat-pct", { text: "a task" }));
+    assert.ok(
+      await waitFor(() => cards(adapter).some((c) => c.markdown.includes("Context usage")), 5_000),
+      `every turn must report context usage; got ${JSON.stringify(cards(adapter).map((c) => c.markdown))}`,
+    );
+    const card = cards(adapter).find((c) => c.markdown.includes("Context usage"));
+    assert.ok(
+      card.markdown.includes("85%"),
+      `the report must carry the actual percentage; got ${JSON.stringify(card.markdown)}`,
+    );
+  }));
+
+test("M6 the turn-end card names the auto-compaction rule when it is on", () =>
+  withBridge(
+    { config: { autoCompact: true, autoCompactThresholdPct: 80 }, planFor: planAtUsage(30) },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      await bridge.inbound(inboundFor("stub", "chat-armed", { text: "a task" }));
+      assert.ok(
+        await waitFor(() => cards(adapter).some((c) => c.markdown.includes("Context usage")), 5_000),
+        "the turn-end card must report context usage",
+      );
+      const card = cards(adapter).find((c) => c.markdown.includes("Context usage"));
+      // With auto-compaction on, telling the user to send /compact by hand
+      // would be wrong — it is already handled.
+      assert.ok(
+        !card.markdown.includes("/compact"),
+        `an armed chat must not be told to compact by hand; got ${JSON.stringify(card.markdown)}`,
+      );
+      assert.ok(
+        card.markdown.includes("Auto-compaction is on"),
+        `the card must state the active rule; got ${JSON.stringify(card.markdown)}`,
+      );
     },
   ));
 

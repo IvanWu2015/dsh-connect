@@ -32,6 +32,7 @@ import {
   summarizeTurn,
   classifyError,
   mapReason,
+  showsLiveStatus,
   truncate,
   fmtTokens,
   textOf,
@@ -66,8 +67,17 @@ export interface ConnectConfig {
   visionModel?: { provider: string; model: string };
   /** User-facing message language: `zh` (default) or `en`. */
   language?: Language;
+  /** Fallback sender allowlist (open ids / user ids) for channels without their own. */
   allowUsers?: string[];
+  /** Fallback chat allowlist for channels without their own. */
   allowChats?: string[];
+  /**
+   * Per-channel access control, keyed by channel id. A channel listed here uses
+   * these lists *instead of* the top-level `allowUsers`/`allowChats`, because
+   * identifiers are channel-specific and one global list cannot be right for two
+   * channels at once.
+   */
+  channelAccess?: Record<string, { allowUsers?: string[]; allowChats?: string[] }>;
   stateDir?: string;
   /** Automatically create Web mirror for new sessions (default: true). */
   autoMirror?: boolean;
@@ -77,6 +87,10 @@ export interface ConnectConfig {
   notifyLevel?: NotifyLevel;
   /** Proactive progress-notice interval ms: when a turn goes silent for this long, a standalone status card is sent (default: 300000 = 5 min; 0 disables). */
   progressTimeoutMs?: number;
+  /** Compact the session automatically once context usage crosses `autoCompactThresholdPct` (default: false). */
+  autoCompact?: boolean;
+  /** Context-window usage percentage that triggers `autoCompact` (default: 80). */
+  autoCompactThresholdPct?: number;
 }
 
 export interface ResolvedConnectConfig {
@@ -87,11 +101,43 @@ export interface ResolvedConnectConfig {
   language: Language;
   allowUsers: string[];
   allowChats: string[];
+  /** Resolved per-channel access control; a missing channel falls back to the two above. */
+  channelAccess: Record<string, { allowUsers: string[]; allowChats: string[] }>;
   stateDir?: string;
   autoMirror: boolean;
   streamHeartbeatMs: number;
   notifyLevel: NotifyLevel;
   progressTimeoutMs: number;
+  autoCompact: boolean;
+  autoCompactThresholdPct: number;
+}
+
+/**
+ * Pull each channel's own `allowUsers`/`allowChats` out of its config block.
+ *
+ * A channel appears in the result **only if its block declares one of the two
+ * keys**. That distinction is load-bearing: `isChatAllowed` reads a
+ * present-but-empty list as "this channel allows everyone", so recording every
+ * channel unconditionally would silently opt each one out of the top-level
+ * fallback the user set for it.
+ *
+ * Strings are filtered rather than trusted because this reads raw profile YAML
+ * and a stray `null` in a hand-edited list would otherwise become a list entry
+ * that can never match a sender.
+ */
+function collectChannelAccess(config: ConnectConfig): Record<string, { allowUsers: string[]; allowChats: string[] }> {
+  const out: Record<string, { allowUsers: string[]; allowChats: string[] }> = {};
+  const strings = (value: unknown): string[] | undefined =>
+    Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : undefined;
+  for (const [channel, block] of Object.entries(config)) {
+    if (block === null || typeof block !== "object" || Array.isArray(block)) continue;
+    const entry = block as { allowUsers?: unknown; allowChats?: unknown };
+    const allowUsers = strings(entry.allowUsers);
+    const allowChats = strings(entry.allowChats);
+    if (allowUsers === undefined && allowChats === undefined) continue;
+    out[channel] = { allowUsers: allowUsers ?? [], allowChats: allowChats ?? [] };
+  }
+  return out;
 }
 
 export function resolveConnectConfig(config: ConnectConfig): ResolvedConnectConfig {
@@ -103,11 +149,25 @@ export function resolveConnectConfig(config: ConnectConfig): ResolvedConnectConf
     language: config.language ?? "zh",
     allowUsers: config.allowUsers ?? [],
     allowChats: config.allowChats ?? [],
+    // Per-channel access control, collected from each channel's OWN config block
+    // (`feishu.allowUsers`, `telegram.allowUsers`, …) because that is where the
+    // pane puts them and where a per-channel setting belongs: the ids are
+    // channel-specific, so a Feishu `ou_…` list is not a Telegram one.
+    //
+    // Only channels that actually declare a key appear here. That distinction is
+    // load-bearing: `isChatAllowed` treats a present-but-empty list as "this
+    // channel allows everyone", so recording a channel that never configured
+    // access would silently opt it out of the global fallback.
+    channelAccess: collectChannelAccess(config),
     stateDir: config.stateDir,
     autoMirror: config.autoMirror ?? true, // Enabled by default
     streamHeartbeatMs: config.streamHeartbeatMs ?? 60_000,
     notifyLevel: config.notifyLevel ?? "result",
     progressTimeoutMs: config.progressTimeoutMs ?? 5 * 60_000, // Proactive progress notice after 5 min of silence
+    autoCompact: config.autoCompact ?? false, // Off by default: compaction rewrites history, so it is opted into
+    // Clamped to 1–99 so a nonsense value cannot mean "compact on every turn"
+    // (0) or "never, even when the window is full" (100+).
+    autoCompactThresholdPct: Math.min(99, Math.max(1, Math.round(config.autoCompactThresholdPct ?? 80))),
   };
 }
 
@@ -245,6 +305,10 @@ export class AgentRunner implements MenuHost {
   language: Language;
   notifyLevel: NotifyLevel;
   progressTimeoutMs: number;
+  /** Compact automatically once context usage crosses `autoCompactThresholdPct`. */
+  autoCompact: boolean;
+  /** Context-window usage percentage that triggers auto-compaction. */
+  autoCompactThresholdPct: number;
   t: Messages;
   private readonly menu: MenuController;
 
@@ -272,6 +336,10 @@ export class AgentRunner implements MenuHost {
     this.language = stored?.language ?? config.language ?? "zh";
     this.notifyLevel = stored?.notifyLevel ?? config.notifyLevel;
     this.progressTimeoutMs = stored?.progressTimeoutMs ?? config.progressTimeoutMs;
+    // Per-chat overrides, like the other two above, so /autocompact can change
+    // it for one chat without touching the profile.
+    this.autoCompact = stored?.autoCompact ?? config.autoCompact;
+    this.autoCompactThresholdPct = stored?.autoCompactThresholdPct ?? config.autoCompactThresholdPct;
     this.t = messages(this.language);
     this.menu = new MenuController(this);
   }
@@ -353,7 +421,12 @@ export class AgentRunner implements MenuHost {
     // Track context usage while the turn runs so we can nudge the user to
     // compact before the window fills up (deduped to one nudge per turn).
     if (event.type === "request/context") {
-      if (typeof event.data.contextWindow === "number") turn.contextWindow = event.data.contextWindow;
+      if (typeof event.data.contextWindow === "number") {
+        turn.contextWindow = event.data.contextWindow;
+        // Mirrored onto the runner: the turn object is discarded at turn end,
+        // but auto-compaction runs after that and needs the last measurement.
+        this.lastContextWindow = event.data.contextWindow;
+      }
       this.maybeNudgeContext(turn);
       return;
     }
@@ -361,6 +434,7 @@ export class AgentRunner implements MenuHost {
       const usage = (event.data as { usage?: { inputTokens?: number } }).usage;
       if (usage !== undefined && typeof usage.inputTokens === "number") {
         turn.contextSize = usage.inputTokens;
+        this.lastContextSize = usage.inputTokens;
         this.maybeNudgeContext(turn);
       }
     }
@@ -370,24 +444,39 @@ export class AgentRunner implements MenuHost {
       if (typeof name !== "string" || name === "") return;
       const summary = toolCallSummary(event.data.arguments);
       turn.toolCount += 1;
-      // The proactive progress notice reports the latest milestone even when
-      // `result` mode hides the streaming details.
+      // The milestone the /status report and the progress reminder read. It is
+      // deliberately NOT the tool name: a "🔧 调用工具 pwsh" line is the activity
+      // detail the quiet levels suppress, so naming the tool here would smuggle
+      // the one thing the user removed into the one message they kept. What the
+      // reminder is for is "work is still happening", which a count conveys
+      // without re-listing the tools.
+      //
+      // The one exception is a question, which is not activity but a *request*
+      // aimed at the user — dropping it would hide the fact that the bot is
+      // waiting on them.
       if (name === "ask_user_question") {
-        const question = questionTextOf(event.data.arguments);
-        turn.milestone = this.t.questionToolCall(question);
+        turn.milestone = this.t.questionToolCall(questionTextOf(event.data.arguments));
       } else {
-        turn.milestone = this.t.toolCalling(name, undefined);
+        turn.milestone = this.t.toolProgress(turn.toolCount);
       }
-      // `result` mode shows nothing until the final answer.
-      if (this.notifyLevel === 'result') return;
+      // Only `full` narrates tool activity. `important` and `result` show the
+      // final answer at turn end and nothing in between — a `🔧 调用工具 …` line
+      // is live activity, not a milestone, and the user asked for it to go.
+      // `turn.milestone` above is still updated before this: the milestone is
+      // what the /status report reads, so dropping the *line* must not drop the
+      // state that makes /status useful.
+      if (!showsLiveStatus(this.notifyLevel)) return;
       // Keep the streaming card short: push a status line only once per distinct
       // tool (not once per call, which would log "tool #51" spam), and label it
       // with the tool name rather than a running counter.
       if (turn.lastToolName === name) return;
       turn.lastToolName = name;
+      // Only `full` gets here, so the summary is always shown — the old
+      // `notifyLevel === 'full' ? summary : undefined` guard is now unreachable
+      // and its ternary would just be a second, silently wrong copy of the gate.
       const label = name === 'ask_user_question'
         ? this.t.questionToolCall(questionTextOf(event.data.arguments))
-        : this.t.toolCalling(name, this.notifyLevel === 'full' ? summary : undefined);
+        : this.t.toolCalling(name, summary);
       applyToolCall(turn, label);
     }
   }
@@ -938,8 +1027,15 @@ export class AgentRunner implements MenuHost {
     // visibly alive even through long reasoning or tool-execution stretches
     // (a card that sits on "Thinking…" for minutes looks frozen). Configurable
     // via `streamHeartbeatMs`; 0 disables it.
+    //
+    // `full` only. This is a repeating "still processing" line, and the two
+    // quieter levels describe themselves in discrete events: `important` as
+    // 「思考开始、工具调用、最终回答」 and `result` as the final answer alone. A
+    // per-minute heartbeat is neither, so gating it on `!== "result"` — which is
+    // what let `important` receive it — made the setting a lie for anyone who
+    // chose 输出重要节点 and then watched a status line arrive every minute.
     const heartbeatMs = this.config.streamHeartbeatMs;
-    const heartbeat = heartbeatMs > 0 && this.notifyLevel !== "result"
+    const heartbeat = heartbeatMs > 0 && showsLiveStatus(this.notifyLevel)
       ? setInterval(() => {
           const turn = this.turn;
           if (turn === undefined) return;
@@ -968,6 +1064,17 @@ export class AgentRunner implements MenuHost {
     // stops a pathologically small value from becoming a busy loop; the cap
     // leaves the default (5 min) on the same 15s tick as before.
     const watchdogTickMs = Math.max(250, Math.min(PROGRESS_WATCHDOG_CHECK_MS, Math.round(progressTimeoutMs / 2)));
+    // NOT gated on the notification level, unlike the heartbeat above, and the
+    // distinction is the whole point of this timer. The heartbeat is *liveness
+    // chatter* — a line every 60s saying nothing but "still here" — which the
+    // quiet levels exist to suppress. This watchdog is a *status report the user
+    // explicitly configured* (`progressTimeoutMs`, default 5 min), it fires once
+    // per interval rather than continuously, and it carries the elapsed time and
+    // the latest milestone. Turning off the reminder as a side effect of choosing
+    // a quieter level would silently discard a setting the user set on purpose.
+    //
+    // Its milestone is tool-free (see the `tool/call` handler), so keeping it at
+    // every level does not smuggle tool activity back into the quiet levels.
     const progressWatchdog = progressTimeoutMs > 0
       ? setInterval(() => {
           const turn = this.turn;
@@ -1021,6 +1128,13 @@ export class AgentRunner implements MenuHost {
       await this.compact(this.target(msg)).catch((error) => {
         this.log(`connect: deferred compaction failed: ${error instanceof Error ? error.message : String(error)}`);
       });
+    } else {
+      // Auto-compaction, checked here rather than mid-turn because compaction
+      // needs an idle agent and because the threshold is about what the *next*
+      // turn will have to carry. Running it here means the turn that fills the
+      // window still finishes with its full history, and the one after it
+      // starts on a compacted session.
+      await this.maybeAutoCompact(agent, msg);
     }
 
     const outcome = summarizeTurn(agent.session.snapshotEvents(), firstSeq);
@@ -1315,7 +1429,10 @@ export class AgentRunner implements MenuHost {
     const lines = [this.t.taskEnded(this.reasonLabel(outcome.reason))];
     if (outcome.code !== undefined) lines.push(this.t.errorCode(outcome.code));
     if (outcome.message !== undefined) lines.push(this.t.reasonMessage(truncate(outcome.message)));
-    if (outcome.text !== "") lines.push(this.t.produced(truncate(outcome.text, 300)));
+    // Full answer here too: on a failed/aborted turn this summary is the only
+    // report of what was produced before the stop, and truncating it hides
+    // exactly the part the user needs to judge whether any of it is usable.
+    if (outcome.text !== "") lines.push(this.t.produced(outcome.text));
     const card: SummaryCard = { markdown: lines.join("\n") };
     await this.sendTaskCard(msg, card, "summary");
   }
@@ -1342,10 +1459,28 @@ export class AgentRunner implements MenuHost {
     }
     if (outcome.outputTokens !== undefined) lines.push(this.t.taskStatsTokensOut(fmtTokens(outcome.outputTokens)));
     if (outcome.steps !== undefined) lines.push(this.t.taskStatsSteps(outcome.steps));
-    if (outcome.contextSize !== undefined && outcome.contextWindow !== undefined && outcome.contextWindow > 0) {
+    // Context usage is part of every turn-end report, by request: the user wants
+    // to see where the window stands after each round without asking. When the
+    // window is unknown the absolute token count is still reported with an
+    // explicit "window unknown" rather than omitting the line — a silently
+    // missing field reads as "nothing to worry about", which is the opposite of
+    // what a usage report is for.
+    if (outcome.contextWindow !== undefined && outcome.contextWindow > 0 && outcome.contextSize !== undefined) {
       const pct = Math.round((outcome.contextSize / outcome.contextWindow) * 100);
       lines.push(this.t.taskStatsContext(`${pct}`, fmtTokens(outcome.contextWindow)));
-      lines.push(pct >= AgentRunner.COMPACT_THRESHOLD_PCT ? this.t.taskStatsCompactSuggest : this.t.taskStatsCompactOk);
+      // The advice names the *active* rule: with auto-compaction on, telling the
+      // user to send /compact by hand would be wrong — it is already handled.
+      if (this.autoCompact) {
+        lines.push(
+          pct >= this.autoCompactThresholdPct
+            ? this.t.taskStatsAutocompactDue(`${this.autoCompactThresholdPct}`)
+            : this.t.taskStatsAutocompactArmed(`${this.autoCompactThresholdPct}`),
+        );
+      } else {
+        lines.push(pct >= AgentRunner.COMPACT_THRESHOLD_PCT ? this.t.taskStatsCompactSuggest : this.t.taskStatsCompactOk);
+      }
+    } else if (outcome.contextSize !== undefined) {
+      lines.push(this.t.taskStatsContextUnknown(fmtTokens(outcome.contextSize)));
     }
     // A finished task's answer must survive the end of the run: the live
     // streaming card shows the output as it is produced, but the stats card is
@@ -1353,7 +1488,11 @@ export class AgentRunner implements MenuHost {
     // append the result here instead of leaving a bare stats card.
     if (hasResult) {
       lines.push("");
-      lines.push(this.t.produced(truncate(outcome.text, 300)));
+      // The full answer, NOT `truncate(outcome.text, 300)`. This card is the
+      // durable post-task report — under `result` it is the *only* place the
+      // answer appears, so a 300-char cap silently shipped a third of a long
+      // answer and looked like the agent had stopped mid-sentence.
+      lines.push(this.t.produced(outcome.text));
     }
     const card: SummaryCard = { markdown: lines.join("\n") };
     await this.sendTaskCard(msg, card, "stats");
@@ -1467,6 +1606,10 @@ export class AgentRunner implements MenuHost {
       }
       case "progress": {
         await this.openProgressPicker(target, msg);
+        break;
+      }
+      case "autocompact": {
+        await this.handleAutocompact(command.arg, target);
         break;
       }
       case "workspaces": {
@@ -1787,10 +1930,21 @@ export class AgentRunner implements MenuHost {
       return;
     }
 
-    // Determine detailed execution state
+    // Determine detailed execution state.
+    //
+    // `agent.status === "running"` alone is not proof that *we* are running a
+    // task: after a host restart the resumed session still holds a turn that was
+    // cut off mid-flight (no `turn/end` was ever recorded), so the agent reads
+    // "running" forever while nothing is driving it — and, because the watchdog
+    // lives inside `driveAgent`, no progress notice will ever come either. That
+    // combination is what makes a dead task look like a live one. Only report
+    // 正在处理任务 when this process actually owns the turn; otherwise say the
+    // previous task was interrupted, which is the truth and is actionable.
     let statusLabel: string;
-    if (agent.status === "running") {
+    if (agent.status === "running" && (this.running || this.turn !== undefined)) {
       statusLabel = this.t.statusExecuting;
+    } else if (agent.status === "running") {
+      statusLabel = this.t.statusOrphaned;
     } else if (this.queue.length > 0) {
       statusLabel = this.t.statusWaiting;
     } else {
@@ -1842,8 +1996,18 @@ export class AgentRunner implements MenuHost {
       const event = events[i];
       if (event.type === "turn/end") {
         const reason = mapReason(event.data.reason.kind);
-        // Use the event's timestamp if available, otherwise approximate
-        const completedAt = new Date().toLocaleTimeString(this.language === "en" ? "en-US" : "zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        // The event's OWN timestamp, never `new Date()`. Reading the clock here
+        // made every /status report "completed at <now>" — so a task that had
+        // been running for half an hour, or one that never finished at all,
+        // was reported as freshly completed the moment the user asked. That is
+        // worse than no timestamp: it is a fabricated one, and it sent a real
+        // investigation after the wrong event. `turn/end` always carries
+        // `time`; the fallback is only for an event shape that lacks it, and
+        // says so rather than inventing a plausible-looking hour.
+        const at = typeof event.time === "number" ? new Date(event.time) : undefined;
+        const completedAt = at === undefined
+          ? "—"
+          : at.toLocaleTimeString(this.language === "en" ? "en-US" : "zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
         return { reason, completedAt };
       }
     }
@@ -1973,6 +2137,73 @@ export class AgentRunner implements MenuHost {
     await this.adapter.sendText(target, this.t.notifySet(label, desc));
   }
 
+  /**
+   * `/autocompact [on|off|<1-99>]` — turn automatic context compaction on or
+   * off for this chat, and set the threshold. A bare invocation reports the
+   * current state instead of guessing, since the switch is a safety behaviour
+   * and a typo silently disabling it would be the wrong default.
+   */
+  private async handleAutocompact(arg: string | undefined, target: OutboundTarget): Promise<void> {
+    const raw = (arg ?? "").trim().toLowerCase();
+    if (raw === "") {
+      await this.adapter.sendText(
+        target,
+        this.t.autocompactStatus(this.autoCompact, `${this.autoCompactThresholdPct}`),
+      );
+      return;
+    }
+    if (raw === "on" || raw === "off") {
+      await this.setAutoCompact(raw === "on", target);
+      return;
+    }
+    const pct = Number(raw.replace(/%$/, ""));
+    if (!Number.isFinite(pct) || pct < 1 || pct > 99) {
+      await this.adapter.sendText(target, this.t.autocompactUsage);
+      return;
+    }
+    await this.setAutoCompact(this.autoCompact, target, Math.round(pct));
+  }
+
+  /**
+   * Persist the per-chat auto-compaction switch and/or threshold. Passing no
+   * `pct` leaves the threshold alone, so `/autocompact on` does not silently
+   * reset a threshold the user set earlier.
+   */
+  async setAutoCompact(on: boolean, target: OutboundTarget, pct?: number): Promise<void> {
+    this.autoCompact = on;
+    if (pct !== undefined) this.autoCompactThresholdPct = pct;
+    const binding = this.bindings.get(this.channel, this.chatKey);
+    const patch = {
+      autoCompact: on,
+      autoCompactThresholdPct: this.autoCompactThresholdPct,
+      lastActiveAt: Date.now(),
+    };
+    if (binding !== undefined) {
+      this.bindings.put({ ...binding, ...patch });
+    } else {
+      // Same shape `setNotifyLevel` uses: a chat that has never been bound
+      // still records the preference, so it survives until a session exists.
+      this.bindings.put({
+        channel: this.channel,
+        chatKey: this.chatKey,
+        chatType: this.chatType,
+        sessionId: "",
+        ownerKey: "",
+        createdAt: Date.now(),
+        ...patch,
+        sessions: [],
+      });
+    }
+    if (pct !== undefined) {
+      await this.adapter.sendText(target, this.t.autocompactThresholdSet(`${this.autoCompactThresholdPct}`));
+    } else {
+      await this.adapter.sendText(
+        target,
+        on ? this.t.autocompactOn(`${this.autoCompactThresholdPct}`) : this.t.autocompactOff,
+      );
+    }
+  }
+
   /** Show the three-level notification picker (used by the `/notify` command). */
   private async openNotifyPicker(target: OutboundTarget, msg: InboundMessage): Promise<void> {
     const options: ChoiceOption[] = [
@@ -2073,6 +2304,76 @@ export class AgentRunner implements MenuHost {
     }
   }
 
+  /**
+   * Compact the session automatically when context usage has reached
+   * `autoCompactThresholdPct`, if the user turned `autoCompact` on.
+   *
+   * Deliberately silent on the happy path. Compaction is maintenance the user
+   * asked to happen on its own, and a chat message every time it fires would be
+   * exactly the kind of chatter the `important` level exists to suppress —
+   * the chosen notification level governs this notice too. The turn-end stats
+   * card reports the resulting usage either way, so the effect is visible
+   * without an extra bubble; a *failure* is still reported, because silently
+   * not compacting would leave the user believing they are protected.
+   *
+   * @param agent - the agent whose session may be compacted (must be idle).
+   * @param msg - the inbound message, used to resolve the reply target.
+   */
+  private async maybeAutoCompact(agent: Agent, msg: InboundMessage): Promise<void> {
+    if (!this.autoCompact) return;
+    const size = this.lastContextSize;
+    const window = this.lastContextWindow;
+    // No measurement, no decision: a threshold test against an unknown window
+    // would either fire on every turn or never, and both are worse than
+    // waiting for a turn that does report one.
+    if (size === undefined || window === undefined || window <= 0) return;
+    const pct = (size / window) * 100;
+    if (pct < this.autoCompactThresholdPct) return;
+    if (agent.status !== "idle") return;
+    try {
+      const result = await this.runCompaction(agent);
+      if (result === "compacted") {
+        this.log(
+          `connect: auto-compacted at ${Math.round(pct)}% (threshold ${this.autoCompactThresholdPct}%)`,
+        );
+        // The measured usage is now stale — it describes the pre-compaction
+        // session, and leaving it would make the next turn's report claim the
+        // window is still full.
+        this.lastContextSize = undefined;
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.log(`connect: auto-compaction failed: ${detail}`);
+      await this.adapter
+        .sendText(this.target(msg), this.t.compactFailed(truncate(detail)))
+        .catch(() => undefined);
+    }
+  }
+
+  /**
+   * Run DSH's compaction service against an idle agent.
+   * @returns `compacted`, `nothing` (nothing to compact), or `unavailable`.
+   */
+  private async runCompaction(agent: Agent): Promise<"compacted" | "nothing" | "unavailable"> {
+    const presets = this.ctx.get("agentPresets") as
+      | {
+          serviceFor?: (
+            agent: { ctx: unknown },
+            name: string,
+          ) => { compactNow?: (a: unknown, signal: AbortSignal) => Promise<unknown> } | undefined;
+        }
+      | undefined;
+    const compaction = presets?.serviceFor?.(agent, "compaction");
+    if (compaction?.compactNow === undefined) return "unavailable";
+    const result = await compaction.compactNow(agent, new AbortController().signal);
+    return result === null ? "nothing" : "compacted";
+  }
+
+  /** Latest observed context usage, kept across turns so auto-compaction has a measurement. */
+  private lastContextSize?: number;
+  /** Latest observed context window, kept across turns so auto-compaction has a measurement. */
+  private lastContextWindow?: number;
+
   async compact(target: OutboundTarget): Promise<void> {
     const agent = this.agent;
     if (agent === undefined) {
@@ -2083,26 +2384,20 @@ export class AgentRunner implements MenuHost {
       await this.adapter.sendText(target, this.t.sessionRunning);
       return;
     }
-    const presets = this.ctx.get("agentPresets") as
-      | {
-          serviceFor?: (
-            agent: { ctx: unknown },
-            name: string,
-          ) => { compactNow?: (a: unknown, signal: AbortSignal) => Promise<unknown> } | undefined;
-        }
-      | undefined;
-    const compaction = presets?.serviceFor?.(agent, "compaction");
-    if (compaction?.compactNow === undefined) {
-      await this.adapter.sendText(target, this.t.compactionUnavailable);
-      return;
-    }
     try {
       // Compaction can take a while — tell the user it started, then report the outcome.
       await this.adapter.sendText(target, this.t.compactStarted);
-      const result = await compaction.compactNow(agent, new AbortController().signal);
-      if (result === null) {
+      // Shares the service lookup with auto-compaction, so the manual and
+      // automatic paths can never disagree about whether compaction exists.
+      const outcome = await this.runCompaction(agent);
+      if (outcome === "unavailable") {
+        await this.adapter.sendText(target, this.t.compactionUnavailable);
+      } else if (outcome === "nothing") {
         await this.adapter.sendText(target, this.t.nothingToCompact);
       } else {
+        // The measurement describes the pre-compaction session; drop it so the
+        // next stats card does not report a window that was just freed.
+        this.lastContextSize = undefined;
         await this.adapter.sendText(target, this.t.compactDone);
       }
     } catch (error) {

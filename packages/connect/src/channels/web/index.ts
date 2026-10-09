@@ -14,6 +14,9 @@ export { WebAdapter } from "./adapter.js";
 export const Config = z.object({
   /** Polling interval in milliseconds for detecting new mirror sessions. Default: 1000ms */
   pollIntervalMs: z.number(),
+  /** Access control for *this* channel; see the Feishu adapter's note on channel-specific ids. */
+  allowUsers: z.array(z.string()),
+  allowChats: z.array(z.string()),
 });
 
 export interface ConnectWebConfig {

@@ -283,6 +283,222 @@ test("several questions are asked in turn, reusing one card", async () => {
   assert.equal(calls.prompts[1].updateMessageId, "om_7");
 });
 
+test("each question's card reports its own position in the sequence", async () => {
+  // Reported bug: 「到第二个问题的时候，问题序号没更新」 — the second card still
+  // read 「问题 1/2」. The step counter is derived from `interaction.current` at
+  // the moment the prompt text is built, so reusing one card is exactly the case
+  // where a stale value would hide: the update has to carry the *new* number.
+  const { adapter, calls } = fakeAdapter({
+    onPrompt: async ({ index }) => ({ choice: index === 0 ? "q:q1:0" : "q:q2:0", messageId: "om_7" }),
+  });
+  const { harness } = bridgeFor(adapter);
+  await answerer(harness, "user-questions/request").listener(
+    {
+      questions: [
+        { id: "q1", question: "First?", options: [{ label: "A" }, { label: "B" }] },
+        { id: "q2", question: "Second?", options: [{ label: "C" }, { label: "D" }] },
+      ],
+      agent: { id: "sess-1" },
+    },
+    next,
+  );
+
+  assert.equal(calls.prompts.length, 2);
+  assert.ok(
+    calls.prompts[0].prompt.description.includes(zh.questionStep(1, 2)),
+    `the first card must say 1/2; got ${JSON.stringify(calls.prompts[0].prompt.description)}`,
+  );
+  assert.ok(
+    calls.prompts[1].prompt.description.includes(zh.questionStep(2, 2)),
+    `the second card must say 2/2; got ${JSON.stringify(calls.prompts[1].prompt.description)}`,
+  );
+});
+
+test("the last answer replaces the card with a done state instead of leaving live buttons", async () => {
+  // Reported bug: after the final choice the buttons stayed on screen, so the
+  // user could not tell the interaction had finished. An approval already closes
+  // its card; a question with options did not, and a tap on a dead button is
+  // absorbed as "expired" — which reads as the bot ignoring the user.
+  const { adapter, calls } = fakeAdapter({
+    onPrompt: async ({ index }) => ({ choice: index === 0 ? "q:q1:0" : "q:q2:0", messageId: "om_7" }),
+  });
+  const { harness } = bridgeFor(adapter);
+  await answerer(harness, "user-questions/request").listener(
+    {
+      questions: [
+        { id: "q1", question: "First?", options: [{ label: "A" }] },
+        { id: "q2", question: "Second?", options: [{ label: "C" }] },
+      ],
+      agent: { id: "sess-1" },
+    },
+    next,
+  );
+
+  assert.ok(
+    calls.closed.length > 0,
+    "the card must be closed once every question is answered",
+  );
+  assert.equal(calls.closed[calls.closed.length - 1].messageId, "om_7");
+});
+
+test("a single-question card is closed too, not left waiting", async () => {
+  // The one-question case is the common one, and it must not be a special case
+  // that keeps its buttons.
+  const { adapter, calls } = fakeAdapter({
+    onPrompt: async () => ({ choice: "q:q1:0", messageId: "om_9" }),
+  });
+  const { harness } = bridgeFor(adapter);
+  await answerer(harness, "user-questions/request").listener(
+    {
+      questions: [{ id: "q1", question: "Only?", options: [{ label: "A" }, { label: "B" }] }],
+      agent: { id: "sess-1" },
+    },
+    next,
+  );
+  assert.ok(calls.closed.length > 0, "a single-question card must be closed after the tap");
+  assert.equal(calls.closed[calls.closed.length - 1].messageId, "om_9");
+});
+
+test("a card that expires and is re-presented keeps the same question and its step number", async () => {
+  // The card expires without a tap (the adapter answers `undefined`), the bridge
+  // waits and presents again. Every one of those presentations must still describe
+  // the question actually being asked.
+  //
+  // Scope note, so this test is not read as stronger than it is: with the current
+  // design the step counter cannot advance *within* one `askOne` call, so this
+  // cannot distinguish a rebuilt prompt from a hoisted one. It pins the observable
+  // contract (repeats keep the right number) rather than the implementation, and the
+  // rebuild in `askOne` is defensive — it removes the trap for a future change that
+  // does advance the counter mid-question.
+  let round = 0;
+  const { adapter, calls } = fakeAdapter({
+    onPrompt: async () => {
+      round += 1;
+      // First two rounds expire; the third is the tap.
+      return round < 3
+        ? { choice: undefined, messageId: "om_3" }
+        : { choice: "q:q2:0", messageId: "om_3" };
+    },
+  });
+  const { bridge, harness } = bridgeFor(adapter);
+  const dispatched = answerer(harness, "user-questions/request").listener(
+    {
+      questions: [
+        { id: "q1", question: "Free text?" },
+        { id: "q2", question: "Pick one?", options: [{ label: "C" }, { label: "D" }] },
+      ],
+      agent: { id: "sess-1" },
+    },
+    next,
+  );
+  await tick();
+  assert.equal(bridge.answerText("oc_1", "typed"), true);
+  await dispatched;
+
+  // Every presentation of question 2 carries 2/2 — including the repeats.
+  assert.ok(calls.prompts.length >= 3, `expected repeats; got ${calls.prompts.length}`);
+  for (const [i, call] of calls.prompts.entries()) {
+    assert.ok(
+      call.prompt.description.includes(zh.questionStep(2, 2)),
+      `presentation ${i} lost the step number; got ${JSON.stringify(call.prompt.description)}`,
+    );
+  }
+});
+
+test("a text-answered question still advances the step count for the next card", async () => {
+  // The mixed path, and the one most likely to leave a stale number: question 1 has
+  // no options so it is answered by chat text (no card at all), and question 2 then
+  // presents a card. That card must say 2/2, not 1/2 — the counter is shared across
+  // both answer styles, so it has to advance on the text path too.
+  const { adapter, calls } = fakeAdapter({
+    onPrompt: async () => ({ choice: "q:q2:0", messageId: "om_5" }),
+  });
+  const { bridge, harness } = bridgeFor(adapter);
+  const dispatched = answerer(harness, "user-questions/request").listener(
+    {
+      questions: [
+        { id: "q1", question: "Free text?" },
+        { id: "q2", question: "Pick one?", options: [{ label: "C" }, { label: "D" }] },
+      ],
+      agent: { id: "sess-1" },
+    },
+    next,
+  );
+  await tick();
+  assert.equal(bridge.answerText("oc_1", "my typed answer"), true);
+  const answer = await dispatched;
+
+  assert.deepEqual(answer.answers, [
+    { id: "q1", selected: [], custom: "my typed answer" },
+    { id: "q2", selected: ["C"] },
+  ]);
+  assert.equal(calls.prompts.length, 1, "only the second question presents a card");
+  assert.ok(
+    calls.prompts[0].prompt.description.includes(zh.questionStep(2, 2)),
+    `the card after a text-answered first question must say 2/2; got ${JSON.stringify(calls.prompts[0].prompt.description)}`,
+  );
+});
+
+test("a tap aimed at an already-answered question is accepted, not dropped", async () => {
+  // A reused card can deliver a tap after the bridge has moved on: the user aims at
+  // the option still on screen while the next question is already current. Treating
+  // that as an unrecognised id discarded a real answer and left the flow waiting on
+  // a question the user believed they had just answered — with a card that never
+  // changed, which is indistinguishable from a freeze.
+  let round = 0;
+  const { adapter } = fakeAdapter({
+    onPrompt: async () => {
+      round += 1;
+      // Round 1: answer q1. Round 2: deliver q1's id AGAIN (the stale-card tap),
+      // which must be recorded rather than discarded. Round 3: answer q2.
+      if (round === 1) return { choice: "q:q1:0", messageId: "om_7" };
+      if (round === 2) return { choice: "q:q1:1", messageId: "om_7" };
+      return { choice: "q:q2:0", messageId: "om_7" };
+    },
+  });
+  const { harness } = bridgeFor(adapter);
+  const answer = await answerer(harness, "user-questions/request").listener(
+    {
+      questions: [
+        { id: "q1", question: "First?", options: [{ label: "A" }, { label: "B" }] },
+        { id: "q2", question: "Second?", options: [{ label: "C" }] },
+      ],
+      agent: { id: "sess-1" },
+    },
+    next,
+  );
+  assert.deepEqual(answer.answers, [
+    { id: "q1", selected: ["A"] },
+    { id: "q2", selected: ["C"] },
+  ]);
+});
+
+test("a genuinely unrecognised tap tells the user instead of looping in silence", async () => {
+  // The failure mode that reads as "the bot is stuck": the adapter returns a choice
+  // no option matches, the loop re-presents the identical card, and nothing is said.
+  // One notice is posted so the user knows the tap did not register and is told how
+  // to get through (reply with the number or text).
+  let round = 0;
+  const { adapter, calls } = fakeAdapter({
+    onPrompt: async () => {
+      round += 1;
+      return round === 1
+        ? { choice: "q:bogus:9", messageId: "om_1" }
+        : { choice: "q:q1:0", messageId: "om_1" };
+    },
+  });
+  const { harness } = bridgeFor(adapter);
+  const answer = await answerer(harness, "user-questions/request").listener(
+    { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }] }], agent: { id: "sess-1" } },
+    next,
+  );
+  assert.deepEqual(answer.answers, [{ id: "q1", selected: ["A"] }]);
+  assert.ok(
+    calls.texts.some((t) => t.includes(zh.answerNotRecognised)),
+    `the user must be told the tap did not register; sent ${JSON.stringify(calls.texts)}`,
+  );
+});
+
 test("an option-free question is answered by a plain chat message", async () => {
   const { adapter, calls } = fakeAdapter();
   const { bridge, harness } = bridgeFor(adapter);
@@ -300,6 +516,37 @@ test("an option-free question is answered by a plain chat message", async () => 
   assert.equal(accepted, true);
   assert.equal(calls.texts[0], zh.questionTextHint("在哪个目录？"));
   assert.deepEqual(await dispatched, { answers: [{ id: "q1", selected: [], custom: "D:\\projects\\demo" }] });
+});
+
+test("a text reply unblocks a question whose card never resolves", async () => {
+  // THE REPORTED FREEZE: 「卡在第一个问题，一直不动」「怎么选，都不会变」.
+  // `askOne` awaited `promptChoice` and nothing else, so if the card never
+  // resolved — unresponsive buttons, a lost tap, an adapter that never calls back —
+  // the loop sat inside that one await forever. A typed answer was recorded into
+  // `answers` but nothing ever looked, so the user's one remaining escape route did
+  // nothing at all. The card and the text path are two ways to answer one question,
+  // and they now race.
+  const { adapter } = fakeAdapter({
+    // Never resolves from a tap: this is the stuck card.
+    onPrompt: async ({ signal }) => new Promise((resolve) => {
+      signal.addEventListener("abort", () => resolve({ choice: undefined, messageId: "om_stuck" }), { once: true });
+    }),
+  });
+  const { bridge, harness } = bridgeFor(adapter);
+  const dispatched = answerer(harness, "user-questions/request").listener(
+    { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }, { label: "B" }] }], agent: { id: "sess-1" } },
+    next,
+  );
+  await tick();
+  assert.equal(bridge.pendingFor("oc_1"), true, "the question must be pending");
+
+  // The user types the answer because tapping does nothing.
+  assert.equal(bridge.answerText("oc_1", "A"), true);
+
+  // Must complete rather than hang: the assertion is that this promise settles.
+  const answer = await dispatched;
+  assert.deepEqual(answer.answers, [{ id: "q1", selected: ["A"] }]);
+  assert.equal(bridge.pendingFor("oc_1"), false, "the interaction must be released");
 });
 
 test("answerText declines when the chat is only waiting on an approval", async () => {

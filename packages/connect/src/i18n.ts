@@ -44,6 +44,8 @@ export interface Messages {
   processingStarted(preview: string): string;
   progressReminder(minutes: number, status: string): string;
   progressThinking: string;
+  /** Tool-free milestone for the progress reminder: how much work happened, not which tools. */
+  toolProgress(count: number): string;
   progressMenuTitle: string;
   progressOff: string;
   progressMinutes(n: number): string;
@@ -51,6 +53,18 @@ export interface Messages {
   progressSetting(label: string): string;
   menuSettingsProgress: string;
   helpProgress: string;
+  /** `/autocompact` help line. */
+  helpAutocompact: string;
+  /** Auto-compaction turned on for this chat. */
+  autocompactOn(pct: string): string;
+  /** Auto-compaction turned off for this chat. */
+  autocompactOff: string;
+  /** Threshold changed. */
+  autocompactThresholdSet(pct: string): string;
+  /** The argument was not a usable percentage. */
+  autocompactUsage: string;
+  /** Current state, reported by a bare `/autocompact`. */
+  autocompactStatus(on: boolean, pct: string): string;
 
   // Compact feedback: immediate start notice, then the outcome.
   compactStarted: string;
@@ -68,6 +82,12 @@ export interface Messages {
   approveLabel: string;
   rejectLabel: string;
   answerReceived: string;
+  /** Header of the closed question card, once every question has been answered. */
+  answersSubmitted(summary: string): string;
+  /** Placeholder in the recap for a question that was answered with nothing. */
+  answerNotProvided: string;
+  /** Shown when a tap cannot be matched to any option of the question on screen. */
+  answerNotRecognised: string;
   questionToolCall(text: string): string;
   /** Card summary shown after an approval decision was accepted. */
   approvalDone(outcome: "allowed-once" | "rejected", toolName: string): string;
@@ -127,8 +147,14 @@ export interface Messages {
   taskStatsTokensOut(tokens: string): string;
   taskStatsSteps(count: number): string;
   taskStatsContext(usedPct: string, window: string): string;
+  /** Context size in tokens when the window is unknown, so the row is never silently absent. */
+  taskStatsContextUnknown(tokens: string): string;
   taskStatsCompactOk: string;
   taskStatsCompactSuggest: string;
+  /** Auto-compaction is on and armed; `pct` is the configured threshold. */
+  taskStatsAutocompactArmed(pct: string): string;
+  /** Auto-compaction is on and this turn reached the threshold. */
+  taskStatsAutocompactDue(pct: string): string;
   taskDuration(ms: number): string;
   imageDownloadFailed(imageError: string): string;
   fileDownloadFailed(fileError: string): string;
@@ -181,6 +207,8 @@ export interface Messages {
   statusRunning: string;
   statusIdle: string;
   statusExecuting: string;
+  /** Reported when the session holds a turn this process never drove (restart mid-task). */
+  statusOrphaned: string;
   statusWaiting: string;
   statusField(status: string): string;
   modelField(model: string): string;
@@ -349,6 +377,7 @@ const zh: Messages = {
   progressReminder: (minutes, status) =>
     `⏳ 任务仍在处理中（已进行 ${minutes} 分钟）\n最近进展：${status}\n可发送 /status 查看详情，或 /stop 停止当前任务`,
   progressThinking: "🤔 思考中",
+  toolProgress: (count) => `🔧 已完成 ${count} 步操作`,
   progressMenuTitle: "进度提醒间隔",
   progressOff: "关闭",
   progressMinutes: (n) => `${n} 分钟`,
@@ -356,6 +385,13 @@ const zh: Messages = {
   progressSetting: (label) => `进度提醒：${label}`,
   menuSettingsProgress: "⏱️ 进度提醒",
   helpProgress: "设置长时间无进展时的主动进度提醒间隔（默认 5 分钟）",
+  helpAutocompact: "开关上下文自动压缩并设置阈值（默认 80%）：/autocompact on | off | 80",
+  autocompactOn: (pct) => `🤖 已开启上下文自动压缩：达到 ${pct}% 时自动压缩。`,
+  autocompactOff: "已关闭上下文自动压缩。达到阈值时仍会在任务结束卡片中提示。",
+  autocompactThresholdSet: (pct) => `自动压缩阈值已设置为 ${pct}%。`,
+  autocompactUsage: "用法：/autocompact on | off | <1-99 的百分比>",
+  autocompactStatus: (on, pct) =>
+    on ? `上下文自动压缩：已开启（阈值 ${pct}%）` : `上下文自动压缩：已关闭（阈值 ${pct}%）`,
   compactStarted: "🔄 正在压缩上下文…（可能需要一点时间）",
   compactDone: "✅ 上下文压缩完成，可继续对话。",
   questionCardTitle: "🤔 需要你的选择",
@@ -370,6 +406,9 @@ const zh: Messages = {
   approveLabel: "✅ 允许一次",
   rejectLabel: "❌ 拒绝",
   answerReceived: "✅ 已收到你的回答，继续处理…",
+  answersSubmitted: (summary) => `✅ 已提交你的选择\n\n${summary}`,
+  answerNotProvided: "（未填写）",
+  answerNotRecognised: "⚠️ 这次点击没有匹配到任何选项（卡片可能已过期）。请直接回复选项编号或内容，或重新发起提问。",
   questionToolCall: (text) => `🤔 需要你的选择 — ${text}`,
   approvalDone: (outcome, toolName) =>
     outcome === "allowed-once" ? `✅ 已同意授权：\`${toolName}\`` : `已拒绝授权：\`${toolName}\``,
@@ -423,8 +462,11 @@ const zh: Messages = {
   taskStatsTokensOut: (tokens) => `输出：${tokens} tokens`,
   taskStatsSteps: (count) => `步骤：${count}`,
   taskStatsContext: (usedPct, window) => `上下文占用：${usedPct}%（窗口 ${window}）`,
+  taskStatsContextUnknown: (tokens) => `上下文占用：${tokens} tokens（窗口大小未知）`,
   taskStatsCompactOk: "上下文占用正常，暂无需压缩",
   taskStatsCompactSuggest: "⚠️ 上下文占用较高，建议发送 /compact 压缩上下文",
+  taskStatsAutocompactArmed: (pct) => `🤖 自动压缩已开启（达到 ${pct}% 时自动执行）`,
+  taskStatsAutocompactDue: (pct) => `🤖 已达自动压缩阈值 ${pct}%`,
   taskDuration: (ms) =>
     ms < 60_000 ? `${Math.round(ms / 1000)} 秒` : `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`,
   imageDownloadFailed: (imageError) => `[用户发送了图片，但下载失败：${imageError}]`,
@@ -482,6 +524,7 @@ const zh: Messages = {
   statusRunning: "🟢 执行中",
   statusIdle: "⚪ 空闲",
   statusExecuting: "🔄 正在处理任务",
+  statusOrphaned: "⚠️ 上次任务已中断（宿主重启或进程退出），没有任务在运行",
   statusWaiting: "⏳ 等待新消息",
   statusField: (status) => `状态：${status}`,
   modelField: (model) => `模型：${model}`,
@@ -654,6 +697,7 @@ const en: Messages = {
   progressReminder: (minutes, status) =>
     `⏳ Still working on the task (${minutes} min so far)\nLatest progress: ${status}\nSend /status for details, or /stop to cancel`,
   progressThinking: "🤔 Thinking",
+  toolProgress: (count) => `🔧 ${count} step(s) completed`,
   progressMenuTitle: "Progress reminder interval",
   progressOff: "Off",
   progressMinutes: (n) => `${n} min`,
@@ -661,6 +705,13 @@ const en: Messages = {
   progressSetting: (label) => `Progress reminder: ${label}`,
   menuSettingsProgress: "⏱️ Progress reminder",
   helpProgress: "set the proactive progress-notice interval when a task stays silent (default 5 minutes)",
+  helpAutocompact: "turn automatic context compaction on/off and set its threshold (default 80%): /autocompact on | off | 80",
+  autocompactOn: (pct) => `🤖 Automatic context compaction is on: it runs at ${pct}%.`,
+  autocompactOff: "Automatic context compaction is off. The task-end card still warns when the threshold is reached.",
+  autocompactThresholdSet: (pct) => `Auto-compaction threshold set to ${pct}%.`,
+  autocompactUsage: "Usage: /autocompact on | off | <1-99>",
+  autocompactStatus: (on, pct) =>
+    on ? `Automatic context compaction: on (threshold ${pct}%)` : `Automatic context compaction: off (threshold ${pct}%)`,
   compactStarted: "🔄 Compacting context… (this may take a moment)",
   compactDone: "✅ Context compaction complete — you can continue chatting.",
   questionCardTitle: "🤔 Your input is needed",
@@ -675,6 +726,9 @@ const en: Messages = {
   approveLabel: "✅ Allow once",
   rejectLabel: "❌ Deny",
   answerReceived: "✅ Got your answer — continuing…",
+  answersSubmitted: (summary) => `✅ Your choices were submitted\n\n${summary}`,
+  answerNotProvided: "(left blank)",
+  answerNotRecognised: "⚠️ That tap did not match any option (the card may have expired). Reply with the option number or text, or start the question again.",
   questionToolCall: (text) => `🤔 Your input is needed — ${text}`,
   approvalDone: (outcome, toolName) =>
     outcome === "allowed-once" ? `✅ Approved: \`${toolName}\`` : `Rejected: \`${toolName}\``,
@@ -728,8 +782,11 @@ const en: Messages = {
   taskStatsTokensOut: (tokens) => `Output: ${tokens} tokens`,
   taskStatsSteps: (count) => `Steps: ${count}`,
   taskStatsContext: (usedPct, window) => `Context usage: ${usedPct}% (window ${window})`,
+  taskStatsContextUnknown: (tokens) => `Context usage: ${tokens} tokens (window size unknown)`,
   taskStatsCompactOk: "Context usage is fine — no compaction needed",
   taskStatsCompactSuggest: "⚠️ Context usage is high — consider sending /compact",
+  taskStatsAutocompactArmed: (pct) => `🤖 Auto-compaction is on (runs at ${pct}%)`,
+  taskStatsAutocompactDue: (pct) => `🤖 Reached the auto-compaction threshold of ${pct}%`,
   taskDuration: (ms) =>
     ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`,
   imageDownloadFailed: (imageError) => `[The user sent an image, but download failed: ${imageError}]`,
@@ -787,6 +844,7 @@ const en: Messages = {
   statusRunning: "🟢 Executing",
   statusIdle: "⚪ Idle",
   statusExecuting: "🔄 Processing task",
+  statusOrphaned: "⚠️ The previous task was cut off (host restart or process exit); nothing is running",
   statusWaiting: "⏳ Waiting for messages",
   statusField: (status) => `Status: ${status}`,
   modelField: (model) => `Model: ${model}`,

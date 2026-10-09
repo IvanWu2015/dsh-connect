@@ -95,10 +95,24 @@ test("buildCredentialSaves collects only channels with secret values", () => {
 });
 
 test("CHANNEL_CONFIG_FIELDS exposes editable non-secret fields per channel", () => {
-  assert.deepEqual(CHANNEL_CONFIG_FIELDS.feishu.map((f) => f.key), ["transport", "requireMention", "dmMode", "language", "threadIsolation", "onboarding", "webhookPort", "webhookPath"]);
+  assert.deepEqual(CHANNEL_CONFIG_FIELDS.feishu.map((f) => f.key), ["transport", "requireMention", "dmMode", "language", "threadIsolation", "onboarding", "webhookPort", "webhookPath", "allowUsers", "allowChats"]);
   assert.equal(CHANNEL_CONFIG_FIELDS.feishu.find((f) => f.key === "transport").options.includes("websocket"), true);
-  assert.deepEqual(CHANNEL_CONFIG_FIELDS.telegram.map((f) => f.key), ["requireMention", "language", "pollingTimeoutSeconds", "baseUrl"]);
-  assert.deepEqual(CHANNEL_CONFIG_FIELDS.web.map((f) => f.key), ["pollIntervalMs"]);
+  assert.deepEqual(CHANNEL_CONFIG_FIELDS.telegram.map((f) => f.key), ["requireMention", "language", "pollingTimeoutSeconds", "baseUrl", "allowUsers", "allowChats"]);
+  assert.deepEqual(CHANNEL_CONFIG_FIELDS.web.map((f) => f.key), ["pollIntervalMs", "allowUsers", "allowChats"]);
+  // Access control is per channel because the identifiers are: a Feishu open_id
+  // cannot match a Telegram numeric user id, so one shared list could only ever
+  // be right for one of the enabled channels.
+  for (const ch of ["feishu", "telegram", "dingtalk", "web"]) {
+    assert.ok(
+      CHANNEL_CONFIG_FIELDS[ch].some((f) => f.key === "allowUsers"),
+      `${ch} must expose its own allowUsers`,
+    );
+    assert.equal(
+      CHANNEL_CONFIG_FIELDS[ch].find((f) => f.key === "allowChats").kind,
+      "list",
+      `${ch}.allowChats must be a list`,
+    );
+  }
   assert.equal(CHANNEL_CONFIG_FIELDS.feishu.find((f) => f.key === "requireMention").kind, "boolean");
   // channelDefaults describe channel-agnostic keys. `notifyLevel` used to be
   // here and was dead: no channel adapter ever read it, and the real
@@ -137,15 +151,16 @@ test("an emptied list coerces to undefined, not to []", () => {
   assert.equal(coerceConfigValue("list", []), undefined);
 });
 
-test("GENERAL_FIELDS is the four groups, flattened, in render order", () => {
+test("GENERAL_FIELDS is the five groups, flattened, in render order", () => {
   // Order is the pane's render order and is asserted rather than assumed: the
   // groups are what the user actually sees, and a reordering here silently
   // reorders 通用设置.
   assert.deepEqual(GENERAL_FIELD_GROUPS.map((g) => g.title), [
-    "g.group.locale", "g.group.workspace", "g.group.access", "g.group.agent",
+    "g.group.locale", "g.group.context", "g.group.workspace", "g.group.access", "g.group.agent",
   ]);
   assert.deepEqual(GENERAL_FIELDS.map((f) => f.key), [
     "language", "notifyLevel", "progressTimeoutMs",
+    "autoCompact", "autoCompactThresholdPct",
     "workDir", "workspaces",
     "allowUsers", "allowChats",
     "agentPreset", "autoMirror", "streamHeartbeatMs",
@@ -156,6 +171,10 @@ test("GENERAL_FIELDS is the four groups, flattened, in render order", () => {
   for (const key of ["workspaces", "allowUsers", "allowChats"]) {
     assert.equal(GENERAL_FIELDS.find((f) => f.key === key).kind, "list", `${key} must be a list`);
   }
+  // Auto-compaction is a switch plus a number, and the number must be a number:
+  // a `text` threshold would save the string and compare it numerically.
+  assert.equal(GENERAL_FIELDS.find((f) => f.key === "autoCompact").kind, "boolean");
+  assert.equal(GENERAL_FIELDS.find((f) => f.key === "autoCompactThresholdPct").kind, "number");
 });
 
 test("snapshotToForm seeds every known channel, so a save cannot wipe a disabled one", () => {

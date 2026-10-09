@@ -57,6 +57,9 @@ export const Config = z.object({
     url: z.string(),
     requireMention: z.boolean(),
   }),
+  /** Access control for *this* channel; see the Feishu adapter's note on channel-specific ids. */
+  allowUsers: z.array(z.string()),
+  allowChats: z.array(z.string()),
 });
 
 export interface DingtalkConfig {

@@ -54,12 +54,16 @@ export const CHANNEL_CONFIG_FIELDS = {
     { key: 'onboarding', kind: 'boolean', label: 'onboarding' },
     { key: 'webhookPort', kind: 'number', label: 'webhookPort' },
     { key: 'webhookPath', kind: 'text', label: 'webhookPath' },
+    { key: 'allowUsers', kind: 'list', label: 'allowUsers' },
+    { key: 'allowChats', kind: 'list', label: 'allowChats' },
   ],
   telegram: [
     { key: 'requireMention', kind: 'boolean', label: 'requireMention' },
     { key: 'language', kind: 'select', options: ['zh', 'en'], label: 'language' },
     { key: 'pollingTimeoutSeconds', kind: 'number', label: 'pollingTimeoutSeconds' },
     { key: 'baseUrl', kind: 'text', label: 'baseUrl' },
+    { key: 'allowUsers', kind: 'list', label: 'allowUsers' },
+    { key: 'allowChats', kind: 'list', label: 'allowChats' },
   ],
   dingtalk: [
     { key: 'language', kind: 'select', options: ['zh', 'en'], label: 'language' },
@@ -70,9 +74,13 @@ export const CHANNEL_CONFIG_FIELDS = {
     // It is carried through untouched instead; see `CHANNEL_PRESERVED_KEYS`.
     { key: 'stream.url', kind: 'text', label: 'stream.url' },
     { key: 'stream.requireMention', kind: 'boolean', label: 'stream.requireMention' },
+    { key: 'allowUsers', kind: 'list', label: 'allowUsers' },
+    { key: 'allowChats', kind: 'list', label: 'allowChats' },
   ],
   web: [
     { key: 'pollIntervalMs', kind: 'number', label: 'pollIntervalMs' },
+    { key: 'allowUsers', kind: 'list', label: 'allowUsers' },
+    { key: 'allowChats', kind: 'list', label: 'allowChats' },
   ],
 } as const satisfies Record<ChannelName, readonly ConfigField[]>;
 
@@ -119,6 +127,13 @@ export const GENERAL_FIELD_GROUPS: readonly { title: string; fields: readonly Co
       { key: 'language', kind: 'select', options: ['zh', 'en'], label: 'language' },
       { key: 'notifyLevel', kind: 'select', options: ['full', 'important', 'result'], label: 'notifyLevel' },
       { key: 'progressTimeoutMs', kind: 'number', label: 'progressTimeoutMs' },
+    ],
+  },
+  {
+    title: 'g.group.context',
+    fields: [
+      { key: 'autoCompact', kind: 'boolean', label: 'autoCompact' },
+      { key: 'autoCompactThresholdPct', kind: 'number', label: 'autoCompactThresholdPct' },
     ],
   },
   {

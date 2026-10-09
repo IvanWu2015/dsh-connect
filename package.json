@@ -1,7 +1,7 @@
 {
   "name": "dsh-connect-workspace",
   "keywords": ["dsh", "deepseek-harness", "feishu", "lark", "dingtalk", "ai-agent", "chatbot", "cordis"],
-  "version": "1.0.5",
+  "version": "1.0.14",
   "private": true,
   "type": "module",
   "description": "dsh-connect: bridge DeepSeek Harness (DSH) agents to messaging platforms (Feishu/Lark first) — info sync, streaming replies, and work arrangement",

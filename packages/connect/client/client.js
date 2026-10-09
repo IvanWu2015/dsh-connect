@@ -177,13 +177,17 @@ var CHANNEL_CONFIG_FIELDS = {
     { key: "threadIsolation", kind: "boolean", label: "threadIsolation" },
     { key: "onboarding", kind: "boolean", label: "onboarding" },
     { key: "webhookPort", kind: "number", label: "webhookPort" },
-    { key: "webhookPath", kind: "text", label: "webhookPath" }
+    { key: "webhookPath", kind: "text", label: "webhookPath" },
+    { key: "allowUsers", kind: "list", label: "allowUsers" },
+    { key: "allowChats", kind: "list", label: "allowChats" }
   ],
   telegram: [
     { key: "requireMention", kind: "boolean", label: "requireMention" },
     { key: "language", kind: "select", options: ["zh", "en"], label: "language" },
     { key: "pollingTimeoutSeconds", kind: "number", label: "pollingTimeoutSeconds" },
-    { key: "baseUrl", kind: "text", label: "baseUrl" }
+    { key: "baseUrl", kind: "text", label: "baseUrl" },
+    { key: "allowUsers", kind: "list", label: "allowUsers" },
+    { key: "allowChats", kind: "list", label: "allowChats" }
   ],
   dingtalk: [
     { key: "language", kind: "select", options: ["zh", "en"], label: "language" },
@@ -193,10 +197,14 @@ var CHANNEL_CONFIG_FIELDS = {
     // printed `[object Object]` and then wrote that string over the real value.
     // It is carried through untouched instead; see `CHANNEL_PRESERVED_KEYS`.
     { key: "stream.url", kind: "text", label: "stream.url" },
-    { key: "stream.requireMention", kind: "boolean", label: "stream.requireMention" }
+    { key: "stream.requireMention", kind: "boolean", label: "stream.requireMention" },
+    { key: "allowUsers", kind: "list", label: "allowUsers" },
+    { key: "allowChats", kind: "list", label: "allowChats" }
   ],
   web: [
-    { key: "pollIntervalMs", kind: "number", label: "pollIntervalMs" }
+    { key: "pollIntervalMs", kind: "number", label: "pollIntervalMs" },
+    { key: "allowUsers", kind: "list", label: "allowUsers" },
+    { key: "allowChats", kind: "list", label: "allowChats" }
   ]
 };
 var CHANNEL_PRESERVED_KEYS = {
@@ -216,6 +224,13 @@ var GENERAL_FIELD_GROUPS = [
       { key: "language", kind: "select", options: ["zh", "en"], label: "language" },
       { key: "notifyLevel", kind: "select", options: ["full", "important", "result"], label: "notifyLevel" },
       { key: "progressTimeoutMs", kind: "number", label: "progressTimeoutMs" }
+    ]
+  },
+  {
+    title: "g.group.context",
+    fields: [
+      { key: "autoCompact", kind: "boolean", label: "autoCompact" },
+      { key: "autoCompactThresholdPct", kind: "number", label: "autoCompactThresholdPct" }
     ]
   },
   {
@@ -409,7 +424,9 @@ var LOCALES = {
     configured: "\u5DF2\u914D\u7F6E\uFF0C\u91CD\u65B0\u586B\u5199\u53EF\u8986\u76D6",
     current: "\u5F53\u524D\u503C\uFF1A",
     notConfigured: "\u672A\u914D\u7F6E",
-    previewNote: "\u4E3A\u4FBF\u4E8E\u786E\u8BA4\uFF0C\u6B64\u5904\u53EA\u663E\u793A\u8131\u654F\u540E\u7684\u90E8\u5206\u5B57\u7B26\uFF1B\u8F93\u5165\u6846\u7559\u7A7A\u8868\u793A\u4E0D\u4FEE\u6539\u3002",
+    replaceHint: "\u91CD\u65B0\u586B\u5199\u4F1A\u8986\u76D6\u5DF2\u4FDD\u5B58\u7684\u503C\uFF1B\u7559\u7A7A\u5219\u4E0D\u4FEE\u6539\u3002",
+    currentMasked: "\u5F53\u524D\u503C\uFF08\u5DF2\u8131\u654F\uFF09\uFF1A",
+    previewNote: "\u51ED\u636E\u76F4\u63A5\u663E\u793A\u5728\u5BF9\u5E94\u8F93\u5165\u6846\u4E2D\uFF0C\u4FBF\u4E8E\u6838\u5BF9\uFF1B\u5BC6\u94A5\u7C7B\u53EA\u663E\u793A\u8131\u654F\u540E\u7684\u9996\u5C3E\u5B57\u7B26\uFF0C\u9700\u91CD\u65B0\u586B\u5199\u624D\u80FD\u66FF\u6362\u3002",
     secrets: "\u51ED\u636E\u4E0E\u5BC6\u94A5",
     expand: "\u5C55\u5F00",
     collapse: "\u6536\u8D77",
@@ -493,6 +510,16 @@ var LOCALES = {
     "f.pollingTimeoutSeconds.hint": "\u5355\u6B21\u957F\u8F6E\u8BE2\u7B49\u5F85\u79D2\u6570\uFF0C\u9ED8\u8BA4 30\u3002",
     "f.baseUrl": "\u63A5\u53E3\u5730\u5740",
     "f.baseUrl.hint": "Telegram Bot API \u5730\u5740\uFF0C\u53EA\u6709\u5728\u81EA\u5EFA\u53CD\u5411\u4EE3\u7406\u65F6\u624D\u9700\u8981\u4FEE\u6539\u3002",
+    // Access control is per channel because the identifiers are: a Feishu
+    // `ou_…` open id cannot match a Telegram numeric user id, so one shared
+    // list could only ever be right for one of them. One wording serves every
+    // channel (`f.<key>` is channel-agnostic), and the hint says which ids.
+    "f.allowUsers": "\u5141\u8BB8\u7684\u53D1\u9001\u8005",
+    "f.allowUsers.hint": "\u6BCF\u884C\u4E00\u4E2A\u8BE5\u6E20\u9053\u7684\u7528\u6237 ID\uFF08\u5982\u98DE\u4E66\u7684 open_id\uFF09\u3002\u7559\u7A7A\u8868\u793A\u4E0D\u9650\u5236\u53D1\u9001\u8005\uFF1B\u586B\u5199\u540E\u53EA\u6709\u540D\u5355\u5185\u7684\u7528\u6237\u53EF\u4EE5\u5BF9\u8BDD\u3002",
+    "f.allowChats": "\u5141\u8BB8\u7684\u4F1A\u8BDD",
+    "f.allowChats.hint": "\u6BCF\u884C\u4E00\u4E2A\u8BE5\u6E20\u9053\u7684\u4F1A\u8BDD ID\u3002\u7559\u7A7A\u8868\u793A\u4E0D\u9650\u4F1A\u8BDD\uFF1B\u586B\u5199\u540E\u53EA\u6709\u540D\u5355\u5185\u7684\u4F1A\u8BDD\u4F1A\u6536\u5230\u56DE\u590D\u3002",
+    "g.allowUsers.hint": "\u6240\u6709\u6E20\u9053\u5171\u7528\u7684\u515C\u5E95\u540D\u5355\u3002\u67D0\u4E2A\u6E20\u9053\u82E5\u5728\u4E0A\u65B9\u5355\u72EC\u8BBE\u7F6E\u4E86\u540D\u5355\uFF0C\u4EE5\u8BE5\u6E20\u9053\u7684\u4E3A\u51C6\u3002",
+    "g.allowChats.hint": "\u6240\u6709\u6E20\u9053\u5171\u7528\u7684\u515C\u5E95\u540D\u5355\uFF1B\u6E20\u9053\u5355\u72EC\u8BBE\u7F6E\u65F6\u4EE5\u6E20\u9053\u4E3A\u51C6\u3002",
     "f.stream.url": "Stream \u5730\u5740",
     "f.stream.url.hint": "\u9489\u9489 Stream \u6A21\u5F0F\u7684\u63A5\u5165\u5730\u5740\uFF0C\u53EA\u6709\u5728\u81EA\u5EFA\u4EE3\u7406\u65F6\u624D\u9700\u8981\u4FEE\u6539\u3002",
     "f.stream.requireMention": "\u4EC5\u54CD\u5E94 @ \u63D0\u53CA",
@@ -506,6 +533,11 @@ var LOCALES = {
     "g.group.workspace": "\u5DE5\u4F5C\u76EE\u5F55",
     "g.group.access": "\u8BBF\u95EE\u63A7\u5236",
     "g.group.agent": "\u667A\u80FD\u4F53",
+    "g.group.context": "\u4E0A\u4E0B\u6587",
+    "g.autoCompact": "\u81EA\u52A8\u538B\u7F29\u4E0A\u4E0B\u6587",
+    "g.autoCompact.hint": "\u5F00\u542F\u540E\uFF0C\u4E00\u8F6E\u4EFB\u52A1\u7ED3\u675F\u65F6\u82E5\u4E0A\u4E0B\u6587\u5360\u7528\u8FBE\u5230\u4E0B\u9762\u7684\u9608\u503C\uFF0C\u81EA\u52A8\u538B\u7F29\u4F1A\u8BDD\u5386\u53F2\uFF0C\u65E0\u9700\u624B\u52A8\u53D1\u9001 /compact\u3002\u538B\u7F29\u672C\u8EAB\u4E0D\u53D1\u9001\u804A\u5929\u6D88\u606F\uFF1B\u5931\u8D25\u65F6\u624D\u4F1A\u63D0\u793A\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.autoCompactThresholdPct": "\u81EA\u52A8\u538B\u7F29\u9608\u503C\uFF08%\uFF09",
+    "g.autoCompactThresholdPct.hint": "\u4E0A\u4E0B\u6587\u5360\u7528\u8FBE\u5230\u8FD9\u4E2A\u767E\u5206\u6BD4\u65F6\u89E6\u53D1\u81EA\u52A8\u538B\u7F29\uFF0C\u9ED8\u8BA4 80\u3002\u4EC5\u5728\u5F00\u542F\u300C\u81EA\u52A8\u538B\u7F29\u4E0A\u4E0B\u6587\u300D\u540E\u751F\u6548\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
     "g.language": "\u8BED\u8A00",
     "g.language.hint": "\u673A\u5668\u4EBA\u56DE\u590D\u7528\u6237\u4F7F\u7528\u7684\u8BED\u8A00\uFF0C\u5BF9\u6240\u6709\u6E20\u9053\u751F\u6548\uFF08\u6E20\u9053\u5361\u7247\u91CC\u7684\u300C\u56DE\u590D\u8BED\u8A00\u300D\u53EF\u5355\u72EC\u8986\u76D6\uFF09\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
     "g.notifyLevel": "\u901A\u77E5\u7EA7\u522B",
@@ -578,7 +610,9 @@ var LOCALES = {
     configured: "Configured \u2014 type to replace",
     current: "Current value: ",
     notConfigured: "Not configured",
-    previewNote: "Shown masked, so you can confirm the stored value without exposing it. Leave the input empty to keep it.",
+    replaceHint: "Typing a new value replaces the stored one; leaving it empty keeps it.",
+    currentMasked: "Current value (masked): ",
+    previewNote: "Credentials are shown directly in their fields so you can check them. Confidential keys show only masked head and tail characters \u2014 retype to replace.",
     secrets: "Credentials & secrets",
     expand: "Expand",
     collapse: "Collapse",
@@ -662,6 +696,12 @@ var LOCALES = {
     "f.pollingTimeoutSeconds.hint": "How long one long poll waits; defaults to 30.",
     "f.baseUrl": "API base URL",
     "f.baseUrl.hint": "The Telegram Bot API endpoint \u2014 only change it if you run your own proxy.",
+    "f.allowUsers": "Allowed senders",
+    "f.allowUsers.hint": "One user id per line, in this channel\u2019s own format (e.g. a Feishu open_id). Empty means no sender restriction; once set, only listed users are answered.",
+    "f.allowChats": "Allowed chats",
+    "f.allowChats.hint": "One chat id per line, in this channel\u2019s own format. Empty means every chat; once set, only listed chats are answered.",
+    "g.allowUsers.hint": "Fallback list shared by every channel. A channel that sets its own list above uses that instead.",
+    "g.allowChats.hint": "Fallback list shared by every channel; a channel\u2019s own list wins.",
     "f.stream.url": "Stream URL",
     "f.stream.url.hint": "The DingTalk Stream endpoint \u2014 only change it if you run your own proxy.",
     "f.stream.requireMention": "Only when @-mentioned",
@@ -675,6 +715,11 @@ var LOCALES = {
     "g.group.workspace": "Working directories",
     "g.group.access": "Access control",
     "g.group.agent": "Agent",
+    "g.group.context": "Context",
+    "g.autoCompact": "Auto-compact context",
+    "g.autoCompact.hint": "When on, a session is compacted automatically at the end of a turn once context usage reaches the threshold below \u2014 no need to send /compact by hand. Compaction itself posts no chat message; only a failure does. A change takes effect after dsh restarts.",
+    "g.autoCompactThresholdPct": "Auto-compact threshold (%)",
+    "g.autoCompactThresholdPct.hint": "Context usage at which auto-compaction fires, default 80. Only applies when \u201CAuto-compact context\u201D is on. A change takes effect after dsh restarts.",
     "g.language": "Language",
     "g.language.hint": "The language the bot replies to users in, for every channel (a channel card\u2019s \u201CReply language\u201D overrides it). A change takes effect after dsh restarts.",
     "g.notifyLevel": "Notify level",
@@ -963,7 +1008,9 @@ function renderConfigField(field, value, onChange, t, options = {}) {
 }
 function renderSecretField(ch, field, form, onChange, t) {
   const preview = form.secretPreviews?.[ch]?.[field] ?? "";
+  const masked = isMaskedSecret(field);
   const hint = optionalText(t, `s.${ch}.${field}.hint`);
+  const seeded = masked ? "" : preview;
   return h(
     "div",
     { className: "ds-field", key: `sec-${ch}-${field}` },
@@ -975,19 +1022,22 @@ function renderSecretField(ch, field, form, onChange, t) {
         className: "ds-input",
         // Confidential keys stay masked while typing; identifiers (appId,
         // clientId) don't, so a typo is visible before it is ever saved.
-        type: isMaskedSecret(field) ? "password" : "text",
+        type: masked ? "password" : "text",
         autoComplete: "off",
-        placeholder: preview ? t("configured") : t("notConfigured"),
-        value: form.secrets?.[ch]?.[field] ?? "",
+        // For an identifier this is redundant while a value exists (the box
+        // already shows it) and only useful when unset; for a key it is the sole
+        // way the masked value is displayed.
+        placeholder: preview ? masked ? preview : t("configured") : t("notConfigured"),
+        value: form.secrets?.[ch]?.[field] ?? seeded,
         onChange: (e) => onChange(e.target.value)
       })
     ),
-    h(
-      "p",
-      { className: "ds-preview" },
-      h("b", null, t("current")),
-      preview === "" ? t("notConfigured") : preview
-    ),
+    // Written for every secret field, because the box now holds a value the user
+    // can overwrite — "setting this replaces what is stored" has to be said where
+    // the typing happens, not only in a hint about the vendor console. It is also
+    // the only place the masked value is named for a confidential key, whose box
+    // is deliberately left empty.
+    h("p", { className: "ds-hint" }, masked && preview ? `${t("replaceHint")} ${t("currentMasked")}${preview}` : t("replaceHint")),
     hint ? h("p", { className: "ds-hint" }, hint) : null
   );
 }

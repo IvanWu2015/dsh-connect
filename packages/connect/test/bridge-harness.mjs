@@ -114,9 +114,22 @@ export function scriptedAgent(id, plan = {}) {
     reason = "completed",
     usage = { inputTokens: 1234, outputTokens: 56, cacheReadTokens: 0 },
     context = true,
+    // Reported window size. Overridable so a test can drive the context-usage
+    // percentage — and therefore auto-compaction — to a chosen value.
+    contextWindow = 65536,
     steps = 1,
     whenIdleError,
     whenIdleHoldMs = 0,
+    // Overrides the `time` stamped on `turn/end`. Lets a test prove that
+    // /status reads the *event's* completion time rather than the clock: with
+    // the event emitted at the real current time the two are indistinguishable,
+    // so a regression that read `new Date()` would pass every assertion.
+    turnEndedAtMs,
+    // Tool names to emit as `tool/call` events before the answer. Without this
+    // the harness produces no tool activity at all, and any test asserting that
+    // tool lines are *suppressed* would pass vacuously — there would be nothing
+    // to suppress.
+    toolCalls = [],
   } = plan;
 
   const ctx = new Context();
@@ -143,7 +156,10 @@ export function scriptedAgent(id, plan = {}) {
       };
       emit("turn/start", {});
       for (let i = 0; i < steps; i++) emit("step/start", {});
-      if (context) emit("request/context", { provider: "harness-provider", model: "harness-model", contextWindow: 65536 });
+      if (context) emit("request/context", { provider: "harness-provider", model: "harness-model", contextWindow });
+      for (const tool of toolCalls) {
+        emit("tool/call", { name: tool, arguments: JSON.stringify({ description: `${tool} running` }) });
+      }
       if (answer !== "") {
         // The live delta feed: this is what drives the streaming card and sets
         // `turn.lastText`. It is a separate event from `session/event`.
@@ -164,7 +180,15 @@ export function scriptedAgent(id, plan = {}) {
           message: { content: [{ type: "text", text: answer }] },
         });
       }
-      emit("turn/end", { reason: { kind: reason } });
+      if (turnEndedAtMs === undefined) {
+        emit("turn/end", { reason: { kind: reason } });
+      } else {
+        // Same shape as `emit`, with the timestamp forced.
+        const event = { seq: ++seq, time: turnEndedAtMs, type: "turn/end", data: { reason: { kind: reason } } };
+        events.push(event);
+        session.seq = seq;
+        ctx.emit("session/event", session, event);
+      }
     },
     async whenIdle() {
       // The error first: a test that scripts a rejecting turn has no reason to
