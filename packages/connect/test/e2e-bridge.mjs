@@ -108,12 +108,23 @@ ${dump}`);
 ${dump}`);
     assert.equal(card.target.chatKey, "chat-e2e", "the reply must go to the originating chat");
 
-    // 3) the streaming card saw the same text (the live delta path, not just the
-    //    durable post-turn card)
+    // 3) the streaming card was driven and terminated — but deliberately carries
+    //    nothing. The default notification level is `result` ("only the final
+    //    result when the task finishes"), so the live card must stay quiet and the
+    //    answer must arrive once, whole, on the durable card asserted above.
+    //
+    //    This assertion previously required the answer *on the streaming card*,
+    //    which is what the level used to do by mistake. It was passing for the
+    //    wrong reason and is now inverted to pin the intended behaviour: an empty
+    //    stream is the promise being kept, not a delivery failure.
     const streamed = adapter.sent.find((m) => m.kind === "stream");
     assert.ok(streamed, `the streaming card must be driven and terminated; adapter saw:
 ${dump}`);
-    assert.ok(streamed.text.includes(ANSWER), `the streaming card must carry the answer; got ${JSON.stringify(streamed.text)}`);
+    assert.equal(
+      streamed.text.includes(ANSWER),
+      false,
+      `at the default level the live card must stay quiet; got ${JSON.stringify(streamed.text)}`,
+    );
 
     // 4) re-delivery of the same message id is still dropped upstream of the agent
     await bridge.inbound({ ...inbound });
