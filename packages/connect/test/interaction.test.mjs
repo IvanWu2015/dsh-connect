@@ -549,6 +549,39 @@ test("a text reply unblocks a question whose card never resolves", async () => {
   assert.equal(bridge.pendingFor("oc_1"), false, "the interaction must be released");
 });
 
+test("an unanswered question presents its card once, not once per timeout", async () => {
+  // THE REPORTED SPAM: the same 「需要你的选择（问题 1/2）」 card arrived over and over.
+  //
+  // The card was presented *inside* the wait loop, and that loop is driven by a
+  // 5-second timeout whose only job is to notice a typed answer. So every 5 seconds
+  // the loop went round, presented again, and the user got another copy of a card
+  // they had already decided not to tap. The timeout was never meant to re-send
+  // anything; presenting once and keeping that promise across iterations is the fix.
+  const { adapter, calls } = fakeAdapter({ onPrompt: untilAborted("om_once") });
+  const { bridge, harness } = bridgeFor(adapter);
+  const dispatched = answerer(harness, "user-questions/request").listener(
+    { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }, { label: "B" }] }], agent: { id: "sess-1" } },
+    next,
+  );
+  await tick();
+
+  // Hold for well over two ANSWER_RACE_MS windows (5 s each) with no answer given.
+  await new Promise((resolve) => setTimeout(resolve, 12_000));
+
+  assert.equal(
+    calls.prompts.length,
+    1,
+    `the card must be presented exactly once while unanswered; it was presented ${calls.prompts.length} times`,
+  );
+  assert.equal(bridge.pendingFor("oc_1"), true, "the question must still be waiting");
+
+  // And the escape route still works: a typed answer unblocks it.
+  assert.equal(bridge.answerText("oc_1", "B"), true);
+  const answer = await dispatched;
+  assert.deepEqual(answer.answers, [{ id: "q1", selected: ["B"] }]);
+  assert.equal(bridge.pendingFor("oc_1"), false);
+});
+
 test("answerText declines when the chat is only waiting on an approval", async () => {
   const { adapter, calls } = fakeAdapter({ onPrompt: untilAborted("om_1") });
   const { bridge, harness } = bridgeFor(adapter);

@@ -33,7 +33,7 @@
  * @module dsh-connect/interaction
  */
 import type { Context } from "@deepseek-ai/cordis";
-import type { ChannelAdapter, ChoiceOption, ChoicePrompt, OutboundTarget } from "./types.js";
+import type { ChannelAdapter, ChoiceOption, ChoicePrompt, ChoiceResult, OutboundTarget } from "./types.js";
 import type { BindingStore, ChatBinding } from "./binding.js";
 import { messages, type Language } from "./i18n.js";
 import type { ResolvedConnectConfig } from "./runner.js";
@@ -390,6 +390,23 @@ export class InteractionBridge {
     // At most one "that tap was not usable" notice per question, so a user tapping a
     // dead card repeatedly is told once rather than flooded.
     let rejectedNoticed = false;
+    /**
+     * The card is presented ONCE per presentation and then left alone.
+     *
+     * Presenting it inside the loop sent a *new card on every iteration*, and the
+     * iteration is driven by a 5-second timeout — so an unanswered question re-sent
+     * its card every five seconds, indefinitely. The user saw the same
+     * 「需要你的选择（问题 1/2）」 card arrive over and over, which is both useless and
+     * the clearest possible signal that something is wrong.
+     *
+     * The timeout exists for one reason only: to notice a *typed* answer, because a
+     * card that cannot be tapped would otherwise hold the flow forever (the freeze
+     * reported earlier). It was never meant to have the card re-sent. Keeping the
+     * card's promise across iterations separates the two: the wait can time out and
+     * re-check for text as often as it likes while the one card the user is looking
+     * at stays exactly where it is.
+     */
+    let card: Promise<ChoiceResult> | undefined;
     while (!interaction.controller.signal.aborted && !interaction.settled) {
       // A text reply (`answerText`) records the answer without any tap, and it may
       // already have arrived — the user who typed instead of tapping, or who typed
@@ -402,25 +419,30 @@ export class InteractionBridge {
       // long as the user does not tap — including forever, if the card is on screen
       // but unresponsive — so awaiting it alone made a typed answer unable to
       // unblock the flow. Whichever arrives first wins; the loser is abandoned.
+      // Present once, then keep the same promise across iterations. Re-creating it
+      // here is what turned the timeout into a card-spamming loop.
+      card ??= interaction.adapter
+        .promptChoice(
+          this.outbound(interaction),
+          buildPrompt(),
+          interaction.messageId,
+          interaction.controller.signal,
+        )
+        .finally(() => {
+          // Once the card has resolved there is nothing on screen to wait on, so the
+          // next iteration is allowed to present a fresh one (the expiry path below).
+          card = undefined;
+        });
       const raced = await Promise.race([
-        interaction.adapter
-          .promptChoice(
-            this.outbound(interaction),
-            buildPrompt(),
-            interaction.messageId,
-            interaction.controller.signal,
-          )
-          .then((result) => ({ kind: "card" as const, result })),
+        card.then((result) => ({ kind: "card" as const, result })),
         this.waitForAnswer(interaction, ANSWER_RACE_MS).then((r) => ({ kind: "text" as const, r })),
       ]);
       if (raced.kind === "text") {
-        // A recorded answer, a stop, or the race window elapsed. A recorded answer
-        // is the text-reply path succeeding.
+        // A recorded answer, a stop, or the wait window elapsed. Only the first and
+        // second change anything: an elapsed window with nothing recorded means we
+        // simply look again, leaving the user's card untouched on screen.
         if (interaction.answers.has(q.id)) return true;
         if (raced.r === "stopped" || interaction.controller.signal.aborted || interaction.settled) break;
-        // Timed out with nothing recorded: keep presenting the card, but do not
-        // leave the loop without re-checking — the card call above was abandoned
-        // mid-flight, so present a fresh one on the next iteration.
         continue;
       }
       const { choice, messageId } = raced.result;
