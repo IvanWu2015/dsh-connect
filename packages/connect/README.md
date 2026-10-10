@@ -6,6 +6,59 @@ The **all-in-one plugin** for connecting [DeepSeek Harness](https://github.com/d
 
 > One install, one config block: the core `connect` service, every channel adapter (feishu / telegram / dingtalk / web), and the web-settings stack all live in this single package. Enable the channels you use via the `channels` selector. The former split packages (`dsh-connect-feishu`, `dsh-connect-telegram`, `dsh-connect-dingtalk`, `dsh-connect-web`) and the `dsh-connect-all` bundle no longer exist.
 
+### What it looks like
+
+The settings pane is where you configure channels and credentials — the full walkthrough
+is [further down](#the-settings-pane):
+
+| Overview | General |
+|---|---|
+| ![the settings pane: primary navigation above the channel tabs, the Feishu card expanded with its credential fields](docs/images/settings-overview-en.png) | ![the General view's agent card, with the current model shown as read-only text](docs/images/settings-general-en.png) |
+
+> **Not shown here: the chat itself.** Screenshots of the conversation — the streaming
+> card, the reasoning and tool-call lines, the question buttons — are not included yet.
+> I would rather say so than present a settings pane as if it were the product. If you
+> want to see it before installing, the [Quick start](#quick-start) describes the exact
+> sequence of what appears in the chat, step by step.
+
+## Why this exists
+
+DSH's own Web GUI is excellent, and nothing here replaces it. What it cannot do is reach
+you. An agent that runs for twenty minutes on a long refactor has no way to tap you on the
+shoulder while you are in a meeting, on a phone, or away from the machine — and you have no
+way to answer it when it stops to ask a question.
+
+`dsh-connect` closes that loop. The agent keeps working in a real DSH session on the real
+host; you get a **native chat client** as the control surface:
+
+- **Start work from anywhere, on any device.** Feishu, Telegram and DingTalk all have
+  mature mobile and desktop clients. You are not tunneling into a web UI or keeping a tab
+  open; you message the bot the way you message a colleague.
+- **Watch it work, or don't.** The chat card streams the reasoning and tool calls live, so
+  a long turn is legible instead of a spinner. When you would rather not read it, drop the
+  chat to `输出重要节点` or `只输出结果` and get the answer once, whole, at the end.
+- **Answer the agent where the question appears.** When the agent needs a decision
+  (`ask_user_question`) or permission for a risky action, the question arrives as buttons
+  in the same conversation. Answering from chat is a first-class path, not a fallback —
+  and the Web GUI stays fully functional, so whoever answers first wins.
+- **Keep the audit trail in the conversation.** Every task, result and approval is a
+  message you can scroll, search and forward, in a tool your team already has.
+
+Two properties make this usable rather than a demo:
+
+1. **It is the real agent, not a chat wrapper.** Sessions live in DSH and are bound 1:1 to
+   chats; the same session is simultaneously visible in the Web GUI as a mirror. Switch
+   between the two freely — the transcript, working directory and context are the same
+   object, not a copy.
+2. **The quiet levels are genuinely quiet.** Only `full` sends repeating status lines.
+   The two quieter levels send discrete events only — this is asserted by tests, because
+   "notifications you cannot turn off" is the failure mode that makes people uninstall a
+   bot.
+
+**Who it is for.** Anyone running DSH who wants to operate agents from a chat platform —
+solo operators running a bot for their own workspaces, and small teams sharing one bot in
+group chats behind an allowlist.
+
 ## Overview
 
 `dsh-connect` binds a chat conversation to a DSH agent session and drives it end to end:
@@ -37,7 +90,7 @@ The **liveness heartbeat** is repeating chatter ("still here"), so only `full` g
 | DSH version | `^0.2.0-rc.2` (peer `@deepseek-ai/dsh-agent`, `dsh-llm`, `dsh-session`) |
 | Cordis | `^4.0.1` |
 | Node.js | ≥ 20 (ESM, `NodeNext`) |
-| Last verified | **2026-10-02** against DSH `0.2.0-rc.2` on Windows (host load, Feishu WebSocket transport, web-settings pane) |
+| Last verified | **2026-10-10** against DSH `0.2.0-rc.2` on Windows — host load, Feishu WebSocket transport, the web-settings pane, and an end-to-end round trip against a live `dsh` host (the E2E suite's live leg) |
 
 **Keep the peer range in step with the host.** Upstream ships no changelog or
 migration guide, so a stale range is the only thing standing between this plugin

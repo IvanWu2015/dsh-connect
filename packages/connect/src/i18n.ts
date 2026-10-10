@@ -343,6 +343,17 @@ export interface Messages {
   helpClear: string;
   helpStop: string;
   helpOther: string;
+  // These eight were previously hardcoded English inside `helpText`, so a Chinese
+  // user saw a half-translated command list — the one place a user goes to discover
+  // what is available, and the worst place to look unfinished.
+  helpMirror: string;
+  helpUnlock: string;
+  helpRenew: string;
+  helpExport: string;
+  helpPs: string;
+  helpRemind: string;
+  helpSend: string;
+  helpBroadcast: string;
 }
 
 const zh: Messages = {
@@ -663,6 +674,14 @@ const zh: Messages = {
   helpClear: "清空当前对话",
   helpStop: "停止当前任务",
   helpOther: "其他文本将作为任务发送给 DSH Agent",
+  helpMirror: "创建 Web 镜像会话（可选 --timeout N 指定超时分钟数）",
+  helpUnlock: "手动释放会话锁",
+  helpRenew: "续期当前会话锁的超时时间",
+  helpExport: "导出对话历史为 Markdown",
+  helpPs: "给正在运行的任务追加一条说明",
+  helpRemind: "设置定时提醒（例如 /remind 10m 休息一下）",
+  helpSend: "发送工作区里的文件（图片 / 文件 / 音频 / 视频）",
+  helpBroadcast: "向所有已绑定的会话群发一条消息（仅管理员）",
 };
 
 const en: Messages = {
@@ -982,6 +1001,14 @@ const en: Messages = {
   helpClear: "clear the current conversation",
   helpStop: "stop the current task",
   helpOther: "any other text is sent to the DSH agent as a task",
+  helpMirror: "create a Web mirror session (optional --timeout N in minutes)",
+  helpUnlock: "manually release the session lock",
+  helpRenew: "renew the current session lock timeout",
+  helpExport: "export the conversation history as Markdown",
+  helpPs: "append a note to the running task",
+  helpRemind: "schedule a reminder (e.g. /remind 10m take a break)",
+  helpSend: "send a file from the workspace (image / file / audio / video)",
+  helpBroadcast: "send a message to every bound chat (admins only)",
 };
 
 export function messages(lang: Language): Messages {

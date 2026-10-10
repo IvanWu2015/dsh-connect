@@ -47,13 +47,15 @@
 | `workspaces` | `string[]` | `[]` | ✅ | 额外工作区（面板里一行一个目录） |
 | `visionModel` | `{provider, model}` | — | — | 视觉模型 |
 | `language` | `string` | `"zh"` | ✅ | 回复语言 |
-| `allowUsers` | `string[]` | `[]` | ✅ | 仅允许的用户（面板里一行一个，留空=全部放行） |
-| `allowChats` | `string[]` | `[]` | ✅ | 仅允许的会话（面板里一行一个，留空=全部放行） |
+| `allowUsers` | `string[]` | `[]` | ✅ | **兜底**发送者白名单：只对没有单独设置名单的渠道生效。用户 ID 因渠道而异，因此每个渠道在自己的卡片上有 `allowUsers`；某渠道显式留空表示该渠道不限制，会覆盖这里的兜底 |
+| `allowChats` | `string[]` | `[]` | ✅ | **兜底**会话白名单；渠道自己的名单优先。见 `allowUsers` |
 | `stateDir` | `string` | — | — | 状态目录 |
 | `autoMirror` | `boolean` | `true` | ✅ | 是否自动镜像 |
 | `streamHeartbeatMs` | `number` | `60000` | ✅ | 流式心跳间隔 |
-| `notifyLevel` | `"full"|"important"|"result"` | `"result"` | ✅ | 流式回复上报粒度 |
-| `progressTimeoutMs` | `number` | `300000` | ✅ | 静默多久报一次进度 |
+| `notifyLevel` | `"full"|"important"|"result"` | `"result"` | ✅ | 流式回复上报粒度。**只有 `full` 会发送重复的状态行**（心跳、工具调用行、逐字回答）；`important` 只发思考提示与整段最终回答，`result` 只发最终回答 |
+| `progressTimeoutMs` | `number` | `300000` | ✅ | 静默多久报一次进度。**在所有级别都会执行**——它是用户主动配置的状态汇报，不是心跳噪音；`0` 表示全局关闭 |
+| `autoCompact` | `boolean` | `false` | ✅ | 任务结束时若上下文占用达阈值则自动压缩会话；默认关闭（压缩会改写历史） |
+| `autoCompactThresholdPct` | `number` | `80` | ✅ | 触发自动压缩的上下文占用百分比，限制在 1–99 |
 
 > **面板改了要重启 `dsh` 才生效。** 核心配置在插件加载时只解析一次，`AgentRunner` 构造时就把其中几项拷成了实例字段，所以通用设置里每一项的说明都写着「修改后需重启 dsh 才生效」——这是当前实现的真实行为，不是文案保守。渠道设置（凭据、`requireMention` 等）走的是同一条保存缝，但那是**热重载**的，改完即生效；两边的差别在面板上各自的说明里写明了。
 >

@@ -89,14 +89,18 @@
 
 重构前的模型是「核心 + 每渠道一个插件」：
 
-| 包 | 职责 | 配置字段数 | 备注 |
+| 配置块 | 职责 | 字段数 | 字段 |
 | --- | --- | --- | --- |
-| `dsh-connect` | 核心 `connect` 服务 | 12 | agentPreset / workDir / workspaces / visionModel / language / allowUsers / allowChats / stateDir / autoMirror / streamHeartbeatMs / notifyLevel / progressTimeoutMs |
-| `dsh-connect-feishu` | 飞书适配器 | ~11 | appId / appSecret / transport / verificationToken / encryptKey / webhookPort / webhookPath / requireMention / dmMode / threadIsolation / language |
-| `dsh-connect-telegram` | Telegram 适配器 | 5 | botToken / language / requireMention / pollingTimeoutSeconds / baseUrl |
-| `dsh-connect-dingtalk` | 钉钉适配器 | 12 | webhookUrl / secret / language / defaultAt / mobiles / userIds / all / stream / clientId / clientSecret / url / requireMention |
-| `dsh-connect-web` | Web mirror | — | 复用 Web GUI |
+| `connect`（顶层） | 核心 `connect` 服务 + 渠道选择 | 22 | agentPreset / workDir / workspaces / visionModel / language / allowUsers / allowChats / channelAccess / stateDir / autoMirror / streamHeartbeatMs / notifyLevel / progressTimeoutMs / autoCompact / autoCompactThresholdPct / channels / channelDefaults / feishu / telegram / dingtalk / web / settingsStatePath |
+| `feishu` | 飞书适配器 | 14 | appId / appSecret / transport / verificationToken / encryptKey / webhookPort / webhookPath / requireMention / dmMode / threadIsolation / language / onboarding / allowUsers / allowChats |
+| `telegram` | Telegram 适配器 | 7 | botToken / language / requireMention / pollingTimeoutSeconds / baseUrl / allowUsers / allowChats |
+| `dingtalk` | 钉钉适配器 | 7 | webhookUrl / secret / language / defaultAt / stream / allowUsers / allowChats |
+| `web` | Web 镜像适配器 | 3 | pollIntervalMs / allowUsers / allowChats |
 
+> 这些都是**同一个包**（`dsh-connect`）里的配置块，不再是各自独立的 npm 包——旧表里的
+> `dsh-connect-feishu` / `-telegram` / `-dingtalk` 早已合并，这里保留的是**配置块**的划分。
+> 字段数由 schemastery 自省得出，`channel-config-coverage` 测试会保证每个声明的字段都能被
+> 面板存住，不会在保存时被静默清掉。
 **问题：**
 1. **安装多**：要用飞书+钉钉，得 `dsh plugin add dsh-connect dsh-connect-feishu dsh-connect-dingtalk`；换渠道要再装一个包。
 2. **配置散**：每个渠道各自的 YAML 键位不同（`appId/appSecret` vs `botToken` vs `clientId/clientSecret`），核心加渠道加起来 20~30 个键。
