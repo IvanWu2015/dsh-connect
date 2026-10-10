@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.15] - 2026-10-10
+
+Two fixes and a documentation pass. One of the fixes was mine to begin with.
+
+### Fixed
+
+- **A question card was re-sent every five seconds while it went unanswered.** The previous release stopped an unresponsive card from holding a flow open by racing it against a five-second wait for a typed reply — but the card was presented *inside* that wait's loop, so each elapsed window presented it again. The user saw the same 「需要你的选择（问题 1/2）」 card arrive over and over. The card is now presented once and that promise is kept across iterations, so the wait may time out and re-check for a typed answer as often as it likes while the card on screen stays put. The adapter's genuine expiry path still re-presents, unchanged.
+- **A progress reminder could be dropped without a word.** The watchdog edited the streaming card through the turn's chunk queue, and when the turn state was gone it returned silently — no card edit, no message, no log. `disposeAgent` clears that state mid-turn (a `/new`, `/clear` or chat switch) without stopping the watchdog, which lives in `driveAgent`'s `finally` and has not run yet. A progress report whose only job is to say "still working" now falls back to posting its own message, with an elapsed time kept on the runner rather than only on the discarded turn.
+
+### Documentation
+
+- **The READMEs now open with why the plugin exists**, not just what it does. The Web GUI is not replaced by this; what it cannot do is reach you. The new section covers starting work from any device, watching a long turn or deliberately not watching it, answering the agent where the question appears, and the two properties that make it usable — it drives the real session rather than a copy, and the quiet levels are genuinely quiet, which tests assert.
+- **Screenshots moved to the top, with the gap stated.** All 14 are of the settings pane and none of the chat itself. Rather than present a settings pane as the product, the README says plainly that a chat screenshot does not exist yet.
+- **The `/help` output was half-translated.** Eight command lines were hardcoded English inside `helpText`, so a Chinese user got a mixed-language command list in the one place they go to discover what exists. All eight are now in the i18n tables, both languages.
+- **The one-sided lock is now stated where users meet it.** `channels/web/adapter.ts` claimed this was "documented in README" and it was not: the Web GUI reads the mirrored session straight from DSH's session store and never sends inbound messages through this plugin, so it cannot respect the chat lock. Running one session from two writers is possible, not prevented.
+- **[docs/COMPETITIVE_ANALYSIS.md](docs/COMPETITIVE_ANALYSIS.md)** (and [.zh.md](docs/COMPETITIVE_ANALYSIS.zh.md)): the landscape, where this plugin stands, and what to build next. Every vendor-integrated competitor verified is Slack-only; none documents Feishu/Lark or DingTalk. Claims that could not be fetched are marked UNVERIFIED and are not relied on.
+- Corrected stale reference docs: per-channel field counts now come from the live schema (the core was documented as 12 fields and has 22), `allowUsers` is described as the per-channel fallback it became, and the compatibility table's "last verified" date reflects what was actually verified.
+
+### Notes
+
+- **The card-spam regression was caught by a test proven to fail first**: reverting the fix makes it report "presented 3 times" in 12 seconds — the reported symptom exactly. That test also re-asserts the typed-reply escape route, so the earlier freeze fix cannot be undone to fix this one.
+- The watchdog's no-turn fallback has **no test**. The state could not be constructed through the harness: clearing the runner's turn is undone by the drain loop re-entering `runTurn`, and the harness records a stream only once the turn has ended. The branch was verified by driving its exact body instead. A test that cannot pass is worse than a recorded gap.
+
+### Testing
+
+- **624 tests, 30 suites, all green** (was 623), plus SMOKE OK and E2E OK — both legs, including the live round trip against a real `dsh` host.
+
 ## [1.0.14] - 2026-10-09
 
 The freeze, reported a second time and this time precisely: 「还是容易卡住，我现在一个对话，卡在第一个问题，一直不动」「怎么选，都不会变」. I had already looked at this area twice and found nothing, because I was reading the tap path. The fault was not in the tap path at all — it was in the loop that waits for it, and it is reproducible in one line.
