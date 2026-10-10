@@ -908,6 +908,13 @@ test("K2 at the default notify level nothing streams into the card, and the resu
     );
   }));
 
+// NOTE: the watchdog's no-turn fallback has no test here. I could not construct the
+// state through the harness — clearing `runner["turn"]` is undone by the drain loop
+// re-entering `runTurn`, and the harness's `streamText` only records once the turn has
+// already ended, so the assertion could never observe the window it targets. A test that
+// cannot pass is worse than an acknowledged gap, so the branch is left documented in
+// `runner.ts` and verified by hand against its exact output shape instead.
+
 test("K3 the progress watchdog and the heartbeat both fire, both into the same card", () =>
   // The tick is derived from the configured interval (`progressTimeoutMs / 2`,
   // floored at 250ms), so a 400ms interval is observable inside a sub-second

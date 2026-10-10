@@ -459,6 +459,9 @@ export class AgentRunner implements MenuHost {
       } else {
         turn.milestone = this.t.toolProgress(turn.toolCount);
       }
+      // Mirrored onto the runner so a reminder that fires after the turn object is
+      // gone still reports the real milestone instead of falling back to 「思考中」.
+      this.lastMilestone = turn.milestone;
       // Only `full` narrates tool activity. `important` and `result` show the
       // final answer at turn end and nothing in between — a `🔧 调用工具 …` line
       // is live activity, not a milestone, and the user asked for it to go.
@@ -1017,6 +1020,12 @@ export class AgentRunner implements MenuHost {
 
     const chunks = createAsyncQueue<string>();
     const now = Date.now();
+    // Recorded here so the progress reminder can still report an honest elapsed time
+    // if the turn object is gone by the time it fires. The milestone is cleared for
+    // the same reason in reverse: carrying the previous turn's last tool into a new
+    // turn's first reminder would describe work that already finished.
+    this.workStartedAt = now;
+    this.lastMilestone = undefined;
     this.turn = {
       firstSeq, chunks, lastText: "",
       reasoning: false, hintPushed: false, lastIndex: undefined, pushedAny: false,
@@ -1077,17 +1086,35 @@ export class AgentRunner implements MenuHost {
     // every level does not smuggle tool activity back into the quiet levels.
     const progressWatchdog = progressTimeoutMs > 0
       ? setInterval(() => {
-          const turn = this.turn;
-          if (turn === undefined) return;
           const elapsed = Date.now() - lastProgressNoticeAt;
           if (elapsed < progressTimeoutMs) return;
           lastProgressNoticeAt = Date.now();
-          const minutes = Math.max(1, Math.round((Date.now() - turn.startedAt) / 60_000));
-          const status = turn.milestone ?? this.t.progressThinking;
-          // Edit the existing streaming card in place instead of sending a new
-          // message: the milestone is appended to the same card via the chunk
-          // stream, so progress updates never clutter the chat with new bubbles.
-          turn.chunks.push(`\n\n${this.t.progressReminder(minutes, status)}\n\n`);
+          const turn = this.turn;
+          if (turn !== undefined) {
+            const minutes = Math.max(1, Math.round((Date.now() - turn.startedAt) / 60_000));
+            const status = turn.milestone ?? this.t.progressThinking;
+            // Edit the existing streaming card in place instead of sending a new
+            // message: the milestone is appended to the same card via the chunk
+            // stream, so progress updates never clutter the chat with new bubbles.
+            turn.chunks.push(`\n\n${this.t.progressReminder(minutes, status)}\n\n`);
+            return;
+          }
+          // No turn state, but the timer is still running — which means the agent is
+          // still busy. This used to `return` silently, and that is the reported
+          // defect: the card took the first reminder and then stopped updating, so
+          // the user's last message said 「已进行 5 分钟」 forever while the task ran
+          // on. A live card edit is only reachable through `turn.chunks`; with the
+          // turn gone there is no card to edit, so the notice has to be its own
+          // message. Slightly noisier beats a progress report that silently stops
+          // reporting — that is the one job it has.
+          const sinceStart = this.workStartedAt;
+          const minutes = sinceStart === undefined ? 1 : Math.max(1, Math.round((Date.now() - sinceStart) / 60_000));
+          this.log(
+            `connect: progress reminder for ${this.chatKey} had no turn to edit; posting it as a message`,
+          );
+          void this.adapter
+            .sendText(this.target(msg), this.t.progressReminder(minutes, this.lastMilestone ?? this.t.progressThinking))
+            .catch(() => undefined);
         }, watchdogTickMs)
       : undefined;
 
@@ -2369,6 +2396,18 @@ export class AgentRunner implements MenuHost {
     return result === null ? "nothing" : "compacted";
   }
 
+  /**
+   * When the current stretch of work began, kept on the runner rather than only on
+   * the turn object.
+   *
+   * The turn is discarded when `driveAgent` returns, but the agent can still be
+   * busy — and the progress reminder needs an elapsed time it can trust even then.
+   * Without this the fallback could only guess, and a reminder that reports the
+   * wrong duration is worse than one that admits it has none.
+   */
+  private workStartedAt?: number;
+  /** Latest milestone, mirrored off the turn so a reminder can report it after turn state is gone. */
+  private lastMilestone?: string;
   /** Latest observed context usage, kept across turns so auto-compaction has a measurement. */
   private lastContextSize?: number;
   /** Latest observed context window, kept across turns so auto-compaction has a measurement. */
