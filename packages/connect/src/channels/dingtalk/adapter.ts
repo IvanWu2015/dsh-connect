@@ -139,7 +139,13 @@ export class DingtalkStreamAdapter implements ChannelAdapter {
     await this.client.sendReply(target.replyRef, buildTextReplyBody(target.replyRef, full));
   }
 
-  async promptChoice(target: OutboundTarget, prompt: ChoicePrompt, _updateMessageId?: string): Promise<ChoiceResult> {
+  async promptChoice(
+    target: OutboundTarget,
+    prompt: ChoicePrompt,
+    _updateMessageId?: string,
+    _signal?: AbortSignal,
+    onPresented?: (messageId: string) => void,
+  ): Promise<ChoiceResult> {
     const lines = [prompt.title, ""];
     prompt.options.forEach((option, i) => lines.push(`${i + 1}. ${option.label}`));
     if (prompt.footer !== undefined) lines.push("", prompt.footer);
@@ -148,6 +154,9 @@ export class DingtalkStreamAdapter implements ChannelAdapter {
       await this.client.sendReply(target.replyRef, buildTextReplyBody(target.replyRef, text));
     }
     const messageId = `${target.chatKey}:${Date.now()}`;
+    // Report the id while the choice is still pending: a typed answer settles the
+    // question without this promise resolving, and the menu still has to be closed.
+    onPresented?.(messageId);
     const result = await new Promise<ChoiceResult>((resolve) => {
       const timer = setTimeout(() => {
         this.pendingMenus.delete(messageId);

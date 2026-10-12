@@ -413,7 +413,13 @@ export class TelegramAdapter implements ChannelAdapter {
     await flush();
   }
 
-  async promptChoice(target: OutboundTarget, prompt: ChoicePrompt, updateMessageId?: string): Promise<ChoiceResult> {
+  async promptChoice(
+    target: OutboundTarget,
+    prompt: ChoicePrompt,
+    updateMessageId?: string,
+    _signal?: AbortSignal,
+    onPresented?: (messageId: string) => void,
+  ): Promise<ChoiceResult> {
     const keyboard = buildInlineKeyboard(prompt.options, prompt.columnsPerRow ?? 2);
     const title = `<b>${escapeHtml(prompt.title)}</b>`;
     const desc = prompt.description === undefined ? "" : `\n${escapeHtml(prompt.description)}`;
@@ -435,6 +441,10 @@ export class TelegramAdapter implements ChannelAdapter {
       });
       messageId = sent.message_id;
     }
+    // Report the keyboard's message id while the choice is still pending, so the card
+    // can still be closed after a *typed* answer — which settles the question without
+    // this promise ever resolving.
+    onPresented?.(encodeMessageRef(chatId, messageId));
 
     // One pending record per (chat, option) key — concurrent menus in different
     // chats never collide. Timeout resolves `undefined` (dismiss) and replaces

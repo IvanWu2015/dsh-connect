@@ -178,12 +178,22 @@ export interface ChannelAdapter {
    * When `signal` aborts, the prompt must retire immediately: resolve with
    * `{ choice: undefined }` and stop accepting taps, leaving the card for the
    * caller to replace or close. Adapters that cannot be cancelled ignore it.
+   *
+   * `onPresented` reports the card's message id as soon as it exists on screen, which
+   * is *before* the choice resolves. The caller needs it early: a question can be
+   * answered by typing instead of tapping, and the card must still be closed when that
+   * happens — but the returned `ChoiceResult` only arrives when the card itself
+   * settles, which on the typed path is never. Without this the buttons stay live on a
+   * question that has already been answered, and a tap on them is absorbed silently,
+   * so it reads as the bot ignoring the user. Optional: adapters that cannot report a
+   * stable id simply never call it.
    */
   promptChoice(
     target: OutboundTarget,
     prompt: ChoicePrompt,
     updateMessageId?: string,
     signal?: AbortSignal,
+    onPresented?: (messageId: string) => void,
   ): Promise<ChoiceResult>;
   /** Replace a menu card with a completion notice (closes the interaction). */
   closeMenu(messageId: string, summary: string): Promise<void>;

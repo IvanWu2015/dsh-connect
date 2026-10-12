@@ -427,7 +427,19 @@ export class InteractionBridge {
           buildPrompt(),
           interaction.messageId,
           interaction.controller.signal,
+          // The card tells us its id while it is still pending. That matters for the
+          // typed-answer path, which settles the question without the card ever
+          // resolving: without the id, the close is skipped and the buttons stay live.
+          (id) => {
+            if (id !== "") interaction.messageId = id;
+          },
         )
+        .then((result) => {
+          // And again when it settles, in case the adapter only knows the id at the end
+          // (or had to re-send the card as a fresh message).
+          if (result.messageId !== "") interaction.messageId = result.messageId;
+          return result;
+        })
         .finally(() => {
           // Once the card has resolved there is nothing on screen to wait on, so the
           // next iteration is allowed to present a fresh one (the expiry path below).

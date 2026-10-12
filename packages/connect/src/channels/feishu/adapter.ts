@@ -752,6 +752,7 @@ export class FeishuAdapter implements ChannelAdapter {
     prompt: ChoicePrompt,
     updateMessageId?: string,
     signal?: AbortSignal,
+    onPresented?: (messageId: string) => void,
   ): Promise<ChoiceResult> {
     if (signal?.aborted === true) {
       // Cancelled before anything went out: nothing to present, nothing to
@@ -849,6 +850,10 @@ export class FeishuAdapter implements ChannelAdapter {
     };
     // Keep the entry keyed by the *current* card, not the one captured above.
     bind(messageId);
+    // Report the id now, while the card is on screen and the choice is still pending.
+    // The caller needs it to close the card after a *typed* answer, which settles the
+    // question without this promise ever resolving.
+    onPresented?.(messageId);
 
     if (signal !== undefined) {
       // The caller cancelled the question (the agent moved on): retire the
@@ -873,6 +878,9 @@ export class FeishuAdapter implements ChannelAdapter {
         try {
           const sent = await this.channel.send(this.chatIdOf(target.chatKey), { card }, { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) });
           bind(sent.messageId);
+          // The card moved, so the id the caller holds is now stale — report the one
+          // that is actually on screen, or a later close would target the dead card.
+          onPresented?.(sent.messageId);
         } catch (sendError) {
           this.logger?.warn?.(`connect-feishu: fresh menu card send failed (${String(sendError)})`);
           // Nothing rendered: keep listening on the original card.

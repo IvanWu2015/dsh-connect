@@ -89,10 +89,13 @@ function fakeAdapter({ id = "feishu", supportsChoices, onPrompt } = {}) {
       async sendCard() {},
       async streamText() {},
       async closeMenu(messageId, summary) { calls.closed.push({ messageId, summary }); },
-      async promptChoice(target, prompt, updateMessageId, signal) {
+      async promptChoice(target, prompt, updateMessageId, signal, onPresented) {
         calls.prompts.push({ target, prompt, updateMessageId, signal });
         if (onPrompt === undefined) return { choice: undefined, messageId: "" };
-        return onPrompt({ target, prompt, updateMessageId, signal, index: calls.prompts.length - 1 });
+        return onPrompt({
+          target, prompt, updateMessageId, signal, onPresented,
+          index: calls.prompts.length - 1,
+        });
       },
     },
   };
@@ -580,6 +583,39 @@ test("an unanswered question presents its card once, not once per timeout", asyn
   const answer = await dispatched;
   assert.deepEqual(answer.answers, [{ id: "q1", selected: ["B"] }]);
   assert.equal(bridge.pendingFor("oc_1"), false);
+});
+
+test("a question answered by text also has its buttons closed", async () => {
+  // Reported: 「用户已经选择完的情况，关闭掉这个按钮菜单，要不然用户容易再误点」.
+  //
+  // The tap path closes the card. The *text* path is the one that can be forgotten: the
+  // answer is recorded without any card interaction, so if the close only happened where
+  // a tap was decoded, the user would answer by typing and still be looking at live
+  // buttons for a question that is already settled — and tapping one is absorbed
+  // silently, so it appears to do nothing rather than tell them it is over.
+  const { adapter, calls } = fakeAdapter({
+    onPrompt: async ({ signal, onPresented }) => new Promise((resolve) => {
+      // What the real adapter does: it knows the card id as soon as the card is sent,
+      // well before any tap arrives.
+      onPresented?.("om_txt");
+      signal.addEventListener("abort", () => resolve({ choice: undefined, messageId: "om_txt" }), { once: true });
+    }),
+  });
+  const { bridge, harness } = bridgeFor(adapter);
+  const dispatched = answerer(harness, "user-questions/request").listener(
+    { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }, { label: "B" }] }], agent: { id: "sess-1" } },
+    next,
+  );
+  await tick();
+
+  assert.equal(bridge.answerText("oc_1", "B"), true);
+  const answer = await dispatched;
+  assert.deepEqual(answer.answers, [{ id: "q1", selected: ["B"] }]);
+
+  assert.ok(
+    calls.closed.length > 0,
+    `a text-answered card must be closed too; closed=${JSON.stringify(calls.closed)}`,
+  );
 });
 
 test("answerText declines when the chat is only waiting on an approval", async () => {
