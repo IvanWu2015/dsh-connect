@@ -925,11 +925,19 @@ export class FeishuAdapter implements ChannelAdapter {
       clearTimeout(live.timer);
     }
     this.absorbChoice(messageId);
-    await this.channel
-      .updateCard(messageId, {
-        header: { title: { tag: "plain_text", content: this.t.doneHeader }, template: "green" },
-        elements: [{ tag: "div", text: { tag: "plain_text", content: summary } }],
-      })
-      .catch(() => undefined);
+    // Reported live: the card kept its buttons after the answer, so the user was left
+    // looking at a control that had already been used. The redraw is what removes them,
+    // and it was failing silently — `await` inside a `.catch(() => undefined)` means the
+    // one symptom the user sees and the one line that would explain it were never
+    // connected. A close that cannot redraw now says so in the log.
+    // The failure must PROPAGATE. This call used to end in `.catch(() => undefined)`,
+    // which looked defensive and was in fact the defect: it made `closeMenu` unable to
+    // fail, and the service wraps this very method in `retry()` — so a transient redraw
+    // failure was swallowed on the first attempt and never retried, leaving the buttons on
+    // screen with nothing in the log. Throwing here is what re-arms that retry.
+    await this.channel.updateCard(messageId, {
+      header: { title: { tag: "plain_text", content: this.t.doneHeader }, template: "green" },
+      elements: [{ tag: "div", text: { tag: "plain_text", content: summary } }],
+    });
   }
 }

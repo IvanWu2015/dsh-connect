@@ -446,7 +446,16 @@ function fakeChannel() {
       streams.push({ chatId, input, opts, appended });
       return { messageId: `om_stream_${String(streams.length + 1)}` };
     },
-    async updateCard(messageId, card) { cardUpdates.push({ messageId, card }); },
+    /** Set to an Error to make the next card update fail, as the real API would. */
+    failCardUpdate: undefined,
+    async updateCard(messageId, card) {
+      if (this.failCardUpdate !== undefined) {
+        const failure = this.failCardUpdate;
+        this.failCardUpdate = undefined;
+        throw failure;
+      }
+      cardUpdates.push({ messageId, card });
+    },
     // `downloadResources` reaches HTTP through `channel.rawClient`. Recording
     // the call (and failing it) proves the allowlist gate ran before any
     // download, and guarantees no test can reach the network.
@@ -720,6 +729,34 @@ test("feishu closeMenu swallows a tap that lands during the closing redraw", asy
   assert.ok(
     fake.cardUpdates.some((u) => u.messageId === card.messageId),
     "the card must still be replaced by the summary",
+  );
+});
+
+test("a failed card close propagates, so the outbound retry can act on it", async (t) => {
+  // Reported live: the buttons stayed on screen after the answer. The close ended in
+  // `.catch(() => undefined)`, which looked defensive and was the defect — it made
+  // `closeMenu` unable to fail, and the service wraps this method in `retry()`, so a
+  // transient redraw failure was swallowed on the first attempt and never retried.
+  //
+  // This asserts the contract the retry depends on: a redraw that fails must REJECT.
+  const { adapter, fake } = await startedAdapter();
+  t.after(() => adapter.stop());
+  const result = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "Pick", options: [{ id: "a", label: "A" }] },
+  );
+  await waitFor(() => adapter["pendingChoices"].size === 1, "prompt registration");
+  const card = fake.sends[0];
+  fake.handlers.cardAction({ messageId: card.messageId, chatId: "oc_chat", action: { tag: "button", value: { choice: "a" } } });
+  await result;
+  adapter["absorbingChoices"].delete(card.messageId);
+
+  // Make the redraw fail the way a real API failure does.
+  fake.failCardUpdate = new Error("230099 element exceeds limit");
+  await assert.rejects(
+    () => adapter.closeMenu(card.messageId, "done"),
+    /230099/,
+    "a failed close must reject so the service-layer retry sees it",
   );
 });
 

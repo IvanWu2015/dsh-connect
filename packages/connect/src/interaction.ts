@@ -306,7 +306,22 @@ export class InteractionBridge {
       if (interaction.messageId !== undefined) {
         await interaction.adapter
           .closeMenu(interaction.messageId, t.answersSubmitted(this.questionSummaries(interaction)))
-          .catch(() => undefined);
+          .catch((error: unknown) => {
+            // Not silent any more. This is the step that removes the buttons, and when it
+            // fails the user is left looking at a control whose answer has already been
+            // taken — while everything downstream reports success, because the answer
+            // *was* accepted. The failure has to be attributable to the close.
+            this.log(
+              `connect: closing the question card ${interaction.messageId} failed (${interaction.chatKey}): ${String(error)}`,
+            );
+          });
+      } else {
+        // The card exists in the chat but we never learned its id, so it keeps its
+        // buttons. Say so: it means the adapter did not report the id on presentation,
+        // which is the contract this depends on.
+        this.log(
+          `connect: the answered question in ${interaction.chatKey} has no card id, so its buttons cannot be closed`,
+        );
       }
       await interaction.adapter.sendText(this.outbound(interaction), t.answerReceived).catch(() => undefined);
       this.log(`connect: answered ${answers.length} question(s) from ${interaction.chatKey}`);
