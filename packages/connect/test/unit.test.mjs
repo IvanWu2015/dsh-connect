@@ -689,16 +689,28 @@ test("withOutboundRetry forwards every optional member instead of dropping it", 
     closeMenu: async () => {}, streamText: async () => {},
     sendFile: async (target, filePath, opts) => { calls.push([target.chatKey, filePath, opts]); },
     connectionStatus: () => ({ state: "connected", reconnectAttempts: 2 }),
+    sendCardWithId: async (_target, card) => { calls.push(["card", card.markdown]); return { messageId: "live-1" }; },
+    updateCard: async (messageId, card) => { calls.push(["update", messageId, card.markdown]); },
   };
   const wrapped = withOutboundRetry(raw, { attempts: 2, baseDelayMs: 1, maxDelayMs: 2 });
 
   assert.equal(wrapped.sendFile === undefined, false, "sendFile was dropped by the wrapper");
   assert.equal(wrapped.connectionStatus === undefined, false, "connectionStatus was dropped by the wrapper");
+  // The live-card pair is the same trap, walked into a second time: without these,
+  // runner.ts sees sendCardWithId === undefined, falls back to a post-only path, and a
+  // decomposed task gets one card per write instead of a list that updates in place --
+  // while every other test around it still passes.
+  assert.equal(wrapped.sendCardWithId === undefined, false, "sendCardWithId was dropped by the wrapper");
+  assert.equal(wrapped.updateCard === undefined, false, "updateCard was dropped by the wrapper");
 
   // Not just present — wired to the real adapter, arguments intact.
   await wrapped.sendFile({ chatKey: "c", chatType: "p2p" }, "C:/tmp/a.txt", { filename: "a.txt" });
   assert.deepEqual(calls, [["c", "C:/tmp/a.txt", { filename: "a.txt" }]]);
   assert.deepEqual(wrapped.connectionStatus(), { state: "connected", reconnectAttempts: 2 });
+  // Present is not enough: they must be wired to the real adapter, arguments intact.
+  assert.deepEqual(await wrapped.sendCardWithId({ chatKey: "c", chatType: "p2p" }, { markdown: "plan" }), { messageId: "live-1" });
+  await wrapped.updateCard("live-1", { markdown: "plan v2" });
+  assert.deepEqual(calls.slice(-2), [["card", "plan"], ["update", "live-1", "plan v2"]]);
 });
 
 test("a member the adapter omits is still omitted after wrapping", () => {

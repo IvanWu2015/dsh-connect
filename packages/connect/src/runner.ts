@@ -20,6 +20,7 @@ import { SessionId, SessionStore, type Session, type SessionEvent } from "@deeps
 // program. The base bundle always ships it, so this is a compile-time-only edge
 // and the entry is erased (`import type`) — no runtime import of the tool.
 import type { TodoItem } from "@deepseek-ai/dsh-tool-todo";
+import { renderSubtasks } from "./subtasks.js";
 import { AgentRegistry, type Agent, type AgentHandle, type ModelSelection } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, ReasoningEffortId, type ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { ChannelAdapter, ChoiceOption, InboundMessage, OutboundTarget, SummaryCard, TurnOutcome, TurnReason } from "./types.js";
@@ -439,6 +440,19 @@ export class AgentRunner implements MenuHost {
       }
     }
 
+    // A decomposed task: show the plan, then keep it current.
+    //
+    // This used to be read only on demand (`/task`), which meant a long run showed no
+    // plan at all unless the user thought to ask — and by then the useful moment had
+    // passed. The list is posted once when the decomposition first appears, and every
+    // later write edits that same message rather than adding bubbles, because a plan
+    // that re-posts itself is noise rather than progress.
+    if (event.type === "todo/write") {
+      const todos = [...(event.data.todos as TodoItem[])];
+      this.publishSubtasks(todos);
+      return;
+    }
+
     if (event.type === "tool/call") {
       const name = event.data.name as string | undefined;
       if (typeof name !== "string" || name === "") return;
@@ -482,6 +496,85 @@ export class AgentRunner implements MenuHost {
         : this.t.toolCalling(name, summary);
       applyToolCall(turn, label);
     }
+  }
+
+  /**
+   * Show the subtask list, and keep it current in place.
+   *
+   * The first write posts the list; every later write edits that same message. Editing
+   * rather than re-posting is the whole point — a plan that arrives as a new bubble every
+   * time a step completes buries the conversation, and the user asked for the list to be
+   * *updated*, not repeated.
+   *
+   * Runs at every notification level, for the same reason the progress reminder does: the
+   * plan is not live activity chatter, it is the shape of the work, and a user who chose
+   * a quiet level chose to stop hearing about individual tool calls — not to be left
+   * guessing what the task actually consists of.
+   */
+  private publishSubtasks(todos: readonly TodoItem[]): void {
+    const rendered = renderSubtasks(todos);
+    if (rendered === undefined) return;
+    // Nothing the user can see changed: a rewrite would be an API call that redraws
+    // identical text, and on a fast-moving turn those add up.
+    if (rendered.key === this.lastSubtasksKey) return;
+    this.lastSubtasksKey = rendered.key;
+    const target: OutboundTarget = { chatKey: this.chatKey, chatType: this.chatType };
+    const post = this.adapter.sendCardWithId;
+    const edit = this.adapter.updateCard;
+    // Without a way to post-with-id there is nothing to edit later, so the plan is
+    // posted once and left at that — losing the updates is better than losing the list.
+    if (this.subtasksMessageId === undefined || edit === undefined) {
+      // Only the first write posts. These writes arrive back-to-back, so without this the
+      // send has not resolved when the next one runs, `subtasksMessageId` is still
+      // undefined, and a decomposed task gets one card per todo/write — the exact noise
+      // this feature exists to avoid.
+      if (this.subtasksPosting) {
+        // Coalesce: keep only the newest render, so the state shown once the id lands is
+        // the current one rather than whichever happened to arrive first.
+        this.subtasksPending = { key: rendered.key, todos: [...todos] };
+        return;
+      }
+      this.subtasksPosting = true;
+      if (post === undefined) {
+        void this.adapter
+          .sendCard(target, { markdown: rendered.body })
+          .catch(() => undefined)
+          .finally(() => {
+            this.subtasksPosting = false;
+          });
+        return;
+      }
+      void (async () => {
+        try {
+          const sent = await post.call(this.adapter, target, { markdown: rendered.body });
+          if (this.subtasksMessageId === undefined) this.subtasksMessageId = sent.messageId;
+        } catch (error) {
+          this.warn(`connect: subtask list could not be delivered to ${this.channel}/${this.chatKey}: ${String(error)}`);
+        } finally {
+          this.subtasksPosting = false;
+          // Converge on the newest state that arrived while the post was in flight. It is
+          // re-entered through the normal path rather than edited here, so the id, the
+          // "nothing changed" check and the failure handling all stay in one place — the
+          // earlier replay duplicated that logic and lost the update when the guard above
+          // had already recorded the key.
+          const pending = this.subtasksPending;
+          this.subtasksPending = undefined;
+          if (pending !== undefined) {
+            this.lastSubtasksKey = undefined;
+            this.publishSubtasks(pending.todos);
+          }
+        }
+      })();
+      return;
+    }
+    const id = this.subtasksMessageId;
+    void edit
+      .call(this.adapter, id, { markdown: rendered.body })
+      .catch(() => {
+        // The card is gone (deleted, or an epoch-old id). Clear it so the next write
+        // posts a fresh list instead of editing something that no longer exists.
+        if (this.subtasksMessageId === id) this.subtasksMessageId = undefined;
+      });
   }
 
   /**
@@ -2405,6 +2498,17 @@ export class AgentRunner implements MenuHost {
    * Without this the fallback could only guess, and a reminder that reports the
    * wrong duration is worse than one that admits it has none.
    */
+  /**
+   * The subtask list message for the current decomposition, so later writes edit it
+   * instead of posting again. Cleared when the edit fails, which means the card is gone.
+   */
+  private subtasksMessageId?: string;
+  /** Identity of the rendered subtask list, so an unchanged plan costs no API call. */
+  private lastSubtasksKey?: string;
+  /** True while the initial post is in flight, so concurrent writes cannot post again. */
+  private subtasksPosting = false;
+  /** The newest state seen while that post was in flight, replayed when it lands. */
+  private subtasksPending?: { key: string; todos: TodoItem[] };
   private workStartedAt?: number;
   /** Latest milestone, mirrored off the turn so a reminder can report it after turn state is gone. */
   private lastMilestone?: string;

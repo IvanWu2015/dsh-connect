@@ -9,7 +9,7 @@
  * restarting it would duplicate the streaming card.
  * @module dsh-connect/retry
  */
-import type { ChannelAdapter, OutboundTarget } from "./types.js";
+import type { ChannelAdapter, OutboundTarget, SummaryCard } from "./types.js";
 
 export interface RetryOptions {
   /** Total attempts including the first call (default 3). */
@@ -87,5 +87,17 @@ export function withOutboundRetry(adapter: ChannelAdapter, options: RetryOptions
     ...(adapter.connectionStatus === undefined
       ? {}
       : { connectionStatus: () => adapter.connectionStatus!() }),
+    ...(adapter.sendCardWithId === undefined
+      ? {}
+      : {
+          sendCardWithId: (target: OutboundTarget, card: SummaryCard) =>
+            retry(() => adapter.sendCardWithId!(target, card), options),
+        }),
+    ...(adapter.updateCard === undefined
+      ? {}
+      : {
+          updateCard: (messageId: string, card: SummaryCard) =>
+            retry(() => adapter.updateCard!(messageId, card), options),
+        }),
   };
 }

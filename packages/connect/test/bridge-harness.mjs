@@ -130,6 +130,10 @@ export function scriptedAgent(id, plan = {}) {
     // tool lines are *suppressed* would pass vacuously — there would be nothing
     // to suppress.
     toolCalls = [],
+    // Successive `todo/write` payloads, emitted in order before the answer. This is how
+    // a test drives a decomposed task: each entry is one write, so a plan that is revised
+    // mid-turn produces several.
+    todoWrites = [],
   } = plan;
 
   const ctx = new Context();
@@ -155,6 +159,7 @@ export function scriptedAgent(id, plan = {}) {
         ctx.emit("session/event", session, event);
       };
       emit("turn/start", {});
+      for (const todos of todoWrites) emit("todo/write", { todos });
       for (let i = 0; i < steps; i++) emit("step/start", {});
       if (context) emit("request/context", { provider: "harness-provider", model: "harness-model", contextWindow });
       for (const tool of toolCalls) {
@@ -219,6 +224,16 @@ export function recordingAdapter(id) {
     },
     async sendCard(target, card) {
       sent.push({ kind: "card", target, markdown: card.markdown });
+    },
+    // The live-card pair. Without these the subtask list would only ever be posted, and
+    // a test that the plan is *edited* rather than re-posted could not observe it.
+    async sendCardWithId(target, card) {
+      const messageId = `card-${sent.length + 1}`;
+      sent.push({ kind: "card", target, markdown: card.markdown, messageId });
+      return { messageId };
+    },
+    async updateCard(messageId, card) {
+      sent.push({ kind: "update", messageId, markdown: card.markdown });
     },
     async streamText(target, chunks) {
       // The real adapter drains the chunk queue into an editable card; here we

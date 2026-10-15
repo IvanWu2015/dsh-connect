@@ -687,6 +687,27 @@ export class FeishuAdapter implements ChannelAdapter {
     );
   }
 
+  /**
+   * Post a card and return its id, so it can be rewritten in place later.
+   *
+   * Feishu can do this for any card it sent, which is what makes a live subtask list
+   * possible: the plan is posted once and then edited as steps complete, instead of
+   * the chat filling up with one bubble per update.
+   */
+  async sendCardWithId(target: OutboundTarget, card: SummaryCard): Promise<{ messageId: string }> {
+    const { messageId } = await this.channel.send(
+      this.chatIdOf(target.chatKey),
+      { markdown: card.markdown },
+      this.sendOpts(target),
+    );
+    return { messageId };
+  }
+
+  /** Rewrite a card this adapter posted. See {@link sendCardWithId}. */
+  async updateCard(messageId: string, card: SummaryCard): Promise<void> {
+    await this.channel.updateCard(messageId, { markdown: card.markdown });
+  }
+
   async streamText(target: OutboundTarget, chunks: AsyncIterable<string>): Promise<void> {
     await this.channel.stream(
       this.chatIdOf(target.chatKey),

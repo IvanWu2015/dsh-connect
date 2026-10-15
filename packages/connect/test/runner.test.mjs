@@ -915,6 +915,79 @@ test("K2 at the default notify level nothing streams into the card, and the resu
 // cannot pass is worse than an acknowledged gap, so the branch is left documented in
 // `runner.ts` and verified by hand against its exact output shape instead.
 
+test("S1 a decomposed task posts its subtask list once, then edits that same card", () =>
+  // Requested: 「如果一个任务，拆成了多个子任务执行，那么直接回复子任务列表…然后定时更新子任务
+  // 的状态」. Before this the plan was only readable by asking (/task), so a long run showed
+  // no plan at all.
+  //
+  // The load-bearing assertion is the *shape* of the traffic: one card posted, later
+  // writes EDITING it. Re-posting on every write would bury the conversation, which is
+  // what the user asked to avoid by saying "更新" rather than "回复".
+  withBridge(
+    { planFor: { todoWrites: [
+      [{ content: "step one", status: "in_progress" }, { content: "step two", status: "pending" }],
+      [{ content: "step one", status: "completed" }, { content: "step two", status: "in_progress" }],
+      [{ content: "step one", status: "completed" }, { content: "step two", status: "completed" }],
+    ] } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-subtasks", { notifyLevel: "result" }));
+
+      await bridge.inbound(inboundFor("stub", "chat-subtasks", { text: "do a big thing" }));
+      await waitFor(() => adapter.sent.some((m) => m.kind === "update"), 5_000);
+
+      const posted = adapter.sent.filter((m) => m.kind === "card" && m.markdown.includes("子任务"));
+      const edited = adapter.sent.filter((m) => m.kind === "update" && m.markdown.includes("子任务"));
+      assert.equal(posted.length, 1, `the plan must be posted exactly once; posted ${posted.length}`);
+      assert.ok(edited.length >= 1, "later writes must update the card");
+
+      // The first post describes the initial state; the last edit describes the final one.
+      assert.match(posted[0].markdown, /0\/2 已完成/);
+      assert.match(edited[edited.length - 1].markdown, /2\/2 已完成/);
+      assert.match(edited[edited.length - 1].markdown, /✅ step one/);
+      // Every edit addresses the card that was actually posted.
+      for (const item of edited) assert.equal(item.messageId, posted[0].messageId);
+
+      // Quiet levels still get the plan: it is the shape of the work, not tool chatter.
+      assert.equal(adapter.sent.some((m) => m.kind === "stream" && m.text.includes("🔧")), false);
+    },
+  ));
+
+test("S2 a plan that does not change is not rewritten", () =>
+  // A rewrite redraws identical text. On a fast turn those add up, so an unchanged list
+  // must cost no API call at all.
+  withBridge(
+    { planFor: { todoWrites: [
+      [{ content: "one", status: "pending" }, { content: "two", status: "pending" }],
+      [{ content: "one", status: "pending" }, { content: "two", status: "pending" }],
+      [{ content: "one", status: "pending" }, { content: "two", status: "pending" }],
+    ] } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-subtasks-same", {}));
+      await bridge.inbound(inboundFor("stub", "chat-subtasks-same", { text: "go" }));
+      await waitFor(() => adapter.sent.some((m) => m.kind === "card" && m.markdown.includes("子任务")), 5_000);
+      const edited = adapter.sent.filter((m) => m.kind === "update" && m.markdown.includes("子任务"));
+      assert.equal(edited.length, 0, `an unchanged plan must not be rewritten; got ${edited.length} writes`);
+    },
+  ));
+
+test("S3 a single todo is not a plan and is never posted", () =>
+  withBridge(
+    { planFor: { todoWrites: [[{ content: "the only step", status: "in_progress" }]] } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-subtasks-one", {}));
+      await bridge.inbound(inboundFor("stub", "chat-subtasks-one", { text: "go" }));
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal(
+        adapter.sent.filter((m) => m.markdown?.includes("子任务")).length,
+        0,
+        "one todo is the task itself, not a decomposition",
+      );
+    },
+  ));
+
 test("K3 the progress watchdog and the heartbeat both fire, both into the same card", () =>
   // The tick is derived from the configured interval (`progressTimeoutMs / 2`,
   // floored at 250ms), so a 400ms interval is observable inside a sub-second

@@ -159,6 +159,22 @@ export interface ChannelAdapter {
   /** Deliver a status/summary card. */
   sendCard(target: OutboundTarget, card: SummaryCard): Promise<void>;
   /**
+   * Post a card and report its message id, so the same card can be rewritten later.
+   *
+   * Optional, and separate from `sendCard` rather than replacing it: most cards are
+   * final when they are sent, and only a *live* one — a subtask list whose entries
+   * change as the work proceeds — needs its id back. An adapter that cannot edit a
+   * card simply omits this, and the caller falls back to posting a new one.
+   */
+  sendCardWithId?(target: OutboundTarget, card: SummaryCard): Promise<{ messageId: string }>;
+  /**
+   * Rewrite a card previously posted by {@link sendCardWithId}.
+   *
+   * Optional, and paired with it: without the id there is nothing to address, so an
+   * adapter implementing this but not `sendCardWithId` has no way to be called.
+   */
+  updateCard?(messageId: string, card: SummaryCard): Promise<void>;
+  /**
    * Deliver a local file (image / document / audio / video) to the chat.
    * Optional: channels without file support omit it, and the runner falls
    * back to sending the file's path as text.
