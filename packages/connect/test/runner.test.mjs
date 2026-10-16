@@ -953,6 +953,42 @@ test("S1 a decomposed task posts its subtask list once, then edits that same car
     },
   ));
 
+test("S4 writes spread across the turn keep the card current, not just the first", () =>
+  // The reported symptom: 「子任务有列出来，但是进度好像没有保持更新…实际可能已经到了第5步」.
+  //
+  // S1 emits every write in one tick, so the first post is still in flight and the rest are
+  // coalesced — an important path, but NOT the one production uses. In production the writes
+  // arrive seconds apart, after the card exists, and must go through the in-place edit. This
+  // is that sequence: the card must end up on the LAST state, not the first.
+  withBridge(
+    { planFor: {
+      todoWriteDelayMs: 60,
+      whenIdleHoldMs: 400,
+      todoWrites: [
+        [{ content: "one", status: "in_progress" }, { content: "two", status: "pending" }, { content: "three", status: "pending" }],
+        [{ content: "one", status: "completed" }, { content: "two", status: "in_progress" }, { content: "three", status: "pending" }],
+        [{ content: "one", status: "completed" }, { content: "two", status: "completed" }, { content: "three", status: "in_progress" }],
+      ],
+    } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-spread", {}));
+      await bridge.inbound(inboundFor("stub", "chat-spread", { text: "plan it" }));
+      await new Promise((r) => setTimeout(r, 1_500));
+
+      const bodies = [
+        ...adapter.sent.filter((m) => m.kind === "card" && m.markdown.includes("子任务")).map((m) => m.markdown),
+        ...adapter.sent.filter((m) => m.kind === "update" && m.markdown.includes("子任务")).map((m) => m.markdown),
+      ];
+      assert.ok(bodies.length >= 2, `the plan must be revised, not only posted; bodies=${bodies.length}`);
+      const last = bodies[bodies.length - 1];
+      assert.match(last, /2\/3 已完成/, `the card must end on the latest state; last=${JSON.stringify(last)}`);
+      assert.match(last, /🔄 three/, "the newly active step must show as in progress");
+      const posted = adapter.sent.filter((m) => m.kind === "card" && m.markdown.includes("子任务"));
+      assert.equal(posted.length, 1, `the plan must stay on one card; posted ${posted.length}`);
+    },
+  ));
+
 test("S2 a plan that does not change is not rewritten", () =>
   // A rewrite redraws identical text. On a fast turn those add up, so an unchanged list
   // must cost no API call at all.

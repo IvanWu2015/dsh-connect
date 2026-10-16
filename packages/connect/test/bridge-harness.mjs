@@ -134,6 +134,11 @@ export function scriptedAgent(id, plan = {}) {
     // a test drives a decomposed task: each entry is one write, so a plan that is revised
     // mid-turn produces several.
     todoWrites = [],
+    // Emit each todo write after this delay instead of all at the turn's start. With the
+    // default (0) every write lands in the same tick, so the in-flight window absorbs them
+    // and the *edit* path — the one production actually uses, where a plan is revised
+    // seconds apart — is never exercised.
+    todoWriteDelayMs = 0,
   } = plan;
 
   const ctx = new Context();
@@ -159,7 +164,16 @@ export function scriptedAgent(id, plan = {}) {
         ctx.emit("session/event", session, event);
       };
       emit("turn/start", {});
-      for (const todos of todoWrites) emit("todo/write", { todos });
+      if (todoWriteDelayMs <= 0) {
+        for (const todos of todoWrites) emit("todo/write", { todos });
+      } else {
+        // Spread them across the turn so later writes arrive after the first card was
+        // posted, which is the only way the in-place update path gets exercised.
+        for (const todos of todoWrites) {
+          await new Promise((resolve) => setTimeout(resolve, todoWriteDelayMs));
+          emit("todo/write", { todos });
+        }
+      }
       for (let i = 0; i < steps; i++) emit("step/start", {});
       if (context) emit("request/context", { provider: "harness-provider", model: "harness-model", contextWindow });
       for (const tool of toolCalls) {

@@ -511,6 +511,29 @@ export class AgentRunner implements MenuHost {
    * a quiet level chose to stop hearing about individual tool calls — not to be left
    * guessing what the task actually consists of.
    */
+  /**
+   * The list body plus the time it was last accurate.
+   *
+   * Measured on a real session: the agent calls `todo_write` rarely — one stretch had 224
+   * tool calls between writes, with the card showing "0 done" throughout. The card was not
+   * wrong, it was *old*: it can only reflect what the agent last reported, and the agent
+   * does not re-report after every step. The user read that as "the progress stopped
+   * updating" (「实际可能已经到了第5步」), which is the reasonable reading of a live-looking
+   * list that is an hour out of date.
+   *
+   * So the card says how old it is. What it must NOT do is guess: inferring progress from
+   * tool activity would mean inventing which step a tool call belongs to, and a plan that
+   * states a status the agent never reported is worse than one that admits its age.
+   */
+  private subtaskBody(body: string): string {
+    const at = new Date().toLocaleTimeString(this.language === "en" ? "en-GB" : "zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    return `${body}\n${this.t.subtasksUpdatedAt(at)}`;
+  }
+
   private publishSubtasks(todos: readonly TodoItem[]): void {
     const rendered = renderSubtasks(todos);
     if (rendered === undefined) return;
@@ -537,7 +560,7 @@ export class AgentRunner implements MenuHost {
       this.subtasksPosting = true;
       if (post === undefined) {
         void this.adapter
-          .sendCard(target, { markdown: rendered.body })
+          .sendCard(target, { markdown: this.subtaskBody(rendered.body) })
           .catch(() => undefined)
           .finally(() => {
             this.subtasksPosting = false;
@@ -546,7 +569,7 @@ export class AgentRunner implements MenuHost {
       }
       void (async () => {
         try {
-          const sent = await post.call(this.adapter, target, { markdown: rendered.body });
+          const sent = await post.call(this.adapter, target, { markdown: this.subtaskBody(rendered.body) });
           if (this.subtasksMessageId === undefined) this.subtasksMessageId = sent.messageId;
         } catch (error) {
           this.warn(`connect: subtask list could not be delivered to ${this.channel}/${this.chatKey}: ${String(error)}`);
@@ -569,7 +592,7 @@ export class AgentRunner implements MenuHost {
     }
     const id = this.subtasksMessageId;
     void edit
-      .call(this.adapter, id, { markdown: rendered.body })
+      .call(this.adapter, id, { markdown: this.subtaskBody(rendered.body) })
       .catch(() => {
         // The card is gone (deleted, or an epoch-old id). Clear it so the next write
         // posts a fresh list instead of editing something that no longer exists.

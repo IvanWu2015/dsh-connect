@@ -224,6 +224,8 @@ export interface Messages {
 
   noTodos: string;
   currentTodos(n: number, list: string): string;
+  /** The line under a subtask list saying when it was last accurate. */
+  subtasksUpdatedAt(at: string): string;
   settingsHeader: string;
   modelSetting(model: string): string;
   reasoningSetting(effort: string): string;
@@ -551,6 +553,7 @@ const zh: Messages = {
 
   noTodos: "当前没有任务清单。",
   currentTodos: (n, list) => `当前任务（${n} 项）：\n${list}`,
+  subtasksUpdatedAt: (at) => `_更新于 ${at}（以智能体最近一次汇报为准）_`,
   settingsHeader: "⚙️ 设置：",
   modelSetting: (model) => `模型：${model}`,
   reasoningSetting: (effort) => `推理强度：${effort}`,
@@ -879,6 +882,7 @@ const en: Messages = {
 
   noTodos: "No task list.",
   currentTodos: (n, list) => `Current tasks (${n}):\n${list}`,
+  subtasksUpdatedAt: (at) => `_Updated ${at} (as of the agent's last report)_`,
   settingsHeader: "⚙️ Settings:",
   modelSetting: (model) => `Model: ${model}`,
   reasoningSetting: (effort) => `Reasoning effort: ${effort}`,
