@@ -23,6 +23,13 @@ its first message:
 
 ![a Feishu conversation showing a progress reminder at 15 minutes elapsed, a question card with three option buttons, and the acknowledgement that the previous answer was received](docs/images/chat-progress-zh.png)
 
+**Configuring it without typing config.** `/settings` opens a button menu — model, reasoning
+effort, notification level, progress interval, language, and a config overview. Nothing here
+needs a YAML edit, and the same controls exist per chat, so one conversation can be tuned
+without changing the profile:
+
+![a Feishu conversation showing /settings opening a button menu with options for model, reasoning effort, notification settings, progress reminder, language and config overview; above it, an unrecognised command sent while a task was running received the "previous request is still processing" hint instead of being silently queued](docs/images/chat-settings-menu-zh.png)
+
 > These are Chinese-language screenshots taken in Feishu, because that is where the project
 > is actually used. The UI strings exist in English too (`language: en`).
 

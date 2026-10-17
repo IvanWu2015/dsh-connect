@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.16] - 2026-10-17
+
+A batch of fixes for things that only misbehave on long runs, plus the screenshots the README never had. **Not yet published.**
+
+### Fixed
+
+- **Progress reminders stopped after the first one.** Reported twice as 「已进行5分钟这个还是没有更新」, and the session transcript finally explained it: the turn ran 55.6 minutes with 54 tool calls and never ended, while the user saw ONE reminder where eleven were due. Feishu closes a streaming card ten minutes after creating it (the Lark SDK states it three times), and the reminder's only channel was that card — so from minute ten onward every notice was appended to a card that no longer existed. The API accepts the edit, the client shows nothing, and nothing is logged. Past the card's lifetime the notice now becomes its own message.
+- **A failed card close was swallowed, which also disabled its retry.** The close ended in `.catch(() => undefined)`, so `closeMenu` could never fail — and the service wraps that very method in `retry()`, which therefore never ran. A transient redraw failure left the buttons on screen with nothing in the log. It now propagates, and a failure names itself.
+- **A question card was re-sent every five seconds.** Presenting the card inside the five-second wait loop meant every elapsed window presented it again. It is now presented once and the promise kept across iterations.
+- **A typed answer left the buttons live.** The card's id was only learned when the card itself settled, which a typed answer never causes. Adapters now report the id as soon as the card is on screen.
+
+### Added
+
+- **A decomposed task posts its subtask list, then keeps it current** — capped at 10 entries, with the in-progress step kept even past the cut, and an unchanged list costing no API call. The card also states when it was last accurate: measured on a real session, the agent called `todo_write` only every 78-109 minutes (up to 224 tool calls apart), so a live-looking list could be an hour out of date. It deliberately does not infer progress from tool activity — that would mean inventing a status the agent never reported.
+
+### Documentation
+
+- **The READMEs now show the chat itself**, which they had never done: question cards with tappable options, a progress reminder advancing 5 to 10 to 15 minutes, and the `/settings` button menu. Previously the section showed only the settings pane, with a note that a chat screenshot did not exist. Three Chinese-language Feishu screenshots lead both READMEs and the storefront order.
+
+### Testing
+
+- **636 tests, 31 suites, green**, plus E2E OK. Every fix was verified to fail against the code it guards first.
+- Two tests had to be written twice because they encoded the bug they were meant to catch: one emitted all todo writes in a single tick, so the in-place edit path production uses was never exercised; another's character class `/^[✅🔄⬜]/` also matched `…`, counting a truncation line as an entry.
+
 ## [1.0.15] - 2026-10-10
 
 Two fixes and a documentation pass. One of the fixes was mine to begin with.
