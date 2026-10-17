@@ -1072,6 +1072,40 @@ test("K3 the progress watchdog and the heartbeat both fire, both into the same c
     },
   ));
 
+test("K4a progress reminders keep arriving after the streaming card has expired", () =>
+  // Reported: 「已进行5分钟这个还是没有更新」 — and the session transcript says why. The turn
+  // ran 55.6 minutes with 54 tool calls and never ended; the user saw ONE reminder where
+  // eleven were due.
+  //
+  // Feishu closes a streaming card ten minutes after it is created (the Lark SDK says so
+  // three times). The reminder's only channel was that card, so every notice after minute
+  // ten was appended to a card that no longer existed: accepted by the API, shown to
+  // nobody, logged nowhere.
+  //
+  // This shortens the lifetime rather than holding a turn open for ten real minutes —
+  // which is exactly why the rule went untested the first time.
+  withBridge(
+    {
+      config: { cardLifetimeMs: 300 },
+      planFor: { whenIdleHoldMs: 2_200 },
+    },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-card-expiry", { progressTimeoutMs: 400 }));
+
+      await bridge.inbound(inboundFor("stub", "chat-card-expiry", { text: "a very long task" }));
+      assert.ok(
+        await waitFor(
+          () => adapter.sent.filter((m) => m.kind === "text" && m.text.includes("Still working")).length >= 2,
+          10_000,
+        ),
+        `reminders must keep reaching the user past the card's lifetime; text sent ${JSON.stringify(
+          adapter.sent.filter((m) => m.kind === "text").map((m) => m.text.slice(0, 40)),
+        )}`,
+      );
+    },
+  ));
+
 test("K4 the progress reminder still fires at a quiet level, and names no tool", () =>
   // The reminder is a *configured* status report (`progressTimeoutMs`), not
   // liveness chatter, so it survives a quieter notification level — gating it on

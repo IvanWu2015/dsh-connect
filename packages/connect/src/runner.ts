@@ -92,6 +92,14 @@ export interface ConnectConfig {
   autoCompact?: boolean;
   /** Context-window usage percentage that triggers `autoCompact` (default: 80). */
   autoCompactThresholdPct?: number;
+  /**
+   * How long a streaming card can be trusted to still exist (ms).
+   *
+   * Not user configuration — it is Feishu's ten-minute card lifetime. It lives here only so
+   * a test can shorten it: the rule it gates applies to turns longer than ten minutes, and
+   * a test that has to hold a turn open for ten real minutes would never be written.
+   */
+  cardLifetimeMs?: number;
 }
 
 export interface ResolvedConnectConfig {
@@ -111,6 +119,8 @@ export interface ResolvedConnectConfig {
   progressTimeoutMs: number;
   autoCompact: boolean;
   autoCompactThresholdPct: number;
+  /** Test-only override of the streaming-card lifetime. See the ConnectConfig field. */
+  cardLifetimeMs?: number;
 }
 
 /**
@@ -169,6 +179,8 @@ export function resolveConnectConfig(config: ConnectConfig): ResolvedConnectConf
     // Clamped to 1–99 so a nonsense value cannot mean "compact on every turn"
     // (0) or "never, even when the window is full" (100+).
     autoCompactThresholdPct: Math.min(99, Math.max(1, Math.round(config.autoCompactThresholdPct ?? 80))),
+    // Carried through so a test can drive a "long turn" without waiting ten real minutes.
+    ...(config.cardLifetimeMs === undefined ? {} : { cardLifetimeMs: config.cardLifetimeMs }),
   };
 }
 
@@ -341,6 +353,9 @@ export class AgentRunner implements MenuHost {
     // it for one chat without touching the profile.
     this.autoCompact = stored?.autoCompact ?? config.autoCompact;
     this.autoCompactThresholdPct = stored?.autoCompactThresholdPct ?? config.autoCompactThresholdPct;
+    // A Feishu platform constant, overridable through the resolved config only so tests
+    // can drive a "long turn" without waiting ten real minutes.
+    this.cardLifetimeMs = config.cardLifetimeMs ?? AgentRunner.CARD_LIFETIME_MS;
     this.t = messages(this.language);
     this.menu = new MenuController(this);
   }
@@ -1206,7 +1221,20 @@ export class AgentRunner implements MenuHost {
           if (elapsed < progressTimeoutMs) return;
           lastProgressNoticeAt = Date.now();
           const turn = this.turn;
-          if (turn !== undefined) {
+          // Feishu closes a streaming card after ten minutes, regardless of the producer
+          // — three separate notes in the SDK say so. Until now the reminder's ONLY
+          // channel was that card, so on a long turn every notice after the tenth minute
+          // was appended to a card that no longer existed and vanished without a trace.
+          //
+          // Measured on a real turn: 55.6 minutes, 54 tool calls, ONE reminder seen (the
+          // 5-minute one) where eleven were due. The report kept firing; nothing reached
+          // the user.
+          //
+          // So past the card's lifetime the notice becomes a message of its own. A little
+          // noisier, and the only version that keeps its one promise.
+          const cardAlive = turn !== undefined
+            && Date.now() - turn.startedAt < this.cardLifetimeMs;
+          if (turn !== undefined && cardAlive) {
             const minutes = Math.max(1, Math.round((Date.now() - turn.startedAt) / 60_000));
             const status = turn.milestone ?? this.t.progressThinking;
             // Edit the existing streaming card in place instead of sending a new
@@ -1223,13 +1251,18 @@ export class AgentRunner implements MenuHost {
           // turn gone there is no card to edit, so the notice has to be its own
           // message. Slightly noisier beats a progress report that silently stops
           // reporting — that is the one job it has.
-          const sinceStart = this.workStartedAt;
+          // Same elapsed clock either way: the turn's start when there is a turn, the
+          // work-start stamp when there is not.
+          const sinceStart = turn?.startedAt ?? this.workStartedAt;
           const minutes = sinceStart === undefined ? 1 : Math.max(1, Math.round((Date.now() - sinceStart) / 60_000));
+          const status = turn?.milestone ?? this.lastMilestone ?? this.t.progressThinking;
           this.log(
-            `connect: progress reminder for ${this.chatKey} had no turn to edit; posting it as a message`,
+            `connect: progress reminder for ${this.chatKey} posted as its own message (the streaming card is ${
+              turn === undefined ? "gone with the turn" : "past its lifetime"
+            })`,
           );
           void this.adapter
-            .sendText(this.target(msg), this.t.progressReminder(minutes, this.lastMilestone ?? this.t.progressThinking))
+            .sendText(this.target(msg), this.t.progressReminder(minutes, status))
             .catch(() => undefined);
         }, watchdogTickMs)
       : undefined;
@@ -1581,6 +1614,28 @@ export class AgentRunner implements MenuHost {
   }
 
   /** Context-window usage at or above this percentage suggests compaction. */
+  /**
+   * How long a streaming card can be trusted to still exist.
+   *
+   * Feishu closes a streaming card ten minutes after it is created — stated three times in
+   * the Lark SDK's own comments ("Feishu auto-closes after 10min"). Treated as a hard
+   * boundary here because edits to a closed card are accepted by the API and then simply
+   * not shown, which is the worst failure mode available: no error, no log, no update.
+   *
+   * The value is deliberately the conservative reading of the documented figure.
+   */
+  private static readonly CARD_LIFETIME_MS = 10 * 60_000;
+
+  /**
+   * The card lifetime this runner uses.
+   *
+   * Overridable so the behaviour can be tested without holding a turn open for ten real
+   * minutes — a rule that only shows up on long turns is exactly the kind that goes
+   * untested, and this one already shipped broken once. The override is not exposed as
+   * user configuration: it is a Feishu platform constant, not a preference.
+   */
+  private readonly cardLifetimeMs: number;
+
   private static readonly COMPACT_THRESHOLD_PCT = 75;
 
   /**
