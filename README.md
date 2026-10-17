@@ -4,6 +4,24 @@ English | [中文](README.zh.md)
 
 Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (**DSH**) agents to chat platforms — **Feishu / Lark**, **Telegram** and **DingTalk**, in one plugin. Send tasks from your messaging app, watch the agent execute with live streaming output, keep multi-turn context, and get result summaries pushed back when a task finishes.
 
+## What it looks like
+
+The point of the plugin is the conversation, so that is what comes first.
+
+**A question, answered from the chat.** When the agent needs a decision it posts a card with the options as buttons. Tapping one — or replying with its number or text — answers the same question, and every earlier question stays answered above it:
+
+![two question cards in a Feishu conversation, each with tappable option buttons, alongside a progress card reporting 5 minutes elapsed and 37 steps completed](packages/connect/docs/images/chat-questions-zh.png)
+
+**A long task reporting progress.** The same conversation, further along: the reminder has advanced from 5 minutes to 15, and a second question follows the first answer. This is the behaviour that matters most on a long run — the card keeps reporting instead of freezing on its first message:
+
+![a Feishu conversation showing a progress reminder at 15 minutes elapsed, a question card with three option buttons, and the acknowledgement that the previous answer was received](packages/connect/docs/images/chat-progress-zh.png)
+
+**Configuring it without editing a config file.** `/settings` opens a button menu — model, reasoning effort, notification level, progress interval, language, config overview — all per chat, so one conversation can be tuned without touching the profile:
+
+![a Feishu conversation showing /settings opening a button menu with options for model, reasoning effort, notification settings, progress reminder, language and config overview](packages/connect/docs/images/chat-settings-menu-zh.png)
+
+> Chinese-language screenshots taken in Feishu, because that is where the project is used. The UI strings exist in English too (`language: en`).
+
 ## Features
 
 - **Bidirectional messaging**: Feishu messages → DSH agent (`agent.followup`); agent replies stream back to Feishu as typewriter-style cards.
@@ -84,21 +102,9 @@ loads: every field says so, and a change takes effect after `dsh` restarts. A ke
 `dsh.shared.config.json` actually overrides carries a note saying the pane cannot win; the current
 model is shown read-only, because DSH owns it and switching it belongs inside DSH.
 
-| Channels & credentials | General |
-|---|---|
-| ![The dsh-connect settings pane: the primary navigation above the channel tab strip, the Feishu card expanded with its credential fields, and collapsed channel cards still showing credential badges](packages/connect/docs/images/settings-overview-en.png) | ![The General view: four cards of settings, one per row, each noting that a change takes effect after dsh restarts](packages/connect/docs/images/settings-general-en.png) |
+![The dsh-connect settings pane: the primary navigation above the channel tab strip, the Feishu card expanded with its credential fields, and collapsed channel cards still showing credential badges](packages/connect/docs/images/settings-overview-en.png)
 
-| General: the read-only model row | Advanced fold open |
-|---|---|
-| ![The General view's agent card, showing the current model as read-only text with a note that DSH owns it](packages/connect/docs/images/settings-general-agent-en.png) | ![The same pane with one channel's Advanced fold expanded, revealing the callback port and callback path fields](packages/connect/docs/images/settings-advanced-en.png) |
-
-| Feishu card: credentials, one-click button above | Telegram card: official entry link |
-|---|---|
-| ![The Feishu card's App ID and App Secret fields, with the one-click create button above them and both navigation strips still pinned at the top of a scrolled pane](packages/connect/docs/images/settings-feishu-en.png) | ![The Telegram card, which offers a link to BotFather instead of a create button](packages/connect/docs/images/settings-manual-en.png) |
-
-![The shared-defaults card and pinned save row at the bottom of the pane](packages/connect/docs/images/settings-defaults-en.png)
-
-中文截图：[概览](packages/connect/docs/images/settings-overview-zh.png) · [通用设置](packages/connect/docs/images/settings-general-zh.png) · [通用设置·模型](packages/connect/docs/images/settings-general-agent-zh.png) · [高级](packages/connect/docs/images/settings-advanced-zh.png) · [公共默认](packages/connect/docs/images/settings-defaults-zh.png) · [飞书凭据](packages/connect/docs/images/settings-feishu-zh.png) · [官方入口](packages/connect/docs/images/settings-manual-zh.png).
+<sub>中文截图见 [概览](packages/connect/docs/images/settings-overview-zh.png)。Every field is documented in [`docs/config-reference.md`](docs/config-reference.md); the full pane walkthrough — the Advanced folds, the one-click Feishu onboarding flow, and the General view — is in [`packages/connect/README.md`](packages/connect/README.md#the-settings-pane), where the detail belongs. Only the overview is shown here so the repository page stays readable.</sub>
 
 > The shots come from a throwaway profile whose credentials are all placeholders. There is no real
 > secret in frame — there cannot be: the host masks values before they reach the browser (see

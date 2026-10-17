@@ -25,11 +25,7 @@
 > 这些截图是**飞书中文界面**的实拍，因为这个项目实际就是用在这个场景里。界面文案同样
 > 提供英文（`language: en`）。
 
-设置面板是另一处配置——完整说明在[下文](#设置面板)：
-
-| 总览 | 通用设置 |
-|---|---|
-| ![设置面板：主导航在渠道页签之上，展开的飞书卡片及其凭据字段](docs/images/settings-overview-zh.png) | ![通用设置的智能体卡片，当前模型显示为只读文本](docs/images/settings-general-zh.png) |
+设置面板是另一处配置——完整说明与截图在[下文](#设置面板)。
 
 ## 为什么需要它
 
@@ -355,17 +351,12 @@ profile 里所有依赖的 24 小时供应链保护一起关掉。`allowBuilds` 
 |---|---|
 | ![dsh-connect 设置面板：主导航在渠道页签条之上，展开的飞书卡片及其凭据字段，以及收起后仍显示凭据徽标的渠道卡片](docs/images/settings-overview-zh.png) | ![通用设置视图：四张卡片，每行一项，每项都注明修改后需重启 dsh 才生效](docs/images/settings-general-zh.png) |
 
-| 通用设置：只读的模型行 | 展开高级选项 |
-|---|---|
-| ![通用设置的智能体卡片，当前模型是只读文本，附一行说明此值由 DSH 管理](docs/images/settings-general-agent-zh.png) | ![同一面板展开某渠道的「高级选项」折叠，露出回调端口与回调路径字段](docs/images/settings-advanced-zh.png) |
-
-| 飞书卡片：凭据字段（一键按钮在其上方） | Telegram 卡片：官方入口链接 |
-|---|---|
-| ![飞书卡片的 App ID 与 App Secret 字段，一键创建按钮排在它们上方；此时面板已滚动，两层导航条仍钉在顶部](docs/images/settings-feishu-zh.png) | ![Telegram 卡片，给的是 BotFather 链接而不是创建按钮](docs/images/settings-manual-zh.png) |
-
-![面板底部的公共默认卡片与固定保存条](docs/images/settings-defaults-zh.png)
-
-英文截图：[概览](docs/images/settings-overview-en.png) · [通用设置](docs/images/settings-general-en.png) · [通用设置·模型](docs/images/settings-general-agent-en.png) · [高级](docs/images/settings-advanced-en.png) · [公共默认](docs/images/settings-defaults-en.png) · [飞书凭据](docs/images/settings-feishu-en.png) · [官方入口](docs/images/settings-manual-en.png)。
+<sub>其余截图改为链接，避免这一节被六张图撑散：[高级选项](docs/images/settings-advanced-zh.png) ·
+[飞书凭据](docs/images/settings-feishu-zh.png) · [公共默认](docs/images/settings-defaults-zh.png) —— 英文：
+[概览](docs/images/settings-overview-en.png) · [通用设置](docs/images/settings-general-en.png) ·
+[模型行](docs/images/settings-general-agent-en.png) · [高级](docs/images/settings-advanced-en.png) ·
+[公共默认](docs/images/settings-defaults-en.png) · [飞书](docs/images/settings-feishu-en.png) ·
+[官方入口](docs/images/settings-manual-en.png)。</sub>
 
 > 截图取自一个凭据全是占位符的一次性 profile。上面没有任何真实密钥 —— 也不可能有：宿主会在
 > 值到达浏览器之前完成打码（见下文[面板回显与脱敏](#面板回显与脱敏)）。

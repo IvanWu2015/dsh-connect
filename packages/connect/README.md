@@ -33,12 +33,7 @@ without changing the profile:
 > These are Chinese-language screenshots taken in Feishu, because that is where the project
 > is actually used. The UI strings exist in English too (`language: en`).
 
-The settings pane is configured separately — the full walkthrough is
-[further down](#the-settings-pane):
-
-| Overview | General |
-|---|---|
-| ![the settings pane: primary navigation above the channel tabs, the Feishu card expanded with its credential fields](docs/images/settings-overview-en.png) | ![the General view's agent card, with the current model shown as read-only text](docs/images/settings-general-en.png) |
+The settings pane is configured separately — the full walkthrough, with its screenshots, is [further down](#the-settings-pane).
 
 ## Why this exists
 
@@ -421,17 +416,13 @@ you have not saved yet.
 |---|---|
 | ![dsh-connect settings pane: the primary navigation above the channel tab strip, the Feishu card expanded with its credential fields, and folded channel cards each showing a credentials badge](docs/images/settings-overview-zh.png) | ![the General view: four cards of settings, one per row, each noting that a change takes effect after dsh restarts](docs/images/settings-general-zh.png) |
 
-| General: the read-only model row | Advanced fields opened |
-|---|---|
-| ![the General view's agent card, showing the current model as read-only text with a note that DSH owns it](docs/images/settings-general-agent-zh.png) | ![the same pane with a channel's Advanced fold opened, revealing the callback port and path fields](docs/images/settings-advanced-zh.png) |
-
-| Feishu card: credentials, one-click button above | Telegram card: official entry link |
-|---|---|
-| ![the Feishu card's App ID and App Secret fields, with the one-click create button above them and both navigation strips still pinned at the top of a scrolled pane](docs/images/settings-feishu-zh.png) | ![the Telegram card, which offers a BotFather link instead of a create button](docs/images/settings-manual-zh.png) |
-
-![the common-defaults card and the pinned save bar at the bottom of the pane](docs/images/settings-defaults-zh.png)
-
-English captures: [overview](docs/images/settings-overview-en.png) · [general](docs/images/settings-general-en.png) · [general: model row](docs/images/settings-general-agent-en.png) · [advanced](docs/images/settings-advanced-en.png) · [defaults](docs/images/settings-defaults-en.png) · [Feishu credentials](docs/images/settings-feishu-en.png) · [official entry](docs/images/settings-manual-en.png).
+<sub>Further captures, one click each rather than inline so this section stays readable:
+[Advanced fold](docs/images/settings-advanced-zh.png) · [Feishu credentials](docs/images/settings-feishu-zh.png) ·
+[common defaults](docs/images/settings-defaults-zh.png) — English:
+[overview](docs/images/settings-overview-en.png) · [general](docs/images/settings-general-en.png) ·
+[model row](docs/images/settings-general-agent-en.png) · [advanced](docs/images/settings-advanced-en.png) ·
+[defaults](docs/images/settings-defaults-en.png) · [Feishu](docs/images/settings-feishu-en.png) ·
+[official entry](docs/images/settings-manual-en.png).</sub>
 
 > Captured from a throwaway profile whose credentials are all placeholders. Nothing
 > above contains a real secret — and it could not, because the host masks every

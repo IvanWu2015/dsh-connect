@@ -4,6 +4,24 @@
 
 将 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（**DSH**）智能体接入聊天平台——一个插件同时支持**飞书 / Lark**、**Telegram** 与**钉钉**。从你的聊天应用发送任务，观看智能体实时流式执行，保持多轮上下文，任务结束时自动把结果摘要推送回来。
 
+## 界面长什么样
+
+这个插件的重点是**对话本身**，所以先展示它。
+
+**在聊天里回答一个提问。** 当智能体需要你决策时，它会发一张卡片，把选项做成按钮。点按钮，或者直接回复编号/内容，回答的是**同一个问题**；上面的问题会保持已答状态：
+
+![飞书对话中的两张提问卡片，各带可点击的选项按钮，旁边还有一张报告「已进行 5 分钟 / 已完成 37 步」的进度卡片](packages/connect/docs/images/chat-questions-zh.png)
+
+**长任务持续汇报进度。** 同一段对话往后：提醒已经从 5 分钟推进到 15 分钟，第一个问题回答后接着出现第二个问题。这正是长任务最关键的表现——**卡片会持续汇报，而不是冻结在第一条消息上**：
+
+![飞书对话中显示 15 分钟时的进度提醒、一张带三个选项按钮的提问卡片，以及「已收到你的回答」的确认](packages/connect/docs/images/chat-progress-zh.png)
+
+**不用改配置文件就能调设置。** `/settings` 打开一个按钮菜单——模型、推理强度、通知级别、进度提醒间隔、语言、配置总览，**按聊天**生效，一段对话可以单独调整而不影响整个 profile：
+
+![飞书对话中 /settings 打开的按钮菜单，含切换模型、推理强度、通知设置、进度提醒、语言、配置总览](packages/connect/docs/images/chat-settings-menu-zh.png)
+
+> 界面文案同样提供英文（`language: en`）。
+
 ## 功能特性
 
 - **双向消息**：飞书消息 → DSH 智能体（`agent.followup`）；智能体的回复以打字机风格的卡片流式回传到飞书。
@@ -77,21 +95,9 @@ examples/
 它们在这里可改，但与渠道设置不同：这些值是插件加载时一次性读走的，所以每一项都写着「修改后需重启 dsh 才生效」。
 真被 `dsh.shared.config.json` 压过的键会多一行来源提示，说明面板改它不生效；当前模型是**只读**一行，因为那是 DSH 的东西，要换请去 DSH 里换。
 
-| 渠道与凭据 | 通用设置 |
-|---|---|
-| ![dsh-connect 设置面板：主导航在渠道页签条之上，展开的飞书卡片及其凭据字段，以及收起后仍显示凭据徽标的渠道卡片](packages/connect/docs/images/settings-overview-zh.png) | ![通用设置视图：四张卡片，每行一项，每项都注明修改后需重启 dsh 才生效](packages/connect/docs/images/settings-general-zh.png) |
+![dsh-connect 设置面板：主导航在渠道页签条之上，展开的飞书卡片及其凭据字段，以及收起后仍显示凭据徽标的渠道卡片](packages/connect/docs/images/settings-overview-zh.png)
 
-| 通用设置：只读的模型行 | 展开高级选项 |
-|---|---|
-| ![通用设置的智能体卡片，当前模型是只读文本，附一行说明此值由 DSH 管理](packages/connect/docs/images/settings-general-agent-zh.png) | ![同一面板展开某渠道的「高级选项」折叠，露出回调端口与回调路径字段](packages/connect/docs/images/settings-advanced-zh.png) |
-
-| 飞书卡片：凭据字段（一键按钮在其上方） | Telegram 卡片：官方入口链接 |
-|---|---|
-| ![飞书卡片的 App ID 与 App Secret 字段，一键创建按钮排在它们上方；此时面板已滚动，两层导航条仍钉在顶部](packages/connect/docs/images/settings-feishu-zh.png) | ![Telegram 卡片，给的是 BotFather 链接而不是创建按钮](packages/connect/docs/images/settings-manual-zh.png) |
-
-![面板底部的公共默认卡片与固定保存条](packages/connect/docs/images/settings-defaults-zh.png)
-
-English screenshots: [overview](packages/connect/docs/images/settings-overview-en.png) · [general](packages/connect/docs/images/settings-general-en.png) · [general: model row](packages/connect/docs/images/settings-general-agent-en.png) · [advanced](packages/connect/docs/images/settings-advanced-en.png) · [shared defaults](packages/connect/docs/images/settings-defaults-en.png) · [Feishu credentials](packages/connect/docs/images/settings-feishu-en.png) · [official entry](packages/connect/docs/images/settings-manual-en.png).
+<sub>英文截图见 [overview](packages/connect/docs/images/settings-overview-en.png)。每个字段都在 [`docs/config-reference.md`](docs/config-reference.md) 里有说明；完整的面板走查——高级折叠、飞书一键创建流程、通用设置——在 [`packages/connect/README.md`](packages/connect/README.md#设置面板)，细节属于那里。这里只放一张总览，好让仓库首页保持可读。</sub>
 
 > 截图取自一个凭据全是占位符的一次性 profile。上面没有任何真实密钥——也不可能有：宿主会在
 > 值到达浏览器之前完成打码（见下文[面板回显与脱敏](#面板回显与脱敏)）。
