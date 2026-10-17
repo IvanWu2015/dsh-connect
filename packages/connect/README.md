@@ -8,18 +8,30 @@ The **all-in-one plugin** for connecting [DeepSeek Harness](https://github.com/d
 
 ### What it looks like
 
-The settings pane is where you configure channels and credentials — the full walkthrough
-is [further down](#the-settings-pane):
+The point of the plugin is the conversation, so that is what is shown first.
+
+**A question, answered from the chat.** When the agent needs a decision it posts a card with
+the options as buttons. Tapping one — or replying with its number or text — answers the same
+question, and every earlier question stays answered above it:
+
+![two question cards in a Feishu conversation, each with tappable option buttons, alongside a progress card reporting 5 minutes elapsed and 37 steps completed](docs/images/chat-questions-zh.png)
+
+**A long task reporting progress.** The same conversation, further along: the reminder has
+advanced from 5 minutes to 15, and a second question follows the first answer. This is the
+behaviour that matters most on a long run — the card keeps reporting instead of freezing on
+its first message:
+
+![a Feishu conversation showing a progress reminder at 15 minutes elapsed, a question card with three option buttons, and the acknowledgement that the previous answer was received](docs/images/chat-progress-zh.png)
+
+> These are Chinese-language screenshots taken in Feishu, because that is where the project
+> is actually used. The UI strings exist in English too (`language: en`).
+
+The settings pane is configured separately — the full walkthrough is
+[further down](#the-settings-pane):
 
 | Overview | General |
 |---|---|
 | ![the settings pane: primary navigation above the channel tabs, the Feishu card expanded with its credential fields](docs/images/settings-overview-en.png) | ![the General view's agent card, with the current model shown as read-only text](docs/images/settings-general-en.png) |
-
-> **Not shown here: the chat itself.** Screenshots of the conversation — the streaming
-> card, the reasoning and tool-call lines, the question buttons — are not included yet.
-> I would rather say so than present a settings pane as if it were the product. If you
-> want to see it before installing, the [Quick start](#quick-start) describes the exact
-> sequence of what appears in the chat, step by step.
 
 ## Why this exists
 
