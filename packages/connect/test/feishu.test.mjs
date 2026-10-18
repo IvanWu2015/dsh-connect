@@ -732,6 +732,92 @@ test("feishu closeMenu swallows a tap that lands during the closing redraw", asy
   );
 });
 
+test("the close card removes every interactive element the question card had", async (t) => {
+  // Reported again: 「已经明确收到 ✅ 已收到你的回答…这时候就应该主动关闭前面那个按钮选择的位置」.
+  // The close is ordered before the acknowledgement and does propagate its failures, so
+  // the remaining question is whether the card it writes actually takes the buttons away.
+  //
+  // Feishu replaces the whole card on patch. That only removes the buttons if the patch
+  // payload contains none of them — so this asserts the payload directly, rather than
+  // trusting that "a close happened" is the same thing as "the buttons are gone".
+  const { adapter, fake } = await startedAdapter();
+  t.after(() => adapter.stop());
+  const result = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "Pick", options: [{ id: "a", label: "A" }, { id: "b", label: "B" }] },
+  );
+  await waitFor(() => adapter["pendingChoices"].size === 1, "prompt registration");
+  const card = fake.sends[0];
+
+  // What the question card contained: buttons. Recorded so the comparison is against the
+  // real thing rather than a guess about what a choice card holds.
+  const questionJson = JSON.stringify(card.payload);
+  assert.match(questionJson, /"tag":"button"/, "the question card must actually offer buttons");
+
+  fake.handlers.cardAction({ messageId: card.messageId, chatId: "oc_chat", action: { tag: "button", value: { choice: "a" } } });
+  await result;
+  await adapter.closeMenu(card.messageId, "done");
+
+  const close = fake.cardUpdates.find((u) => u.messageId === card.messageId);
+  assert.ok(close, "the close must redraw the question card");
+  const closeJson = JSON.stringify(close.card);
+  assert.doesNotMatch(closeJson, /"tag":"button"/, `the close payload must carry no buttons; got ${closeJson}`);
+  assert.doesNotMatch(closeJson, /"tag":"action"/, `the close payload must carry no action block; got ${closeJson}`);
+  assert.match(closeJson, /done/, "the close must still say what was answered");
+});
+
+test("a card abandoned after a failed in-place update is disarmed, not left tappable", async (t) => {
+  // Reported: after answering, the previous question card kept its buttons. In a
+  // multi-question interaction the card is reused — question 2 updates question 1's card in
+  // place, so there is normally nothing left behind. The exception is when that update
+  // fails: a fresh card is sent and the caller is moved to it, while the OLD card keeps
+  // whatever it had, buttons included, and is never rewritten by anyone again.
+  //
+  // The code used to assert in a comment that "its buttons died the moment we gave up on
+  // updating it". They do not — a rejected API call leaves the message exactly as it was.
+  const { adapter, fake } = await startedAdapter();
+  t.after(() => adapter.stop());
+
+  const first = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "First", options: [{ id: "a", label: "A" }] },
+  );
+  await waitFor(() => adapter["pendingChoices"].size === 1, "first prompt registration");
+  const card1 = fake.sends[0];
+  fake.handlers.cardAction({ messageId: card1.messageId, chatId: "oc_chat", action: { tag: "button", value: { choice: "a" } } });
+  await first;
+
+  // The next question must update card1 in place; make that fail, which is the case under
+  // test.
+  const presented = [];
+  fake.failCardUpdate = new Error("230099 element exceeds limit");
+  const second = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "Second", options: [{ id: "b", label: "B" }] },
+    card1.messageId,
+    undefined,
+    (id) => presented.push(id),
+  );
+  await waitFor(() => fake.sends.length === 2, "fresh card after the failed update");
+
+  // The abandoned card must have been rewritten to something non-interactive.
+  const disarmed = fake.cardUpdates.find(
+    (u) => u.messageId === card1.messageId && /menuExpired|Menu expired|已过期/.test(JSON.stringify(u.card)),
+  );
+  assert.ok(
+    disarmed,
+    `the abandoned card must be disarmed; updates for it: ${JSON.stringify(
+      fake.cardUpdates.filter((u) => u.messageId === card1.messageId).map((u) => u.card),
+    )}`,
+  );
+  assert.doesNotMatch(JSON.stringify(disarmed.card), /"tag":"button"/, "the disarmed card must carry no buttons");
+  // And the caller follows the fresh card, so the next answer closes the one on screen.
+  assert.equal(presented[presented.length - 1], fake.sends[1].messageId);
+
+  fake.handlers.cardAction({ messageId: fake.sends[1].messageId, chatId: "oc_chat", action: { tag: "button", value: { choice: "b" } } });
+  await second;
+});
+
 test("a failed card close propagates, so the outbound retry can act on it", async (t) => {
   // Reported live: the buttons stayed on screen after the answer. The close ended in
   // `.catch(() => undefined)`, which looked defensive and was the defect — it made

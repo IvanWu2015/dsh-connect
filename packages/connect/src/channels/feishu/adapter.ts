@@ -893,8 +893,23 @@ export class FeishuAdapter implements ChannelAdapter {
         await this.channel.updateCard(updateMessageId, card);
       } catch (error) {
         this.logger?.warn?.(`connect-feishu: menu card update failed (${String(error)}); sending a fresh card`);
-        // Its buttons died the moment we gave up on updating it — and the
-        // expiry timer must survive, since the fresh card inherits it.
+        // Its buttons did NOT die when the update failed — a rejected API call leaves the
+        // message exactly as it was. This used to say they had, and the assumption is why
+        // an abandoned card stayed tappable: we stopped tracking it, moved on to a fresh
+        // card, and nothing ever rewrote the old one. A user who then tapped it got no
+        // response at all, because taps on a retired card are absorbed on purpose.
+        //
+        // So the abandoned card is disarmed explicitly. It can no longer be the target of
+        // anything — `onPresented` moves the caller to the fresh card — which makes leaving
+        // it live a trap rather than a harmless leftover. Best-effort: the fresh card is
+        // the one that matters and must not be blocked by this.
+        void this.channel
+          .updateCard(updateMessageId, {
+            header: { title: { tag: "plain_text", content: this.t.menuExpired }, template: "grey" },
+            elements: [{ tag: "div", text: { tag: "plain_text", content: this.t.menuExpiredHint } }],
+          })
+          .catch(() => undefined);
+        // The expiry timer must survive, since the fresh card inherits it.
         unbind(updateMessageId);
         try {
           const sent = await this.channel.send(this.chatIdOf(target.chatKey), { card }, { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) });

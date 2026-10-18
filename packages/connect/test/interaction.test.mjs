@@ -585,6 +585,41 @@ test("an unanswered question presents its card once, not once per timeout", asyn
   assert.equal(bridge.pendingFor("oc_1"), false);
 });
 
+test("the card is closed before the acknowledgement is sent", async () => {
+  // Reported: 「已经明确收到 ✅ 已收到你的回答…这时候就应该主动关闭前面那个按钮选择的位置」.
+  // The acknowledgement is what the user reads as "the answer landed", so by the time it
+  // appears the buttons must already be gone — otherwise the two contradict each other
+  // for as long as the close takes to land.
+  //
+  // Order, not presence: a close that runs *after* the acknowledgement still satisfies a
+  // "the card was closed" assertion, while showing the user exactly the confusing pair of
+  // states this is about.
+  const order = [];
+  const { adapter } = fakeAdapter({ onPrompt: async () => ({ choice: "q:q1:0", messageId: "om_1" }) });
+  const originalClose = adapter.closeMenu.bind(adapter);
+  const originalSend = adapter.sendText.bind(adapter);
+  adapter.closeMenu = async (messageId, summary) => {
+    order.push("close");
+    return originalClose(messageId, summary);
+  };
+  adapter.sendText = async (target, text) => {
+    order.push("text:" + String(text).slice(0, 10));
+    return originalSend(target, text);
+  };
+
+  const { harness } = bridgeFor(adapter);
+  await answerer(harness, "user-questions/request").listener(
+    { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }] }], agent: { id: "sess-1" } },
+    next,
+  );
+
+  const closeAt = order.indexOf("close");
+  const ackAt = order.findIndex((entry) => entry.startsWith("text:") && entry.includes("已收到"));
+  assert.ok(closeAt >= 0, `the card must be closed; order=${JSON.stringify(order)}`);
+  assert.ok(ackAt >= 0, `the acknowledgement must be sent; order=${JSON.stringify(order)}`);
+  assert.ok(closeAt < ackAt, `the close must precede the acknowledgement; order=${JSON.stringify(order)}`);
+});
+
 test("a question answered by text also has its buttons closed", async () => {
   // Reported: 「用户已经选择完的情况，关闭掉这个按钮菜单，要不然用户容易再误点」.
   //
