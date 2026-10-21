@@ -236,6 +236,16 @@ export function recordingAdapter(id) {
     async sendText(target, text) {
       sent.push({ kind: "text", target, text });
     },
+    // The editable-text pair. Without these the progress reminder can only ever append a
+    // new message, and a test that it rewrites one instead could not observe the difference.
+    async sendTextWithId(target, text) {
+      const messageId = `text-${sent.length + 1}`;
+      sent.push({ kind: "text", target, text, messageId });
+      return { messageId };
+    },
+    async updateText(messageId, text) {
+      sent.push({ kind: "updateText", messageId, text });
+    },
     async sendCard(target, card) {
       sent.push({ kind: "card", target, markdown: card.markdown });
     },

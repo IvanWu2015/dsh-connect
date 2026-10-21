@@ -149,6 +149,17 @@ type LoopResult = "answered" | "stopped";
  */
 const ANSWER_RACE_MS = 5_000;
 
+/**
+ * How many times an expired question card is re-drawn while nobody answers.
+ *
+ * The card expires every 60 s; without a limit the bridge rewrites it once a minute for as
+ * long as the question stays open, which overnight is hundreds of identical redraws. Five
+ * covers roughly five minutes — long enough that someone who steps away and comes back
+ * still finds live buttons, short enough that an abandoned question stops repainting the
+ * chat. The wait itself is not affected: text replies are still accepted throughout.
+ */
+const MAX_REPRESENTATIONS = 5;
+
 /** How a wait for a text answer ended. */
 type WaitResult = "answered" | "timeout" | "stopped";
 
@@ -422,7 +433,24 @@ export class InteractionBridge {
      * at stays exactly where it is.
      */
     let card: Promise<ChoiceResult> | undefined;
+    /** How many times the card has been re-presented after expiring. */
+    let representatives = 0;
+    /** Set once the re-draw budget is spent, so the reason is logged exactly once. */
+    let representationsExhausted = false;
     while (!interaction.controller.signal.aborted && !interaction.settled) {
+      // The budget is checked HERE, before `card ??=` can present again.
+      //
+      // Checking it at the bottom of the loop — where the expiry is detected — does not
+      // stop anything: `card` has already been cleared by its own `.finally`, so the next
+      // iteration presents a fresh card at the top and only then reaches the check. The
+      // measured result was a card every five seconds despite the budget, which is exactly
+      // the "still redrawing" this is meant to end.
+      if (representationsExhausted) {
+        const waited = await this.waitForAnswer(interaction, ANSWER_RACE_MS);
+        if (interaction.answers.has(q.id)) return true;
+        if (waited === "stopped" || interaction.controller.signal.aborted || interaction.settled) break;
+        continue;
+      }
       // A text reply (`answerText`) records the answer without any tap, and it may
       // already have arrived — the user who typed instead of tapping, or who typed
       // because the card would not respond. Checking here is what makes text a real
@@ -520,9 +548,38 @@ export class InteractionBridge {
         }
         continue;
       }
-      // The card expired without a tap. Re-present the same card in place so
-      // the choice stays clickable for as long as the agent is waiting.
+      // The card expired without a tap. Re-present it in place so the choice stays
+      // clickable while the agent waits — but only for a while.
+      //
+      // Reported: 「有一个需要人工处理的选择，但人没在，造成不断的在刷新按钮」. A card expires
+      // after 60 seconds, this loop re-presents it, and that repeats for as long as nobody
+      // answers — one rewrite per minute, all night. The question itself is not the
+      // problem; the endless redrawing is.
+      //
+      // So the redraw stops after a few turns and the wait continues. Nothing is lost: a
+      // text reply is still checked every iteration, the last rendered card is still on
+      // screen for someone who returns, and the question stays pending for the host.
       if (interaction.controller.signal.aborted || interaction.settled) break;
+      representatives += 1;
+      if (representatives > MAX_REPRESENTATIONS) {
+        // The budget is spent: stop presenting, keep waiting.
+        //
+        // This has to actually *skip the next presentation*, not merely stop logging —
+        // which is what the first attempt did. The loop was still going round, `card` had
+        // been cleared by its own `.finally`, and the next iteration presented another
+        // card, so the redraw continued exactly as before.
+        //
+        // Waiting on the text path only means the question is still answerable: a typed
+        // reply is checked every iteration below, and the last card the user saw keeps its
+        // contents. The host is still waiting too, so nothing is lost by not repainting.
+        if (!representationsExhausted) {
+          representationsExhausted = true;
+          this.log(
+            `connect: stopped re-drawing the question card for ${interaction.chatKey} after ${MAX_REPRESENTATIONS} expiries; still waiting for an answer (text replies still work)`,
+          );
+        }
+        // The guard at the top of the loop takes over from here.
+      }
       await delay(1000);
     }
     return false;

@@ -527,6 +527,43 @@ export class AgentRunner implements MenuHost {
    * guessing what the task actually consists of.
    */
   /**
+   * Post the progress reminder, or rewrite the one already on screen.
+   *
+   * Reported from a turn left running overnight: 「一晚上会堆积无数的提醒」. The watchdog was
+   * appending a fresh message every interval, so a 13.6-hour turn produced over 160
+   * near-identical bubbles — each one repeating the elapsed time and the current milestone.
+   * The information in the last one supersedes every earlier one, which makes the earlier
+   * ones pure noise.
+   *
+   * The first notice posts and remembers its id; every later one rewrites that message. A
+   * channel that cannot edit text keeps posting, which is the old behaviour rather than a
+   * regression — and if the edit fails the id is dropped so the next notice starts a fresh
+   * message instead of editing something that no longer exists.
+   */
+  private publishProgressNotice(target: OutboundTarget, text: string): void {
+    const edit = this.adapter.updateText;
+    const post = this.adapter.sendTextWithId;
+    if (this.progressNoticeId !== undefined && edit !== undefined) {
+      const id = this.progressNoticeId;
+      void edit.call(this.adapter, id, text).catch(() => {
+        if (this.progressNoticeId === id) this.progressNoticeId = undefined;
+      });
+      return;
+    }
+    if (post === undefined) {
+      // No way to learn the id: keep the old behaviour rather than dropping the notice.
+      void this.adapter.sendText(target, text).catch(() => undefined);
+      return;
+    }
+    void post
+      .call(this.adapter, target, text)
+      .then((sent) => {
+        this.progressNoticeId = sent.messageId;
+      })
+      .catch(() => undefined);
+  }
+
+  /**
    * The list body plus the time it was last accurate.
    *
    * Measured on a real session: the agent calls `todo_write` rarely — one stretch had 224
@@ -1256,14 +1293,7 @@ export class AgentRunner implements MenuHost {
           const sinceStart = turn?.startedAt ?? this.workStartedAt;
           const minutes = sinceStart === undefined ? 1 : Math.max(1, Math.round((Date.now() - sinceStart) / 60_000));
           const status = turn?.milestone ?? this.lastMilestone ?? this.t.progressThinking;
-          this.log(
-            `connect: progress reminder for ${this.chatKey} posted as its own message (the streaming card is ${
-              turn === undefined ? "gone with the turn" : "past its lifetime"
-            })`,
-          );
-          void this.adapter
-            .sendText(this.target(msg), this.t.progressReminder(minutes, status))
-            .catch(() => undefined);
+          this.publishProgressNotice(this.target(msg), this.t.progressReminder(minutes, status));
         }, watchdogTickMs)
       : undefined;
 
@@ -2585,6 +2615,11 @@ export class AgentRunner implements MenuHost {
   private lastSubtasksKey?: string;
   /** True while the initial post is in flight, so concurrent writes cannot post again. */
   private subtasksPosting = false;
+  /**
+   * The message currently carrying the progress reminder, so the next one rewrites it
+   * instead of appending. Cleared when an edit fails, which means the message is gone.
+   */
+  private progressNoticeId?: string;
   /** The newest state seen while that post was in flight, replayed when it lands. */
   private subtasksPending?: { key: string; todos: TodoItem[] };
   private workStartedAt?: number;

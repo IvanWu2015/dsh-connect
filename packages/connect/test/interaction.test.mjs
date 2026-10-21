@@ -585,6 +585,52 @@ test("an unanswered question presents its card once, not once per timeout", asyn
   assert.equal(bridge.pendingFor("oc_1"), false);
 });
 
+test("an abandoned question stops being redrawn, but is still waiting", async () => {
+  // Reported: 「有一个需要人工处理的选择，但人没在，造成不断的在刷新按钮」. The card expires
+  // every 60 s and was re-presented every time, so an unanswered question repainted the chat
+  // once a minute indefinitely — all night.
+  //
+  // What must not change: the question keeps waiting. Someone who comes back can still
+  // answer, and a typed reply is still accepted. Only the redrawing is bounded.
+  const { adapter, calls } = fakeAdapter({
+    // Every presentation expires unanswered, which is what drives the re-present loop.
+    onPrompt: async () => ({ choice: undefined, messageId: "om_exp" }),
+  });
+  const { bridge, harness } = bridgeFor(adapter);
+  let settled = false;
+  const dispatched = answerer(harness, "user-questions/request")
+    .listener(
+      { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }] }], agent: { id: "sess-1" } },
+      next,
+    )
+    .finally(() => { settled = true; });
+
+  // The guarantee is that the redrawing *settles*, so compare two windows rather than
+  // assuming a rate. A bounded loop presents a few times and then stops; an unbounded one
+  // keeps presenting forever, and the second window would be just as busy as the first.
+  const presentations = () => calls.prompts.length;
+  await new Promise((resolve) => setTimeout(resolve, 9_000));
+  const afterFirstWindow = presentations();
+  await new Promise((resolve) => setTimeout(resolve, 4_000));
+  const afterSecondWindow = presentations();
+
+  assert.ok(afterFirstWindow >= 2, `the card must be re-presented at least once; got ${afterFirstWindow}`);
+  assert.equal(
+    afterSecondWindow,
+    afterFirstWindow,
+    `re-presentation must stop; it kept going (${afterFirstWindow} then ${afterSecondWindow})`,
+  );
+  assert.equal(settled, false, "the question must still be waiting");
+  assert.equal(bridge.pendingFor("oc_1"), true, "the interaction must still be pending");
+  // The bound stops repainting, not waiting: a typed answer still lands.
+  assert.equal(bridge.answerText("oc_1", "A"), true);
+
+  // Let the flow finish. Without this the interaction's re-present timer and its pending
+  // waiter outlive the test, which keeps the whole process alive and makes the suite look
+  // hung when it has actually passed.
+  await dispatched;
+});
+
 test("the card is closed before the acknowledgement is sent", async () => {
   // Reported: 「已经明确收到 ✅ 已收到你的回答…这时候就应该主动关闭前面那个按钮选择的位置」.
   // The acknowledgement is what the user reads as "the answer landed", so by the time it

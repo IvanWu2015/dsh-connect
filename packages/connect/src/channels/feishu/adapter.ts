@@ -679,6 +679,21 @@ export class FeishuAdapter implements ChannelAdapter {
     );
   }
 
+  /** Post a text message and return its id, so a repeatable status line can be rewritten. */
+  async sendTextWithId(target: OutboundTarget, text: string): Promise<{ messageId: string }> {
+    const { messageId } = await this.channel.send(
+      this.chatIdOf(target.chatKey),
+      { text },
+      this.sendOpts(target),
+    );
+    return { messageId };
+  }
+
+  /** Rewrite a text message this adapter posted. See {@link sendTextWithId}. */
+  async updateText(messageId: string, text: string): Promise<void> {
+    await this.channel.editMessage(messageId, text);
+  }
+
   async sendCard(target: OutboundTarget, card: SummaryCard): Promise<void> {
     await this.channel.send(
       this.chatIdOf(target.chatKey),

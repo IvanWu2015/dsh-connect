@@ -99,5 +99,21 @@ export function withOutboundRetry(adapter: ChannelAdapter, options: RetryOptions
           updateCard: (messageId: string, card: SummaryCard) =>
             retry(() => adapter.updateCard!(messageId, card), options),
         }),
+    // Same trap as the card pair above, and the same reason to name them here: an optional
+    // member this wrapper does not forward is silently absent from the adapter the runner
+    // holds, so the caller sees "unsupported" and quietly posts a new message every time
+    // instead of rewriting one.
+    ...(adapter.sendTextWithId === undefined
+      ? {}
+      : {
+          sendTextWithId: (target: OutboundTarget, text: string) =>
+            retry(() => adapter.sendTextWithId!(target, text), options),
+        }),
+    ...(adapter.updateText === undefined
+      ? {}
+      : {
+          updateText: (messageId: string, text: string) =>
+            retry(() => adapter.updateText!(messageId, text), options),
+        }),
   };
 }

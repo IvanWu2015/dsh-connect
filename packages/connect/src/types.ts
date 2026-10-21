@@ -156,6 +156,22 @@ export interface ChannelAdapter {
   stop(): Promise<void>;
   /** Deliver one text/markdown message (best-effort, non-streaming). */
   sendText(target: OutboundTarget, text: string): Promise<void>;
+  /**
+   * Post a text message and report its id, so it can be rewritten later.
+   *
+   * Optional, and separate from `sendText` for the same reason the card pair is split: a
+   * repeatable status line — the progress reminder on a turn nobody is watching — should
+   * own one message that gets updated, not append a new one every interval. Measured
+   * before this existed: a 13-hour turn produced over 160 identical reminder bubbles.
+   */
+  sendTextWithId?(target: OutboundTarget, text: string): Promise<{ messageId: string }>;
+  /**
+   * Rewrite a text message previously posted by {@link sendTextWithId}.
+   *
+   * Optional and paired with it. A channel that cannot edit text simply keeps posting new
+   * messages, which is the old behaviour rather than a regression.
+   */
+  updateText?(messageId: string, text: string): Promise<void>;
   /** Deliver a status/summary card. */
   sendCard(target: OutboundTarget, card: SummaryCard): Promise<void>;
   /**

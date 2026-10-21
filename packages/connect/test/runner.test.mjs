@@ -1072,6 +1072,38 @@ test("K3 the progress watchdog and the heartbeat both fire, both into the same c
     },
   ));
 
+test("K4c repeated progress reminders rewrite one message instead of stacking up", () =>
+  // Reported from a turn left running overnight: 「一晚上，会堆积无数的提醒出来」. The
+  // watchdog appended a new message every interval, so a 13.6-hour turn produced over 160
+  // near-identical bubbles. Each restates the elapsed time and the milestone, so the last
+  // supersedes all the earlier ones — they are pure noise.
+  withBridge(
+    { config: { cardLifetimeMs: 100 }, planFor: { whenIdleHoldMs: 2_400 } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-notice-once", { progressTimeoutMs: 400 }));
+
+      await bridge.inbound(inboundFor("stub", "chat-notice-once", { text: "a very long task" }));
+      await waitFor(
+        () => adapter.sent.filter((m) => m.kind === "updateText").length >= 2,
+        10_000,
+      );
+
+      const posted = adapter.sent.filter(
+        (m) => m.kind === "text" && typeof m.text === "string" && m.text.includes("Still working"),
+      );
+      const updated = adapter.sent.filter((m) => m.kind === "updateText");
+      assert.equal(posted.length, 1, `the reminder must own exactly one message; posted ${posted.length}`);
+      assert.ok(updated.length >= 2, `later reminders must rewrite it; rewrites=${updated.length}`);
+      for (const u of updated) assert.equal(u.messageId, posted[0].messageId);
+      // The count of bubbles is the point: however many notices fired, the chat holds one.
+      assert.ok(
+        adapter.sent.filter((m) => m.kind === "text" && String(m.text).includes("Still working")).length === 1,
+        "no notice may be appended alongside the one being rewritten",
+      );
+    },
+  ));
+
 test("K4a progress reminders keep arriving after the streaming card has expired", () =>
   // Reported: 「已进行5分钟这个还是没有更新」 — and the session transcript says why. The turn
   // ran 55.6 minutes with 54 tool calls and never ended; the user saw ONE reminder where
@@ -1094,9 +1126,12 @@ test("K4a progress reminders keep arriving after the streaming card has expired"
       bridge.seedBinding(bindingFor("stub", "chat-card-expiry", { progressTimeoutMs: 400 }));
 
       await bridge.inbound(inboundFor("stub", "chat-card-expiry", { text: "a very long task" }));
+      // Past the card's lifetime the reminder must still reach the user. Since 1.0.17 it
+      // reaches them by rewriting the one message it already owns, so "kept reporting" now
+      // means at least one rewrite, not a second bubble.
       assert.ok(
         await waitFor(
-          () => adapter.sent.filter((m) => m.kind === "text" && m.text.includes("Still working")).length >= 2,
+          () => adapter.sent.some((m) => m.kind === "updateText" && String(m.text).includes("Still working")),
           10_000,
         ),
         `reminders must keep reaching the user past the card's lifetime; text sent ${JSON.stringify(
