@@ -223,6 +223,17 @@ export class InteractionBridge {
     private readonly adapters: ReadonlyMap<string, ChannelAdapter>,
     private readonly bindings: BindingStore,
     private readonly config: ResolvedConnectConfig,
+    /**
+     * Is a turn currently being driven for this (channel, chatKey)?
+     *
+     * This is how a question finds the client the user is actually standing in. The
+     * request carries no origin of its own, so the only reliable signal is which runner is
+     * mid-turn right now: send from the Web GUI and the web runner is busy; send from
+     * Feishu and the feishu one is. Without it the card went to whichever binding the
+     * store listed first, which meant a question raised from the PC could appear in
+     * Feishu — where the user could not answer it, and the turn blocked.
+     */
+    private readonly isDriving: (channel: string, chatKey: string) => boolean = () => false,
   ) {
     const seam = ctx as unknown as EventSeam;
     ctx.effect(
@@ -756,14 +767,24 @@ export class InteractionBridge {
    * own forwarder, which is precisely the Web GUI.
    */
   private claimTarget(sessionId: string): { binding: ChatBinding; adapter: ChannelAdapter } | undefined {
+    const candidates: { binding: ChatBinding; adapter: ChannelAdapter }[] = [];
     for (const binding of this.bindings.list()) {
       if (binding.sessionId !== sessionId && binding.webMirrorSessionId !== sessionId) continue;
       const adapter = this.adapters.get(binding.channel);
       if (adapter === undefined || adapter.supportsChoices === false) continue;
       if (this.pending.has(binding.chatKey)) continue;
-      return { binding, adapter };
+      candidates.push({ binding, adapter });
     }
-    return undefined;
+    if (candidates.length <= 1) return candidates[0];
+    // More than one surface can reach this session — a chat and its Web GUI mirror, for
+    // instance. Ask the one the user is actually typing in, which is the one whose runner
+    // is mid-turn right now.
+    //
+    // Order alone is not a routing policy: taking the first match meant a question raised
+    // from the PC was delivered to Feishu, where the user was not looking and could not
+    // answer, so the turn blocked with a card they could not reach.
+    const busy = candidates.find((c) => this.isDriving(c.binding.channel, c.binding.chatKey));
+    return busy ?? candidates[0];
   }
 
   /** Stop presenting and drop the interaction (answered, cancelled, or torn down). */

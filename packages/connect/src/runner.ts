@@ -309,6 +309,17 @@ function describePreset(id: string | undefined): string {
 export class AgentRunner implements MenuHost {
   private readonly queue: InboundMessage[] = [];
   private running = false;
+
+  /**
+   * Is a turn being driven by this runner right now?
+   *
+   * Used to route a question to the surface the user is actually typing in: a session can
+   * be reachable from a chat and from the Web GUI mirror at once, and only the busy one is
+   * where they are looking.
+   */
+  get isDrivingTurn(): boolean {
+    return this.running;
+  }
   /** Set by `dispose()`; makes the runner permanently inert. */
   private disposed = false;
   private agent?: Agent;

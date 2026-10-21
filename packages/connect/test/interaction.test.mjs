@@ -124,6 +124,49 @@ function bridgeFor(adapter, bindingOverrides = {}) {
   return { bridge, harness, bindings };
 }
 
+/**
+ * A bridge over a session reachable from TWO surfaces at once.
+ *
+ * This is the real shape of the reported problem: one session, a Feishu chat and its Web
+ * GUI mirror, both valid targets. Which one gets the question used to depend on the order
+ * the binding store happened to list them in.
+ */
+function twoSurfaceBridge({ driving }) {
+  const bindings = new BindingStore(tempDir());
+  // Feishu first, deliberately: it is what the store lists first, so order alone would
+  // always pick it.
+  bindings.put({
+    channel: "feishu",
+    chatKey: "oc_1",
+    chatType: "p2p",
+    sessionId: "sess-1",
+    webMirrorSessionId: "sess-1",
+    ownerKey: "ou_1",
+    createdAt: 1,
+    lastActiveAt: 2,
+  });
+  bindings.put({
+    channel: "web",
+    chatKey: "web-1",
+    chatType: "p2p",
+    sessionId: "sess-1",
+    ownerKey: "ou_1",
+    createdAt: 2,
+    lastActiveAt: 1,
+  });
+  const feishu = fakeAdapter({ id: "feishu", onPrompt: async () => ({ choice: undefined, messageId: "om_f" }) });
+  const web = fakeAdapter({ id: "web", onPrompt: async () => ({ choice: undefined, messageId: "om_w" }) });
+  const harness = fakeContext();
+  const bridge = new InteractionBridge(
+    harness.ctx,
+    new Map([["feishu", feishu.adapter], ["web", web.adapter]]),
+    bindings,
+    resolveConnectConfig({}),
+    driving,
+  );
+  return { bridge, harness, feishu, web };
+}
+
 test("registers both answerers with prepend: true", () => {
   const { adapter } = fakeAdapter();
   const { harness } = bridgeFor(adapter);
@@ -629,6 +672,40 @@ test("an abandoned question stops being redrawn, but is still waiting", async ()
   // waiter outlive the test, which keeps the whole process alive and makes the suite look
   // hung when it has actually passed.
   await dispatched;
+});
+
+test("a question goes to the surface the user is typing in, not the first binding", async () => {
+  // Reported: 「我直接在PC端上发内容，但提问的按钮并没有在PC端显示，而是去到了飞书…应该在哪个
+  // 客户端发起，就在哪问按钮，要不然卡死了又不能操作」.
+  //
+  // One session, two surfaces. The request carries no origin of its own, so the bridge used
+  // to take whichever binding the store listed first — which is Feishu — and a question
+  // raised from the PC arrived in chat, where the user was not looking.
+  //
+  // The reliable signal is which runner is mid-turn: the surface the message came from.
+  const { bridge, harness } = twoSurfaceBridge({ driving: (channel) => channel === "web" });
+  void answerer(harness, "user-questions/request").listener(
+    { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }] }], agent: { id: "sess-1" } },
+    next,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // It must be presented on the web surface, and not on Feishu.
+  assert.equal(bridge.pendingFor("web-1"), true, "the question must be claimed by the Web surface");
+  assert.equal(bridge.pendingFor("oc_1"), false, "Feishu must not be claimed");
+});
+
+test("with nothing driving, the original binding order still decides", async () => {
+  // The fallback matters: a question raised outside any turn (a scheduled hook, say) has
+  // no busy surface to prefer, and must still be delivered somewhere.
+  const { bridge, harness } = twoSurfaceBridge({ driving: () => false });
+  const dispatched = answerer(harness, "user-questions/request").listener(
+    { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }] }], agent: { id: "sess-1" } },
+    next,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(bridge.pendingFor("oc_1"), "with no busy surface, the first binding still gets it");
+  void dispatched;
 });
 
 test("the card is closed before the acknowledgement is sent", async () => {

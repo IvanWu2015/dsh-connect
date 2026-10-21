@@ -127,7 +127,14 @@ export class ConnectService extends Service {
 
     this.config = resolveConnectConfig(mergedConfig);
     this.bindings = new BindingStore(this.config.stateDir, this.ctx.logger);
-    this.interaction = new InteractionBridge(ctx, this.adapters, this.bindings, this.config);
+    this.interaction = new InteractionBridge(
+      ctx,
+      this.adapters,
+      this.bindings,
+      this.config,
+      // Which surface is mid-turn right now — see InteractionBridge's `isDriving`.
+      (channel, chatKey) => this.runners.get(runnerKey(channel, chatKey))?.isDrivingTurn === true,
+    );
     this.reminders = new ReminderStore(this.config.stateDir);
     this.startReminderLoop();
   }
