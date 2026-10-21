@@ -965,9 +965,44 @@ export class FeishuAdapter implements ChannelAdapter {
     // fail, and the service wraps this very method in `retry()` — so a transient redraw
     // failure was swallowed on the first attempt and never retried, leaving the buttons on
     // screen with nothing in the log. Throwing here is what re-arms that retry.
-    await this.channel.updateCard(messageId, {
-      header: { title: { tag: "plain_text", content: this.t.doneHeader }, template: "green" },
-      elements: [{ tag: "div", text: { tag: "plain_text", content: summary } }],
-    });
+    try {
+      await this.channel.updateCard(messageId, {
+        header: { title: { tag: "plain_text", content: this.t.doneHeader }, template: "green" },
+        elements: [{ tag: "div", text: { tag: "plain_text", content: summary } }],
+      });
+    } catch (error) {
+      // The redraw failed. Two things have to happen at once, and they are not in conflict:
+      //
+      //  - the card is removed, because leaving it alone leaves live buttons on a settled
+      //    question — the user taps one, nothing happens, and it reads as the bot ignoring
+      //    them. This is the guarantee, and it does not depend on why the redraw failed;
+      //
+      //  - the failure still propagates, so the service-layer retry gets its chance and a
+      //    transient refusal does not cost the user the summary.
+      //
+      // Reported repeatedly as 「已经提示收到回答的，能不能主动关闭按钮的菜单选项」 across several
+      // fixes that each closed one path.
+      await this.recallCard(messageId);
+      throw error;
+    }
+  }
+
+  /**
+   * Remove a card outright, as the last resort when it cannot be rewritten.
+   *
+   * The buttons are the problem, not the text: a settled card whose options are still live
+   * absorbs every tap silently. If the redraw fails there is no way to keep the card *and*
+   * disarm it, so it goes.
+   */
+  private async recallCard(messageId: string): Promise<void> {
+    try {
+      await this.channel.recallMessage(messageId);
+    } catch (error) {
+      // Out of our hands now (already recalled, or the app lacks the permission) — but it
+      // must not be silent, or the next report has nothing to go on.
+      this.logger?.warn?.(
+        `connect-feishu: neither redrawing nor recalling card ${messageId} worked; its buttons may still be live: ${String(error)}`,
+      );
+    }
   }
 }

@@ -417,6 +417,7 @@ function fakeChannel() {
   const sends = [];
   const streams = [];
   const cardUpdates = [];
+  const recalls = [];
   const resourceGets = [];
   const state = { connects: 0, disconnects: 0 };
   return {
@@ -424,6 +425,7 @@ function fakeChannel() {
     sends,
     streams,
     cardUpdates,
+    recalls,
     resourceGets,
     state,
     on(event, fn) {
@@ -446,15 +448,23 @@ function fakeChannel() {
       streams.push({ chatId, input, opts, appended });
       return { messageId: `om_stream_${String(streams.length + 1)}` };
     },
-    /** Set to an Error to make the next card update fail, as the real API would. */
+    /**
+     * Set to an Error to make card updates fail, as the real API would.
+     *
+     * Persistent, not one-shot: the service wraps closeMenu in a three-attempt retry, so a
+     * single injected failure is absorbed by the second attempt and the caller never sees
+     * an error. A one-shot hook would let a test watch the retry succeed and conclude the
+     * fallback was unreachable.
+     */
     failCardUpdate: undefined,
     async updateCard(messageId, card) {
-      if (this.failCardUpdate !== undefined) {
-        const failure = this.failCardUpdate;
-        this.failCardUpdate = undefined;
-        throw failure;
-      }
+      if (this.failCardUpdate !== undefined) throw this.failCardUpdate;
       cardUpdates.push({ messageId, card });
+    },
+    failRecall: undefined,
+    async recallMessage(messageId) {
+      if (this.failRecall !== undefined) throw this.failRecall;
+      recalls.push(messageId);
     },
     // `downloadResources` reaches HTTP through `channel.rawClient`. Recording
     // the call (and failing it) proves the allowlist gate ran before any
@@ -766,6 +776,36 @@ test("the close card removes every interactive element the question card had", a
   assert.match(closeJson, /done/, "the close must still say what was answered");
 });
 
+test("a close whose redraw fails recalls the card instead of leaving its buttons live", async (t) => {
+  // Reported across several rounds: 「已经提示收到回答的，能不能主动关闭按钮的菜单选项，避免用户
+  // 再次误点」. The answer is submitted and the acknowledgement appears, yet the card keeps
+  // its buttons. The ack is sent AFTER closeMenu, so the close definitely ran; what can
+  // still fail is the redraw itself.
+  //
+  // The buttons are the problem, not the text. If the card cannot be rewritten there is no
+  // way to keep it AND disarm it, so it is removed — whatever the API's reason for refusing.
+  const { adapter, fake } = await startedAdapter();
+  t.after(() => adapter.stop());
+  const result = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "Pick", options: [{ id: "a", label: "A" }] },
+  );
+  await waitFor(() => adapter["pendingChoices"].size === 1, "prompt registration");
+  const card = fake.sends[0];
+  fake.handlers.cardAction({ messageId: card.messageId, chatId: "oc_chat", action: { tag: "button", value: { choice: "a" } } });
+  await result;
+
+  fake.failCardUpdate = new Error("230099 card patch refused");
+  // The close still rejects — the retry must see the failure — but by then the card is gone.
+  await assert.rejects(() => adapter.closeMenu(card.messageId, "answered: A"), /230099/);
+
+  assert.deepEqual(
+    fake.recalls,
+    [card.messageId],
+    "the un-redrawable card must be recalled, or its buttons stay live",
+  );
+});
+
 test("a card abandoned after a failed in-place update is disarmed, not left tappable", async (t) => {
   // Reported: after answering, the previous question card kept its buttons. In a
   // multi-question interaction the card is reused — question 2 updates question 1's card in
@@ -788,9 +828,21 @@ test("a card abandoned after a failed in-place update is disarmed, not left tapp
   await first;
 
   // The next question must update card1 in place; make that fail, which is the case under
-  // test.
+  // test. Scoped to the in-place update only: the disarm that follows is itself a card
+  // update, and a failure that covered it too would be testing the recall path instead.
   const presented = [];
-  fake.failCardUpdate = new Error("230099 element exceeds limit");
+  const updateFailure = new Error("230099 element exceeds limit");
+  fake.failCardUpdate = updateFailure;
+  const originalUpdate = fake.updateCard;
+  let failuresLeft = 1;
+  fake.updateCard = async (messageId, payload) => {
+    if (failuresLeft > 0) {
+      failuresLeft -= 1;
+      fake.failCardUpdate = undefined;
+      throw updateFailure;
+    }
+    return originalUpdate.call(fake, messageId, payload);
+  };
   const second = adapter.promptChoice(
     { chatKey: "oc_chat", chatType: "p2p" },
     { title: "Second", options: [{ id: "b", label: "B" }] },
@@ -837,13 +889,17 @@ test("a failed card close propagates, so the outbound retry can act on it", asyn
   await result;
   adapter["absorbingChoices"].delete(card.messageId);
 
-  // Make the redraw fail the way a real API failure does.
+  // Make the redraw fail the way a real API failure does. Two things must happen and they
+  // are not in conflict: the close still REJECTS, so the service-layer retry gets its
+  // chance; and the card is recalled, so a redraw that never recovers still leaves nothing
+  // tappable behind.
   fake.failCardUpdate = new Error("230099 element exceeds limit");
   await assert.rejects(
     () => adapter.closeMenu(card.messageId, "done"),
     /230099/,
     "a failed close must reject so the service-layer retry sees it",
   );
+  assert.deepEqual(fake.recalls, [card.messageId], "and the card must be recalled as the last resort");
 });
 
 test("feishu re-binding a card cancels its absorption window", async (t) => {
