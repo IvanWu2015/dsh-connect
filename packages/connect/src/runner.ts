@@ -543,24 +543,42 @@ export class AgentRunner implements MenuHost {
   private publishProgressNotice(target: OutboundTarget, text: string): void {
     const edit = this.adapter.updateText;
     const post = this.adapter.sendTextWithId;
+    const send = (): void => {
+      if (post === undefined) {
+        // No way to learn the id: keep the old behaviour rather than dropping the notice.
+        void this.adapter.sendText(target, text).catch((error: unknown) => {
+          this.warn(`connect: progress reminder could not be delivered to ${this.channel}/${this.chatKey}: ${String(error)}`);
+        });
+        return;
+      }
+      void post
+        .call(this.adapter, target, text)
+        .then((sent) => {
+          this.progressNoticeId = sent.messageId;
+        })
+        .catch((error: unknown) => {
+          this.warn(`connect: progress reminder could not be delivered to ${this.channel}/${this.chatKey}: ${String(error)}`);
+        });
+    };
     if (this.progressNoticeId !== undefined && edit !== undefined) {
       const id = this.progressNoticeId;
-      void edit.call(this.adapter, id, text).catch(() => {
+      void edit.call(this.adapter, id, text).catch((error: unknown) => {
+        // The rewrite failed. This USED to drop the notice on the floor: the id was
+        // cleared and the function returned, so the report the user configured silently
+        // stopped arriving — which is the reported symptom of "nothing after five minutes".
+        //
+        // A failed rewrite must fall back to posting, and must say so. The reminder's one
+        // job is to be read; losing it to a failed edit is the failure mode it exists to
+        // avoid, and it was reintroduced by the very change meant to stop the flooding.
         if (this.progressNoticeId === id) this.progressNoticeId = undefined;
+        this.warn(
+          `connect: rewriting the progress reminder failed (${String(error)}); posting a new one for ${this.chatKey}`,
+        );
+        send();
       });
       return;
     }
-    if (post === undefined) {
-      // No way to learn the id: keep the old behaviour rather than dropping the notice.
-      void this.adapter.sendText(target, text).catch(() => undefined);
-      return;
-    }
-    void post
-      .call(this.adapter, target, text)
-      .then((sent) => {
-        this.progressNoticeId = sent.messageId;
-      })
-      .catch(() => undefined);
+    send();
   }
 
   /**

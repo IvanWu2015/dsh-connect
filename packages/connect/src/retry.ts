@@ -103,6 +103,10 @@ export function withOutboundRetry(adapter: ChannelAdapter, options: RetryOptions
     // member this wrapper does not forward is silently absent from the adapter the runner
     // holds, so the caller sees "unsupported" and quietly posts a new message every time
     // instead of rewriting one.
+    // These four use `adapter.method!(...)` — a plain method call on the captured object, so
+    // `this` inside the adapter method is the adapter. An earlier version of the card pair
+    // read the method into a variable and called it bare, which stripped `this`; every
+    // adapter method here touches `this.channel`, so it would have thrown on first use.
     ...(adapter.sendTextWithId === undefined
       ? {}
       : {

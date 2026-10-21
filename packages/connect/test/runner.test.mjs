@@ -1072,6 +1072,38 @@ test("K3 the progress watchdog and the heartbeat both fire, both into the same c
     },
   ));
 
+test("a failed reminder rewrite still delivers the notice", () =>
+  // Reported immediately after the one-message change: 「过了5分钟后好像都没有了」. The
+  // rewrite path ended in `.catch(() => { clear the id })` — so when the edit failed, the
+  // notice was DROPPED and the function returned. The next one was five minutes away.
+  // A status report must never be lost to a failed edit; that is the one thing it is for.
+  withBridge(
+    { config: { cardLifetimeMs: 100 }, planFor: { whenIdleHoldMs: 2_000 } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-rewrite-fails", { progressTimeoutMs: 400 }));
+
+      await bridge.inbound(inboundFor("stub", "chat-rewrite-fails", { text: "a very long task" }));
+      // Wait for the first notice to be posted, then make the NEXT rewrite fail.
+      await waitFor(
+        () => adapter.sent.some((m) => m.kind === "text" && String(m.text).includes("Still working")),
+        5_000,
+      );
+      adapter.failUpdateText = new Error("230001 the message is not editable");
+
+      const before = adapter.sent.filter((m) => m.kind === "text" && String(m.text).includes("Still working")).length;
+      assert.ok(
+        await waitFor(
+          () => adapter.sent.filter((m) => m.kind === "text" && String(m.text).includes("Still working")).length > before,
+          6_000,
+        ),
+        `the notice must be posted when the rewrite fails; sent ${JSON.stringify(
+          adapter.sent.filter((m) => m.kind === "text").map((m) => String(m.text).slice(0, 30)),
+        )}`,
+      );
+    },
+  ));
+
 test("K4c repeated progress reminders rewrite one message instead of stacking up", () =>
   // Reported from a turn left running overnight: 「一晚上，会堆积无数的提醒出来」. The
   // watchdog appended a new message every interval, so a 13.6-hour turn produced over 160

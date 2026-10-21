@@ -243,7 +243,17 @@ export function recordingAdapter(id) {
       sent.push({ kind: "text", target, text, messageId });
       return { messageId };
     },
+    /**
+     * Set to an Error to make TEXT REWRITES fail, as a real API refusal would.
+     *
+     * Deliberately persistent, not one-shot: the service wraps this method in a retry with
+     * three attempts, so a single injected failure is absorbed by a retry and the caller
+     * never sees an error. A test that set a one-shot failure would watch the rewrite
+     * succeed and conclude the fallback was unreachable.
+     */
+    failUpdateText: undefined,
     async updateText(messageId, text) {
+      if (this.failUpdateText !== undefined) throw this.failUpdateText;
       sent.push({ kind: "updateText", messageId, text });
     },
     async sendCard(target, card) {
