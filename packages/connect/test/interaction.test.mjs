@@ -75,8 +75,16 @@ const untilAborted = (messageId) => ({ signal }) => new Promise((resolve) => {
  * A channel adapter stand-in. `onPrompt` decides what a prompt resolves to and
  * receives `{ index }` so a test can vary the answer per round.
  */
-function fakeAdapter({ id = "feishu", supportsChoices, onPrompt } = {}) {
+function fakeAdapter({ id = "feishu", supportsChoices, onPrompt, holdPrompts = false } = {}) {
   const calls = { prompts: [], texts: [], closed: [] };
+  /**
+   * Prompts held open by the test, so a tap can be delivered at a chosen moment.
+   *
+   * The cooldown only arms after several expiries, and waiting out a real 15-minute backoff
+   * in a test is not acceptable — so the adapter has to be able to answer late, the way a
+   * user who returns and taps the expired card does.
+   */
+  const held = { resolvers: [] };
   return {
     calls,
     adapter: {
@@ -90,12 +98,23 @@ function fakeAdapter({ id = "feishu", supportsChoices, onPrompt } = {}) {
       async streamText() {},
       async closeMenu(messageId, summary) { calls.closed.push({ messageId, summary }); },
       async promptChoice(target, prompt, updateMessageId, signal, onPresented) {
-        calls.prompts.push({ target, prompt, updateMessageId, signal });
+        calls.prompts.push({ target, prompt, updateMessageId, signal, quiet: prompt.quiet === true });
+        if (holdPrompts) {
+          // Stays pending until the test taps, so a returning user's tap is what settles it.
+          return new Promise((resolve) => { held.resolvers.push(resolve); });
+        }
         if (onPrompt === undefined) return { choice: undefined, messageId: "" };
         return onPrompt({
           target, prompt, updateMessageId, signal, onPresented,
           index: calls.prompts.length - 1,
         });
+      },
+      /** Resolve the most recent prompt with a tap, as a returning user would. */
+      tap(choice) {
+        const resolve = held.resolvers.at(-1);
+        if (resolve === undefined) return false;
+        resolve({ choice, messageId: "om_exp" });
+        return true;
       },
     },
   };
@@ -628,13 +647,75 @@ test("an unanswered question presents its card once, not once per timeout", asyn
   assert.equal(bridge.pendingFor("oc_1"), false);
 });
 
-test("an abandoned question stops being redrawn, but is still waiting", async () => {
-  // Reported: 「有一个需要人工处理的选择，但人没在，造成不断的在刷新按钮」. The card expires
-  // every 60 s and was re-presented every time, so an unanswered question repainted the chat
-  // once a minute indefinitely — all night.
+test("a tap on the expired card redraws it at once, without waiting the backoff", async () => {
+  // The reported shape: 「菜单过期，不会重新刷新，一段时间回来后，卡在那里」. A user returns to
+  // an expired card and taps it. That tap is the clearest possible "I am back" — it must
+  // revive the question immediately, not leave them waiting out a backoff that was taken
+  // while nobody was here.
+  // The first five presentations expire, which arms the cooldown. The tap must arrive AFTER
+  // that — otherwise the question is still in its fast phase and needs no reviving, and the
+  // test would pass with or without the fix (which it did, on the first attempt).
+  const { adapter, calls } = fakeAdapter({ holdPrompts: true });
+  const { bridge, harness } = bridgeFor(adapter);
+  const dispatched = answerer(harness, "user-questions/request").listener(
+    { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }] }], agent: { id: "sess-1" } },
+    next,
+  );
+
+  // Expire five ROUNDS to arm the cooldown. It is EXPIRY (an undefined choice) that advances
+  // the counter — a stale tap does not — so a test that tapped to advance would measure
+  // nothing, which is exactly what the first attempt did.
+  const deadline = Date.now() + 20_000;
+  /** Tap the current pending round and wait for the NEXT one to appear. */
+  const advance = async (choice) => {
+    const before = calls.prompts.length;
+    assert.equal(adapter.tap(choice), true, "each expiry must reach the pending prompt");
+    while (Date.now() < deadline && calls.prompts.length === before) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return calls.prompts.length > before;
+  };
+  for (let i = 0; i < 5 && Date.now() < deadline; i += 1) await advance(undefined);
+  // Armed: the most recent round must be a quiet one (listening, not repainting).
+  assert.ok(calls.prompts.length >= 5, `the budget must be spent first; rounds=${calls.prompts.length}`);
+
+  // The cooldown is now armed, so rounds are QUIET: the bridge keeps listening but stops
+  // rewriting the card. That is what makes the next assertion meaningful — counting rounds
+  // would pass with or without the fix, because quiet rounds keep arriving either way.
+  const repaints = () => calls.prompts.filter((p) => p.quiet !== true).length;
+  await advance(undefined);
+  const repairsBefore = repaints();
+  assert.ok(
+    calls.prompts.at(-1).quiet === true,
+    "the cooldown must have armed, so the latest round is quiet",
+  );
+
+  // Tapping the expired card proves the user is back: the repaint must resume at once,
+  // without waiting out a backoff taken while nobody was here.
+  assert.equal(adapter.tap("q:q1:99"), true, "the tap must reach the pending prompt");
+  while (Date.now() < deadline && repaints() <= repairsBefore) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.ok(
+    repaints() > repairsBefore,
+    `a tap must redraw the card at once; repaints still ${repaints()}`,
+  );
+
+  // Still answerable, and clean up so the process can exit.
+  assert.equal(bridge.answerText("oc_1", "A"), true);
+  await dispatched;
+});
+
+test("an abandoned question slows its redraws instead of going dead", async () => {
+  // Reported both ways, a few days apart:
+  //   「有一个需要人工处理的选择，但人没在，造成不断的在刷新按钮」 — stop the flood;
+  //   「菜单过期，不会重新刷新，一段时间回来后，卡在那里」 — but do not go dead either.
   //
-  // What must not change: the question keeps waiting. Someone who comes back can still
-  // answer, and a typed reply is still accepted. Only the redrawing is bounded.
+  // The one-way budget satisfied the first and caused the second: after five redraws the
+  // flag never cleared, so the card expired and stayed expired forever.
+  //
+  // A cooldown satisfies both. This asserts the SLOWING, and that the question still waits
+  // and can still be answered.
   const { adapter, calls } = fakeAdapter({
     // Every presentation expires unanswered, which is what drives the re-present loop.
     onPrompt: async () => ({ choice: undefined, messageId: "om_exp" }),
@@ -648,20 +729,24 @@ test("an abandoned question stops being redrawn, but is still waiting", async ()
     )
     .finally(() => { settled = true; });
 
-  // The guarantee is that the redrawing *settles*, so compare two windows rather than
-  // assuming a rate. A bounded loop presents a few times and then stops; an unbounded one
-  // keeps presenting forever, and the second window would be just as busy as the first.
-  const presentations = () => calls.prompts.length;
+  // The guarantee is the RATE, not a stop: the first few expiries redraw promptly, then the
+  // interval widens. An unthrottled loop would keep presenting at full speed through both
+  // windows; a permanently-dead one would present no more at all after the budget.
+  // Count REPAINTS, not presentations: since the cooldown fix the bridge keeps presenting
+  // during the cooldown (so taps are still heard) but marks those rounds `quiet`, and a quiet
+  // round does not rewrite the card. Repaints are what the user sees and what the flood was.
+  const repaints = () => calls.prompts.filter((p) => p.quiet !== true).length;
   await new Promise((resolve) => setTimeout(resolve, 9_000));
-  const afterFirstWindow = presentations();
+  const afterFirstWindow = repaints();
   await new Promise((resolve) => setTimeout(resolve, 4_000));
-  const afterSecondWindow = presentations();
+  const afterSecondWindow = repaints();
 
-  assert.ok(afterFirstWindow >= 2, `the card must be re-presented at least once; got ${afterFirstWindow}`);
-  assert.equal(
-    afterSecondWindow,
-    afterFirstWindow,
-    `re-presentation must stop; it kept going (${afterFirstWindow} then ${afterSecondWindow})`,
+  assert.ok(afterFirstWindow >= 2, `the card must be redrawn at least once; got ${afterFirstWindow}`);
+  // Slowed, not stopped: the first window is busy, the second adds at most one more.
+  const grew = afterSecondWindow - afterFirstWindow;
+  assert.ok(
+    grew <= 1,
+    `redraws must slow down once the question is clearly unanswered; grew by ${grew} (${afterFirstWindow} -> ${afterSecondWindow})`,
   );
   assert.equal(settled, false, "the question must still be waiting");
   assert.equal(bridge.pendingFor("oc_1"), true, "the interaction must still be pending");

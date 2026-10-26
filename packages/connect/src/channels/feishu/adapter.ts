@@ -899,6 +899,14 @@ export class FeishuAdapter implements ChannelAdapter {
       void pending.then(() => signal.removeEventListener("abort", onAbort));
     }
 
+    if (updateMessageId !== undefined && prompt.quiet === true) {
+      // Quiet round: the listener is already bound above (line ~888), which is the part that
+      // matters — a returning user's tap must be heard. Only the repaint is skipped, so a
+      // question nobody is answering stops rewriting its card every minute without becoming
+      // untouchable. This is the whole point of the split: "do not redraw" and "do not
+      // listen" are different, and conflating them left the card dead on return.
+      return pending;
+    }
     if (updateMessageId !== undefined) {
       // Reuse the existing card when possible so a menu chain stays on one card.
       // But never leave the previous menu's content on screen: if the in-place

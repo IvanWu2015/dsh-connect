@@ -86,6 +86,15 @@ export interface ChoicePrompt {
   readonly render?: ChoiceRender;
   /** Optional option id to pre-select when a channel renders a dropdown. */
   readonly initialOption?: string;
+  /**
+   * Keep listening, but do not repaint the card.
+   *
+   * Set while a question has gone unanswered long enough that redrawing it every expiry is
+   * just noise. The listener must stay armed regardless — dropping it is what made a card
+   * tapped on return do nothing at all. An adapter that cannot separate the two may ignore
+   * this; it then keeps repainting, which is the previous behaviour rather than a regression.
+   */
+  readonly quiet?: boolean;
 }
 
 /** Result of an interactive choice: the picked option and the card's message id. */

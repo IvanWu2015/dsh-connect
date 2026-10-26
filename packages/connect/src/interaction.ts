@@ -150,21 +150,35 @@ type LoopResult = "answered" | "stopped";
 const ANSWER_RACE_MS = 5_000;
 
 /**
- * How many times an expired question card is re-drawn while nobody answers.
+ * Expiries after which an unanswered question card starts redrawing slowly instead of at
+ * the normal pace.
  *
- * The card expires every 60 s; without a limit the bridge rewrites it once a minute for as
- * long as the question stays open, which overnight is hundreds of identical redraws. Five
- * covers roughly five minutes — long enough that someone who steps away and comes back
- * still finds live buttons, short enough that an abandoned question stops repainting the
- * chat. The wait itself is not affected: text replies are still accepted throughout.
+ * The card expires every 60 s. Redrawing at that pace forever is the flood; not redrawing
+ * at all leaves a dead card for anyone who returns. Five normal redraws cover ~5 minutes —
+ * enough for someone who stepped away briefly — after which the interval widens.
  */
 const MAX_REPRESENTATIONS = 5;
+
+/**
+ * How long to wait between redraws once a question has clearly gone unanswered.
+ *
+ * Long enough that an unattended night is quiet, short enough that someone coming back to
+ * an hours-old question still finds live buttons rather than a card that never refreshes.
+ */
+const REDRAW_BACKOFF_MS = 15 * 60_000;
 
 /** How a wait for a text answer ended. */
 type WaitResult = "answered" | "timeout" | "stopped";
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    // A question waiting for a human must not be the reason a process stays alive. Without
+    // this, the bridge's re-present loop holds the event loop open for as long as any
+    // question is unanswered — which is never, when the host is shutting down — and the test
+    // runner appears to hang after every assertion has passed.
+    timer.unref?.();
+  });
 }
 
 /**
@@ -417,11 +431,15 @@ export class InteractionBridge {
      * re-presented card is the one the user reads after a tap, and it must reflect
      * the current question, not the one that has since been answered.
      */
-    const buildPrompt = (): ChoicePrompt => ({
+    const buildPrompt = (quiet = false): ChoicePrompt => ({
       title: t.questionCardTitle,
       description: this.questionPromptText(interaction, q),
       options: options.map((o, i): ChoiceOption => ({ id: `q:${q.id}:${i}`, label: o.label })),
       footer: q.multiSelect === true ? `${t.questionCardHint}\n${t.questionMultiHint}` : t.questionCardHint,
+      // Set while the question has gone unanswered long enough to stop repainting. The
+      // adapter still listens, so a returning user's tap is heard; it just does not rewrite
+      // the card. See the cooldown note in the loop below.
+      ...(quiet ? { quiet: true } : {}),
     });
 
     // At most one "that tap was not usable" notice per question, so a user tapping a
@@ -446,22 +464,31 @@ export class InteractionBridge {
     let card: Promise<ChoiceResult> | undefined;
     /** How many times the card has been re-presented after expiring. */
     let representatives = 0;
-    /** Set once the re-draw budget is spent, so the reason is logged exactly once. */
-    let representationsExhausted = false;
+    /**
+     * Redraws allowed before the interval lengthens, and the interval it lengthens to.
+     *
+     * Reported both ways, and the two are in tension: 「既然没人，别一直刷屏」 and
+     * 「过一会儿回来，卡片卡住了，不会重新刷新」. A one-way budget satisfies the first and
+     * causes the second — which is what the previous version did.
+     *
+     * A cooldown satisfies both. The first few expiries redraw at the normal pace; once a
+     * question has clearly gone unanswered, redraws slow down instead of stopping. Long
+     * enough apart that an unattended night is quiet, frequent enough that someone coming
+     * back finds a live card rather than a dead one.
+     */
+    let nextRedrawAt = 0;
     while (!interaction.controller.signal.aborted && !interaction.settled) {
-      // The budget is checked HERE, before `card ??=` can present again.
+      // While cooling down the question still PRESENTS — it just does not repaint the card.
       //
-      // Checking it at the bottom of the loop — where the expiry is detected — does not
-      // stop anything: `card` has already been cleared by its own `.finally`, so the next
-      // iteration presents a fresh card at the top and only then reaches the check. The
-      // measured result was a card every five seconds despite the budget, which is exactly
-      // the "still redrawing" this is meant to end.
-      if (representationsExhausted) {
-        const waited = await this.waitForAnswer(interaction, ANSWER_RACE_MS);
-        if (interaction.answers.has(q.id)) return true;
-        if (waited === "stopped" || interaction.controller.signal.aborted || interaction.settled) break;
-        continue;
-      }
+      // The first attempt at this skipped presenting altogether, which was wrong in a way
+      // that only shows up in production: with no live prompt there is no listener, so a
+      // user who came back and tapped the expired card had their tap go nowhere and the card
+      // stayed dead. "Do not redraw" and "do not listen" are different things and had been
+      // conflated.
+      //
+      // So `quiet` tells the adapter to keep listening without rewriting the card. A tap
+      // during the cooldown proves the user is back, and the next round draws normally.
+      const quiet = Date.now() < nextRedrawAt;
       // A text reply (`answerText`) records the answer without any tap, and it may
       // already have arrived — the user who typed instead of tapping, or who typed
       // because the card would not respond. Checking here is what makes text a real
@@ -478,7 +505,7 @@ export class InteractionBridge {
       card ??= interaction.adapter
         .promptChoice(
           this.outbound(interaction),
-          buildPrompt(),
+          buildPrompt(quiet),
           interaction.messageId,
           interaction.controller.signal,
           // The card tells us its id while it is still pending. That matters for the
@@ -542,6 +569,15 @@ export class InteractionBridge {
           if (interaction.answers.has(q.id)) return true;
           continue;
         }
+        // Any tap proves the user is back at the keyboard — including a tap on the expired
+        // card, whose buttons no longer mean anything. Clear the cooldown so the next
+        // iteration redraws the question immediately: coming back should reveal live
+        // buttons on the spot, not after waiting out a backoff taken while nobody was here.
+        if (nextRedrawAt !== 0) {
+          nextRedrawAt = 0;
+          representatives = 0;
+          continue;
+        }
         this.log(
           `connect: ignored an unrecognised choice ${JSON.stringify(choice)} for question ${JSON.stringify(q.id)} (${interaction.chatKey})`,
         );
@@ -572,24 +608,20 @@ export class InteractionBridge {
       // screen for someone who returns, and the question stays pending for the host.
       if (interaction.controller.signal.aborted || interaction.settled) break;
       representatives += 1;
-      if (representatives > MAX_REPRESENTATIONS) {
-        // The budget is spent: stop presenting, keep waiting.
-        //
-        // This has to actually *skip the next presentation*, not merely stop logging —
-        // which is what the first attempt did. The loop was still going round, `card` had
-        // been cleared by its own `.finally`, and the next iteration presented another
-        // card, so the redraw continued exactly as before.
-        //
-        // Waiting on the text path only means the question is still answerable: a typed
-        // reply is checked every iteration below, and the last card the user saw keeps its
-        // contents. The host is still waiting too, so nothing is lost by not repainting.
-        if (!representationsExhausted) {
-          representationsExhausted = true;
-          this.log(
-            `connect: stopped re-drawing the question card for ${interaction.chatKey} after ${MAX_REPRESENTATIONS} expiries; still waiting for an answer (text replies still work)`,
-          );
-        }
-        // The guard at the top of the loop takes over from here.
+      // Past the first few expiries the question has clearly gone unanswered, so slow down
+      // rather than stop. Stopping was the previous behaviour, and it is why someone who
+      // came back to an unanswered question found a dead card that never refreshed again
+      // (「一段时间回来后，卡在那里」).
+      //
+      // The slowed interval is still finite, so the card comes back on its own after
+      // REDRAW_BACKOFF_MS — hours, not minutes, which keeps an unattended chat quiet
+      // without making the question unreachable.
+      if (representatives >= MAX_REPRESENTATIONS) {
+        representatives = 0;
+        nextRedrawAt = Date.now() + REDRAW_BACKOFF_MS;
+        this.log(
+          `connect: slowing question-card redraws for ${interaction.chatKey} to one per ${Math.round(REDRAW_BACKOFF_MS / 60_000)} min while it stays unanswered`,
+        );
       }
       await delay(1000);
     }
