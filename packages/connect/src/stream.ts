@@ -320,7 +320,19 @@ export function summarizeTurn(events: readonly SessionEvent[], firstSeq: number)
         .filter((block) => block.type === "text")
         .map((block) => block.text)
         .join("");
-      if (joined !== "") text = joined;
+      if (joined !== "") {
+        // ACCUMULATE, do not replace.
+        //
+        // This used to be `text = joined`, which kept only the LAST assistant message of the
+        // turn. On a 67-step task with 45 narrated messages that reported a 26-character
+        // fragment (「看清了三条要求。逐一修改测试夹具。**① 正文要」, itself cut mid-sentence)
+        // as the turn's 「已产出」, and the user reasonably concluded the task had not finished.
+        //
+        // Every caller treats `text` as the turn's complete output — the summary card calls it
+        // "the full answer", and the stats card relies on it because under a quiet level that
+        // card is the only place the answer appears. Keeping one fragment silently broke that.
+        text = text === "" ? joined : `${text}\n\n${joined}`;
+      }
     }
     if (event.type === "turn/end") {
       turnEndTime = typeof event.time === "number" ? event.time : undefined;

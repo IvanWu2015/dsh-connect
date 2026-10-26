@@ -107,6 +107,38 @@ test("createAsyncQueue delivers items in order then ends", async () => {
   assert.deepEqual(received, ["a", "b"]);
 });
 
+test("summarizeTurn reports every assistant message, not just the last", () => {
+  // Reported from a real 67-step turn: 「📊 任务完成 / 已产出：看清了三条要求。逐一修改测试夹具。**①
+  // 正文要」 — a fragment cut mid-sentence, which read as a task that had stopped early.
+  //
+  // The turn had 45 assistant messages; `text = joined` kept only the last one. Every caller
+  // treats `outcome.text` as the turn's complete output (the summary card's own comment calls
+  // it "the full answer"), so the overwrite broke the contract silently.
+  const events = [
+    { seq: 0, type: "turn/start", data: { turn: 1 } },
+    { seq: 1, type: "assistant/message", data: { turn: 1, step: 1, message: { content: [{ type: "text", text: "第一步：看清要求。" }] } } },
+    { seq: 2, type: "assistant/message", data: { turn: 1, step: 2, message: { content: [{ type: "text", text: "第二步：改测试夹具。" }] } } },
+    { seq: 3, type: "assistant/message", data: { turn: 1, step: 3, message: { content: [{ type: "text", text: "**① 正文要" }] } } },
+    { seq: 4, type: "turn/end", data: { turn: 1, reason: { kind: "completed" } } },
+  ];
+  const outcome = summarizeTurn(events, 0);
+  assert.match(outcome.text, /第一步：看清要求。/, "the earliest text must survive");
+  assert.match(outcome.text, /第二步：改测试夹具。/, "middle text must survive");
+  assert.match(outcome.text, /① 正文要$/, "and the final message must be the end of the report");
+});
+
+test("summarizeTurn ignores assistant messages with no text", () => {
+  // A tool-only step carries content blocks but no text. It must not add blank separators.
+  const events = [
+    { seq: 0, type: "turn/start", data: { turn: 1 } },
+    { seq: 1, type: "assistant/message", data: { turn: 1, step: 1, message: { content: [{ type: "text", text: "before" }] } } },
+    { seq: 2, type: "assistant/message", data: { turn: 1, step: 2, message: { content: [{ type: "tool-call" }] } } },
+    { seq: 3, type: "turn/end", data: { turn: 1, reason: { kind: "completed" } } },
+  ];
+  const outcome = summarizeTurn(events, 0);
+  assert.equal(outcome.text, "before", "a text-free step must not change the accumulation");
+});
+
 test("summarizeTurn derives a completed outcome", () => {
   const events = [
     { seq: 0, type: "turn/start", data: { turn: 1 } },
