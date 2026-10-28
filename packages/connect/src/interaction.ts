@@ -171,14 +171,17 @@ const REDRAW_BACKOFF_MS = 15 * 60_000;
 type WaitResult = "answered" | "timeout" | "stopped";
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    // A question waiting for a human must not be the reason a process stays alive. Without
-    // this, the bridge's re-present loop holds the event loop open for as long as any
-    // question is unanswered — which is never, when the host is shutting down — and the test
-    // runner appears to hang after every assertion has passed.
-    timer.unref?.();
-  });
+  // Deliberately NOT unref'd.
+  //
+  // A brief attempt unref'd this so a test runner would stop after its assertions had passed.
+  // That was the wrong lever, and CI proved it: in a bare child process these timers are the
+  // only handles, so unref lets Node exit while a test's promise is still pending —
+  // "Promise resolution is still pending but the event loop has already resolved" — which
+  // failed 36 tests on CI while passing on a developer machine that had other handles around.
+  //
+  // The hang belonged to a test that left an interaction pending; it is fixed there, by
+  // disposing the bridge the way the host does when it unloads a plugin.
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

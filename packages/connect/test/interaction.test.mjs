@@ -16,7 +16,7 @@
  * - and always able to say `next()`, so an unclaimed request still reaches the
  *   host's normal path.
  */
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -37,13 +37,34 @@ const tempDir = () => mkdtempSync(join(tmpdir(), "dsh-connect-interaction-"));
 /** Minimal cordis context: records listeners so a test can drive a waterfall. */
 function fakeContext() {
   const listeners = new Map();
+  /**
+   * Teardown functions registered through `ctx.effect`.
+   *
+   * Cordis runs these when the plugin unloads. The bridge uses one to settle every pending
+   * interaction, and ignoring it is why the suite used to hang after its assertions passed:
+   * an unanswered question kept its re-present loop (and its timers) alive for ever.
+   * `dispose()` lets a test wind that down the way the host does.
+   */
+  const disposers = [];
+  afterEach(() => {
+    // Running the registered teardowns is what settles pending interactions: the bridge's
+    // own `ctx.effect` teardown aborts every in-flight card, so its re-present loop unwinds
+    // instead of keeping the process alive.
+    for (const d of disposers.splice(0)) {
+      try { d?.(); } catch { /* a teardown failure must not mask the real result */ }
+    }
+  });
   return {
     listeners,
+    /** No bridge registry: the bridge's own effect teardown is what has to run. */
+    track() {},
     ctx: {
       get() { return undefined; },
       effect(callback) {
         const dispose = callback();
-        return () => { dispose?.(); };
+        const fn = () => { dispose?.(); };
+        disposers.push(fn);
+        return fn;
       },
       on(name, listener, options) {
         const entry = { listener, options };
@@ -145,6 +166,7 @@ function bridgeFor(adapter, bindingOverrides = {}) {
     // tests about the signal itself pass their own resolver.
     () => true,
   );
+  harness.track(bridge);
   return { bridge, harness, bindings };
 }
 
@@ -179,7 +201,8 @@ function twoSurfaceBridge({ driving }) {
     lastActiveAt: 1,
   });
   const feishu = fakeAdapter({ id: "feishu", onPrompt: async () => ({ choice: undefined, messageId: "om_f" }) });
-  const web = fakeAdapter({ id: "web", onPrompt: async () => ({ choice: undefined, messageId: "om_w" }) });
+  // Held open so the routing tests can answer after asserting where the question went.
+  const web = fakeAdapter({ id: "web", holdPrompts: true });
   const harness = fakeContext();
   const bridge = new InteractionBridge(
     harness.ctx,
@@ -188,6 +211,7 @@ function twoSurfaceBridge({ driving }) {
     resolveConnectConfig({}),
     driving,
   );
+  harness.track(bridge);
   return { bridge, harness, feishu, web };
 }
 
@@ -773,8 +797,8 @@ test("a question goes to the surface the user is typing in, not the first bindin
   // raised from the PC arrived in chat, where the user was not looking.
   //
   // The reliable signal is which runner is mid-turn: the surface the message came from.
-  const { bridge, harness } = twoSurfaceBridge({ driving: (channel) => channel === "web" });
-  void answerer(harness, "user-questions/request").listener(
+  const { bridge, harness, web } = twoSurfaceBridge({ driving: (channel) => channel === "web" });
+  const dispatched = answerer(harness, "user-questions/request").listener(
     { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }] }], agent: { id: "sess-1" } },
     next,
   );
@@ -783,6 +807,14 @@ test("a question goes to the surface the user is typing in, not the first bindin
   // It must be presented on the web surface, and not on Feishu.
   assert.equal(bridge.pendingFor("web-1"), true, "the question must be claimed by the Web surface");
   assert.equal(bridge.pendingFor("oc_1"), false, "Feishu must not be claimed");
+
+  // Answer it before returning. Leaving the waterfall promise pending leaves node:test
+  // waiting on a promise that can never settle -- the suite then never exits, with zero live
+  // handles, which is exactly the CI failure "Promise resolution is still pending but the
+  // event loop has already resolved".
+  assert.equal(web.adapter.tap("q:q1:0"), true, "the holding adapter must accept the tap");
+  const answer = await dispatched;
+  assert.deepEqual(answer.answers, [{ id: "q1", selected: ["A"] }]);
 });
 
 test("a question from a turn no chat is driving falls through to the host", async () => {
