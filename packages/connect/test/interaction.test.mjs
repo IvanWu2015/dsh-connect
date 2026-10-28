@@ -139,6 +139,11 @@ function bridgeFor(adapter, bindingOverrides = {}) {
     new Map([[adapter.id, adapter]]),
     bindings,
     resolveConnectConfig({}),
+    // A question raised while a chat binding is in play is, by construction, a turn that
+    // chat drove -- that is the only way this package hears about a message. Routing now
+    // requires that signal (see claimTarget), so the single-surface default must report it;
+    // tests about the signal itself pass their own resolver.
+    () => true,
   );
   return { bridge, harness, bindings };
 }
@@ -780,17 +785,24 @@ test("a question goes to the surface the user is typing in, not the first bindin
   assert.equal(bridge.pendingFor("oc_1"), false, "Feishu must not be claimed");
 });
 
-test("with nothing driving, the original binding order still decides", async () => {
-  // The fallback matters: a question raised outside any turn (a scheduled hook, say) has
-  // no busy surface to prefer, and must still be delivered somewhere.
+test("a question from a turn no chat is driving falls through to the host", async () => {
+  // The reported case, twice: 「我直接在PC端上发内容，但提问的按钮…去到了飞书」.
+  //
+  // A turn started in the desktop Web GUI never passes through a channel adapter, so no
+  // runner is driving it. Claiming a binding anyway — which the previous fallback did — took
+  // the question to Feishu, where the user was not looking. Worse, claiming it also stops the
+  // host from rendering its own question UI, so the desktop user saw nothing at all.
+  //
+  // With nothing driving, the request must be handed straight back: `next()` is what lets
+  // the GUI show the question in the window the user is actually typing in.
   const { bridge, harness } = twoSurfaceBridge({ driving: () => false });
-  const dispatched = answerer(harness, "user-questions/request").listener(
+  const answer = await answerer(harness, "user-questions/request").listener(
     { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }] }], agent: { id: "sess-1" } },
     next,
   );
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.ok(bridge.pendingFor("oc_1"), "with no busy surface, the first binding still gets it");
-  void dispatched;
+  assert.equal(answer, NEXT, "the request must fall through to the host");
+  assert.equal(bridge.pendingFor("oc_1"), false, "Feishu must not be claimed");
+  assert.equal(bridge.pendingFor("web-1"), false, "nor the web mirror, which cannot present");
 });
 
 test("the card is closed before the acknowledgement is sent", async () => {

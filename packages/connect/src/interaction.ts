@@ -807,16 +807,26 @@ export class InteractionBridge {
       if (this.pending.has(binding.chatKey)) continue;
       candidates.push({ binding, adapter });
     }
-    if (candidates.length <= 1) return candidates[0];
-    // More than one surface can reach this session — a chat and its Web GUI mirror, for
-    // instance. Ask the one the user is actually typing in, which is the one whose runner
-    // is mid-turn right now.
+    if (candidates.length === 0) return undefined;
+    // Claim a question ONLY when a chat channel is driving the turn right now.
     //
-    // Order alone is not a routing policy: taking the first match meant a question raised
-    // from the PC was delivered to Feishu, where the user was not looking and could not
-    // answer, so the turn blocked with a card they could not reach.
-    const busy = candidates.find((c) => this.isDriving(c.binding.channel, c.binding.chatKey));
-    return busy ?? candidates[0];
+    // That is the one unambiguous signal that the user is on that channel: they sent a
+    // message and are waiting. Every other case — a turn started in the desktop Web GUI, a
+    // scheduled hook, anything the host began on its own — must NOT be claimed, so the
+    // request falls through to `next()` and the host renders its own question UI wherever
+    // the user actually is.
+    //
+    // Claiming on binding ORDER as a fallback is what hijacked desktop questions into
+    // Feishu. It cannot be fixed by preferring a busier surface, because the WebAdapter
+    // declares `supportsChoices = false` and never appears in `candidates` at all — there
+    // was never a web candidate to prefer. Falling through is the only route that reaches
+    // the GUI.
+    //
+    // The mirrored-session case is exactly this: a session reachable from a chat *and* from
+    // the GUI. If the chat's runner is busy, the message came from the chat, so the chat
+    // gets the question. If nothing is busy, the turn came from the GUI, and the host
+    // handles it.
+    return candidates.find((c) => this.isDriving(c.binding.channel, c.binding.chatKey));
   }
 
   /** Stop presenting and drop the interaction (answered, cancelled, or torn down). */
