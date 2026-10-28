@@ -2,6 +2,38 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.17] - 2026-10-28
+
+Nine fixes, most of them for behaviour that only shows up when a question goes unanswered or a
+turn runs long. Several of these are corrections to 1.0.16 — including one where the earlier
+fix caused the next problem.
+
+### Fixed
+
+- **A desktop question was delivered to Feishu.** Reported twice as 「我直接在PC端上发内容，但提问的按钮…去到了飞书」, and it took two attempts. A question only reaches this package through a channel adapter, and a runner exists only when a message arrives that way — a turn started in the desktop Web GUI never touches dsh-connect, so no runner was driving it. The old code then fell back to binding order, which is Feishu. Preferring a "busy" surface could never help: the WebAdapter declares `supportsChoices = false` and its outbound methods are no-ops by design, so it is never even a candidate. A question is now claimed only when some channel is driving the turn right now; everything else is handed back to the host, which is what lets the GUI render its own question UI. *Claiming is now the exception, not the rule.*
+- **An expired question card never came back.** Reported as 「菜单过期，不会重新刷新，一段时间回来后，卡在那里」 — caused by the 1.0.16 anti-flood change. Capping redraws at five and then setting a flag that never cleared stopped the flood and killed the question with it. The cap is now a cooldown that suppresses only the *repaint*: the listener stays armed, so a returning user's tap is heard, and any tap clears the cooldown so the card redraws immediately. "Do not redraw" and "do not listen" were conflated; they are now separate.
+- **A turn reported only its last assistant message as the result.** Reported as 「好像没处理完就结束了」 with a card ending mid-sentence. The turn had 67 steps and 45 assistant messages, and `summarizeTurn` assigned `text = joined` per message, so each replaced the previous one — the card showed the 26-character final fragment while every earlier conclusion, including the actual answer, was discarded. Text is now accumulated. On the reported turn that is 2,896 characters, inside every channel's limit.
+- **A failed reminder rewrite dropped the notice.** Introduced by 1.0.16's single-message change and reported as 「过了5分钟后好像都没有了」. The rewrite path ended in a `.catch` that cleared the id and returned, so a failed edit silently discarded the report the user had configured. A failed rewrite now posts instead, and says so in the log.
+- **A question card left live buttons after its redraw failed.** The redraw failure now recalls the card as a last resort, so the buttons cannot survive a rewrite the API refuses. The failure still propagates, keeping the retry's chance at a transient refusal.
+- **An abandoned card in a question chain was never disarmed.** When an in-place update failed mid-chain a fresh card was sent and the old one was left with live buttons. A comment claimed they had "died"; a rejected API call changes nothing. The abandoned card is now rewritten to an expired notice.
+
+### Changed
+
+- **A run-away progress reminder now updates one message instead of stacking.** Reported from a turn left overnight at 「已进行 820 分钟」: a 13.6-hour turn produced over 160 near-identical bubbles, each restating the elapsed time. The first notice posts; every later one rewrites it. Adapters gain an optional `sendTextWithId`/`updateText` pair for this, forwarded through the retry wrapper.
+- **An unanswered question slows its redraws instead of stopping.** The first expiries redraw at the normal pace; after that the interval widens to 15 minutes, so an unattended night stays quiet without making the question unreachable.
+
+### Documentation
+
+- **The repository page now leads with the chat itself**, and the settings screenshots were cut from 24 to 18 across the four READMEs. The previous release added the chat screenshots to the *package* README only — GitHub shows the one at the repository root, which had none.
+
+### Testing
+
+- **643 tests, 31 suites, green**, plus E2E OK against both a mock and a live host, re-verified against DSH 0.2.1-rc.3.
+- Every fix was verified to fail against the code it guards first. Two are worth recording:
+  - The desktop-routing test does not merely fail with the old fallback — it **hangs**, because the question is claimed by Feishu and nothing can answer it. That is the reported symptom reproduced exactly.
+  - Three tests were written twice because they passed against the unfixed code: they counted presentations where they should have counted *repaints*, or advanced a counter on a path that does not increment it.
+- The interaction suite also stopped exiting cleanly — a pre-existing hang, reproduced against the previous commit. The loop's delay is now `unref`'d, the same policy the answer-waiter timer already followed: a question waiting for a human should not keep a process alive.
+
 ## [1.0.16] - 2026-10-17
 
 A batch of fixes for things that only misbehave on long runs, plus the screenshots the README never had. **Not yet published.**
