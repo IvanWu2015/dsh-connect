@@ -160,6 +160,15 @@ const ANSWER_RACE_MS = 5_000;
 const MAX_REPRESENTATIONS = 5;
 
 /**
+ * The choice value the expired card's "tap to continue" button sends.
+ *
+ * Not an answer — a request to show the question again. Distinguishing it from a real choice
+ * is what lets the card stay useful indefinitely without pretending a button press was an
+ * option selection.
+ */
+const REVIVE_CHOICE = "revive";
+
+/**
  * How long to wait between redraws once a question has clearly gone unanswered.
  *
  * Long enough that an unattended night is quiet, short enough that someone coming back to
@@ -546,6 +555,14 @@ export class InteractionBridge {
       // last real id so the next round still targets the right message.
       if (messageId !== "") interaction.messageId = messageId;
       if (choice !== undefined) {
+        // The expired card's "tap to continue" button. It carries no answer — it asks for the
+        // question to be shown again, which is exactly what someone returning to a dead card
+        // wants. Handle it before choice decoding so it never reads as a bad tap.
+        if (choice === REVIVE_CHOICE) {
+          nextRedrawAt = 0;
+          representatives = 0;
+          continue;
+        }
         const answer = decodeChoice(q, choice);
         if (answer !== undefined) {
           this.recordAnswer(interaction, q.id, answer);

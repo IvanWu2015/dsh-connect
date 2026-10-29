@@ -131,7 +131,11 @@ function choiceIdOf(evt: CardActionEvent): string | undefined {
   if (evt.action.tag === "select_static" || evt.action.tag === "select_person") {
     return evt.action.option;
   }
-  const value = evt.action.value as { choice?: string } | undefined;
+  const value = evt.action.value as { choice?: string; revive?: string } | undefined;
+  // The expired card's "tap to continue" button: not an answer, a request to show the
+  // question again. It is decoded here so the tap travels the same path as a real choice and
+  // the bridge can recognise it (see REVIVE_CHOICE).
+  if (value?.revive !== undefined) return "revive";
   return value?.choice;
 }
 
@@ -342,6 +346,20 @@ interface PendingChoice {
 const CHOICE_TIMEOUT_MS = 60_000;
 
 /**
+ * How long a question card stays live before it collapses to the "tap to continue" notice.
+ *
+ * A module-level binding rather than a literal at the call site only so a test can shorten it:
+ * the revive path is what stops a pending question becoming unreachable, and waiting a real
+ * minute per assertion would make that path untestable.
+ */
+let choiceTimeoutMs = CHOICE_TIMEOUT_MS;
+
+/** Test-only: shorten the choice expiry. Never called in production. */
+export function setChoiceTimeoutForTests(ms: number): void {
+  choiceTimeoutMs = ms;
+}
+
+/**
  * How long taps on a card stay swallowed after its prompt retired.
  *
  * Between an answer and the next render the card still shows buttons that are
@@ -359,6 +377,15 @@ export class FeishuAdapter implements ChannelAdapter {
   private readonly pendingChoices = new Map<string, PendingChoice>();
   /** Cards whose prompt just retired: their taps are mid-redraw noise, not staleness. */
   private readonly absorbingChoices = new Map<string, NodeJS.Timeout>();
+  /**
+   * Cards whose expired state showed a "tap to continue" button, keyed to the callback that
+   * asks the bridge to present the question again.
+   *
+   * Expiry retires the prompt, so there is no `pendingChoices` entry to resolve when the user
+   * taps — without this the tap would be reported as a stale action on a card that is
+   * deliberately still offering a way back.
+   */
+  private readonly pendingRevives = new Map<string, () => void>();
   /** Cards whose stale-button tap was already noticed (dedupe, self-clearing). */
   private readonly staleNoticed = new Set<string>();
   private readonly staleTimers = new Set<NodeJS.Timeout>();
@@ -580,6 +607,14 @@ export class FeishuAdapter implements ChannelAdapter {
     });
 
     this.channel.on("cardAction", (evt: CardActionEvent) => {
+      // A tap on the expired card's "tap to continue" button has no live prompt behind it:
+      // expiry retired the listener on purpose, and the bridge is re-presenting on its own
+      // schedule. Hand the revive straight to whoever is waiting on this card so the question
+      // is drawn again immediately, instead of telling the user the action has expired.
+      if (choiceIdOf(evt) === "revive") {
+        this.pendingRevives.get(evt.messageId)?.();
+        return;
+      }
       const pending = this.pendingChoices.get(evt.messageId);
       if (pending === undefined) {
         // A tap landing while the card is mid-redraw (answered a moment ago, or
@@ -853,18 +888,43 @@ export class FeishuAdapter implements ChannelAdapter {
       // would tear down whichever prompt replaced it.
       if (this.pendingChoices.get(boundId)?.timer !== timer) return;
       const id = boundId;
+      // The prompt is STILL WAITING, so the card must stay usable.
+      //
+      // The old expiry retired the listener and greyed the card out. On a real turn that left
+      // the chat holding a dead card for five and a half hours while the agent waited on the
+      // answer — the user was at the PC, watching 「思考中」, with no way to reply in chat and
+      // nothing on screen saying why. The card was the only route to unblocking it.
+      //
+      // So the button becomes a revive: one tap re-arms the prompt. That satisfies the flood
+      // complaint too — the card is not rewritten every minute; it becomes a single stable
+      // "tap to continue" that costs nothing while nobody is there.
       retire(id);
+      // Registered BEFORE the redraw, so the button works the moment it is visible.
+      this.pendingRevives.set(id, () => {
+        this.pendingRevives.delete(id);
+        resolvePending({ choice: "revive", messageId: id });
+      });
       void (async () => {
-        // Replace the stale menu with an expired notice instead of leaving it silent.
         await this.channel
           .updateCard(id, {
             header: { title: { tag: "plain_text", content: this.t.menuExpired }, template: "grey" },
-            elements: [{ tag: "note", elements: [{ tag: "plain_text", content: this.t.menuExpiredHint }] }],
+            elements: [
+              { tag: "note", elements: [{ tag: "plain_text", content: this.t.menuExpiredHint }] },
+              {
+                tag: "action",
+                actions: [{
+                  tag: "button",
+                  text: { tag: "plain_text", content: this.t.menuReviveLabel },
+                  type: "primary",
+                  value: { revive: "1" },
+                }],
+              },
+            ],
           })
           .catch(() => undefined);
         resolvePending({ choice: undefined, messageId: id });
       })();
-    }, CHOICE_TIMEOUT_MS);
+    }, choiceTimeoutMs);
 
     /**
      * Install the tap listener on `id`. Registering BEFORE the async card

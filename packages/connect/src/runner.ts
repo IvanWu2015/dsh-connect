@@ -1370,7 +1370,15 @@ export class AgentRunner implements MenuHost {
           const sinceStart = turn?.startedAt ?? this.workStartedAt;
           const minutes = sinceStart === undefined ? 1 : Math.max(1, Math.round((Date.now() - sinceStart) / 60_000));
           const status = turn?.milestone ?? this.lastMilestone ?? this.t.progressThinking;
-          this.publishProgressNotice(this.target(msg), this.t.progressReminder(minutes, status));
+          // Deliberately NOT `this.target(msg)`: that carries `replyRef`, and replying
+          // quotes the user's original message above every notice. On a long turn that
+          // re-quotes a paragraph of text each time, which is what made the transcript
+          // unreadable (「回复 吴鑫: <整条原消息>」 before every line). A recurring status line
+          // belongs in the chat, not as an answer to one message.
+          this.publishProgressNotice(
+            { chatKey: this.chatKey, chatType: this.chatType },
+            this.t.progressReminder(minutes, status),
+          );
         }, watchdogTickMs)
       : undefined;
 

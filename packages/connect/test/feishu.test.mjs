@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { FeishuAdapter, padLabels, buildButtonGrid, buildSelectMenu, buildChoiceElements, sanitizeFileName, extractErrorDetail, encodeChatKey, decodeChatKey, classifyFeishuFile, loadCredentials } from "../lib/channels/feishu/index.js";
+import { FeishuAdapter, padLabels, buildButtonGrid, buildSelectMenu, buildChoiceElements, sanitizeFileName, extractErrorDetail, encodeChatKey, decodeChatKey, classifyFeishuFile, loadCredentials, setChoiceTimeoutForTests } from "../lib/channels/feishu/index.js";
 import { feishuMessages } from "../lib/channels/feishu/i18n.js";
 
 test("padLabels pads CJK labels to equal display width", () => {
@@ -486,6 +486,9 @@ function fakeChannel() {
 
 /** Build an adapter whose private channel is a stub, then start it. */
 async function startedAdapter(config = {}, options = {}) {
+  // The choice expiry is a module constant; shortening it is the only way a test can reach
+  // the expired-card path without waiting a real minute.
+  if (options.shortChoiceTimeout === true) setChoiceTimeoutForTests(40);
   const adapter = new FeishuAdapter(
     { appId: "cli_test", appSecret: "sec_test", transport: "websocket", ...config },
     options.logger,
@@ -804,6 +807,48 @@ test("a close whose redraw fails recalls the card instead of leaving its buttons
     [card.messageId],
     "the un-redrawable card must be recalled, or its buttons stay live",
   );
+});
+
+test("an expired question card keeps a way back instead of going dead", async (t) => {
+  // Reported live: a question asked at 13:52 was answered at 19:18 — five and a half hours
+  // later. The user was at the PC watching 「思考中」 while the chat held a grey card with no
+  // live buttons: the only route to unblocking the turn was unusable.
+  //
+  // Expiry retired the listener and greyed the card. It now keeps a revive button, so a
+  // pending question stays reachable without redrawing every minute.
+  const { adapter, fake } = await startedAdapter({}, { shortChoiceTimeout: true });
+  t.after(() => adapter.stop());
+
+  const first = adapter.promptChoice({ chatKey: "oc_chat", chatType: "p2p" }, {
+    title: "Pick",
+    options: [{ id: "a", label: "A" }],
+  });
+  await waitFor(() => fake.sends.length === 1, "the question card");
+  const cardId = fake.sends[0].messageId;
+  const expired = await first;
+  assert.equal(expired.choice, undefined, "expiry still resolves the prompt so the loop can re-present");
+
+  const grey = fake.cardUpdates.find((u) => u.messageId === cardId);
+  assert.ok(grey, "the card must be rewritten on expiry");
+  const json = JSON.stringify(grey.card);
+  assert.match(json, /"revive":"1"/, "the expired card must offer a way back");
+  assert.match(json, /still waiting|还在等你回答/, "and say the question is still pending");
+
+  // The bridge may be backing off, so the tap must reach it rather than be reported stale.
+  const noticesBefore = fake.sends.length;
+  fake.handlers.cardAction({ messageId: cardId, chatId: "oc_chat", action: { tag: "button", value: { revive: "1" } } });
+  await tick();
+  assert.equal(fake.sends.length, noticesBefore, "a revive tap must not be answered with a stale notice");
+
+  // Once re-presented, the card accepts a real answer again.
+  const second = adapter.promptChoice({ chatKey: "oc_chat", chatType: "p2p" }, {
+    title: "Pick",
+    options: [{ id: "a", label: "A" }],
+  }, cardId);
+  await tick();
+  fake.handlers.cardAction({ messageId: cardId, chatId: "oc_chat", action: { tag: "button", value: { choice: "q:a:0" } } });
+  const answered = await second;
+  assert.equal(answered.choice, "q:a:0", "the revived card must accept the answer");
 });
 
 test("a card abandoned after a failed in-place update is disarmed, not left tappable", async (t) => {

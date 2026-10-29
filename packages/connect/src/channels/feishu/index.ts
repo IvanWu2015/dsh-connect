@@ -14,6 +14,8 @@ import { CHANNEL_SECRET_KEYS } from "../../settings/credential-store.js";
 export { FeishuAdapter } from "./adapter.js";
 export type { FeishuConfig } from "./adapter.js";
 export { padLabels, buildButtonGrid, buildSelectMenu, buildChoiceElements, sanitizeFileName, extractErrorDetail, classifyFeishuFile } from "./adapter.js";
+/** Test-only: shortens the question-card expiry so its revive path can be exercised. */
+export { setChoiceTimeoutForTests } from "./adapter.js";
 export { encodeChatKey, decodeChatKey } from "../../chat-key.js";
 export { loadCredentials, onboardFeishu, saveCredentials } from "./onboard.js";
 export type { FeishuCredentials } from "./onboard.js";

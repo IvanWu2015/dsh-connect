@@ -15,6 +15,8 @@ export interface FeishuMessages {
   fileDownloadError(failed: number, detail: string): string;
   menuExpired: string;
   menuExpiredHint: string;
+  /** Button on an expired card that brings the pending question back. */
+  menuReviveLabel: string;
   /** Shown when the user taps a button on a card whose interaction is no longer pending. */
   actionStale: string;
   doneHeader: string;
@@ -48,7 +50,8 @@ const zh: FeishuMessages = {
   fileDownloadError: (failed, detail) =>
     `有 ${failed} 个文件下载失败，请按上面的错误详情确认飞书应用权限（下载用户消息文件需要 im:message 系列权限）并重新发版${detail}`,
   menuExpired: "菜单已过期",
-  menuExpiredHint: "请重新打开菜单。",
+  menuExpiredHint: "这个问题还在等你回答，点下面的按钮可以重新显示选项。",
+  menuReviveLabel: "🔄 显示选项",
   actionStale: "⚠️ 此操作已失效（可能已被处理或已过期）。",
   doneHeader: "✅ 完成",
   onboardingEnter: "connect-feishu: 未配置 appId/appSecret，进入一键接入模式（扫码或点击链接自动创建飞书应用）。",
@@ -79,7 +82,8 @@ const en: FeishuMessages = {
   fileDownloadError: (failed, detail) =>
     `Failed to download ${failed} file(s). Check the Feishu app permissions per the error detail above (downloading user-message files requires the im:message family) and release a new version${detail}`,
   menuExpired: "Menu expired",
-  menuExpiredHint: "Please reopen the menu.",
+  menuExpiredHint: "This question is still waiting for you — tap below to show the options again.",
+  menuReviveLabel: "🔄 Show options",
   actionStale: "⚠️ This action is no longer active (already handled or expired).",
   doneHeader: "✅ Done",
   onboardingEnter: "connect-feishu: no appId/appSecret configured — entering one-click onboarding (scan or open the link to auto-create the Feishu app).",
