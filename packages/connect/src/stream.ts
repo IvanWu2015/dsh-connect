@@ -362,6 +362,41 @@ export function summarizeTurn(events: readonly SessionEvent[], firstSeq: number)
   };
 }
 
+/**
+ * Error codes that mean "the request never got an answer because the network or the provider
+ * gave up" — the class of failure a retry can actually cure.
+ *
+ * Measured over 641 real sessions: TIMEOUT (30) and TRANSPORT (5) dominate, and both are
+ * transient by nature. Excluded on purpose: QUOTA and MISSING_CREDENTIAL (retrying cannot fix
+ * an exhausted balance or an absent key, and would just bill again), MALFORMED_RESPONSE (an
+ * unusable completion tends to repeat), and any unrecognised code — an unknown failure is not
+ * evidence that waiting helps.
+ */
+const RESUMABLE_CODES = new Set(["TIMEOUT", "TRANSPORT"]);
+
+/**
+ * Should this finished turn be resumed automatically?
+ *
+ * The classification is the whole feature: a false positive continues work that already
+ * finished, which on a metered model also bills for it. So the test is deliberately narrow.
+ *
+ * `error` is the only reason that means "the work stopped without completing and without
+ * anyone asking it to". The rest are excluded for reasons that matter:
+ *
+ *   - `completed` — done. Resuming repeats finished work.
+ *   - `aborted` — the USER stopped it. Restarting what the user stopped is the worst thing
+ *     this could do.
+ *   - `interrupted` — the host is shutting the run down; there is nothing to resume into.
+ *   - `blocked` — waiting on input or a decision; resending does not unblock it.
+ *   - `max-tokens` — a budget the user set, not a fault.
+ *   - `unknown` — no reason recorded is not evidence of a resumable failure.
+ */
+export function isResumableFailure(reason: TurnReason, code: string | undefined): boolean {
+  if (reason !== "error") return false;
+  // A code is required: an error with no code cannot be shown to be a transport problem.
+  return code !== undefined && RESUMABLE_CODES.has(code);
+}
+
 export function truncate(text: string, max = 500): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
 }

@@ -111,6 +111,13 @@ export function cards(adapter) {
 export function scriptedAgent(id, plan = {}) {
   const {
     answer = "answer",
+    /**
+     * The `turn/end` reason, or a function of the turn ordinal (1-based).
+     *
+     * A function is what makes automatic resume testable: the plan is bound when the agent is
+     * CREATED, so a fixed `"error"` would fail every retry too and a fixed `"completed"` could
+     * never fail once. The ordinal lets one script say "fail the first turn, succeed after".
+     */
     reason = "completed",
     usage = { inputTokens: 1234, outputTokens: 56, cacheReadTokens: 0 },
     context = true,
@@ -139,6 +146,13 @@ export function scriptedAgent(id, plan = {}) {
     // and the *edit* path — the one production actually uses, where a plan is revised
     // seconds apart — is never exercised.
     todoWriteDelayMs = 0,
+    /**
+     * Error code attached to the `turn/end` when `reason` is `"error"`.
+     *
+     * Needed to exercise automatic resume, which resumes only on a *known transient* code —
+     * an error without one is deliberately left alone.
+     */
+    errorCode,
   } = plan;
 
   const ctx = new Context();
@@ -157,6 +171,10 @@ export function scriptedAgent(id, plan = {}) {
     /** How many turns this agent has been asked to run. */
     async followup(message) {
       agent.followupCalls.push(message);
+      /** 1-based turn counter, so a scripted plan can differ between the original and a retry. */
+      const turnOrdinal = agent.followupCalls.length;
+      const turnReason = typeof reason === "function" ? reason(turnOrdinal) : reason;
+      const turnAnswer = typeof answer === "function" ? answer(turnOrdinal) : answer;
       const emit = (type, data) => {
         const event = { seq: ++seq, time: Date.now(), type, data };
         events.push(event);
@@ -179,7 +197,7 @@ export function scriptedAgent(id, plan = {}) {
       for (const tool of toolCalls) {
         emit("tool/call", { name: tool, arguments: JSON.stringify({ description: `${tool} running` }) });
       }
-      if (answer !== "") {
+      if (turnAnswer !== "") {
         // The live delta feed: this is what drives the streaming card and sets
         // `turn.lastText`. It is a separate event from `session/event`.
         ctx.emit("agent/assistant-stream", {
@@ -189,21 +207,24 @@ export function scriptedAgent(id, plan = {}) {
             revision: 1,
             index: 0,
             time: Date.now(),
-            chunk: { type: "text-delta", index: 0, text: answer },
+            chunk: { type: "text-delta", index: 0, text: turnAnswer },
           },
         });
       }
       if (answer !== "" && usage !== null) {
         emit("assistant/message", {
           usage,
-          message: { content: [{ type: "text", text: answer }] },
+          message: { content: [{ type: "text", text: turnAnswer }] },
         });
       }
+      const reasonData = turnReason === "error" && errorCode !== undefined
+        ? { kind: turnReason, error: { code: errorCode, message: `synthetic ${errorCode}` } }
+        : { kind: turnReason };
       if (turnEndedAtMs === undefined) {
-        emit("turn/end", { reason: { kind: reason } });
+        emit("turn/end", { reason: reasonData });
       } else {
         // Same shape as `emit`, with the timestamp forced.
-        const event = { seq: ++seq, time: turnEndedAtMs, type: "turn/end", data: { reason: { kind: reason } } };
+        const event = { seq: ++seq, time: turnEndedAtMs, type: "turn/end", data: { reason: reasonData } };
         events.push(event);
         session.seq = seq;
         ctx.emit("session/event", session, event);

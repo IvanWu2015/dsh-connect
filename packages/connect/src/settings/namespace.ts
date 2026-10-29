@@ -247,6 +247,10 @@ export interface ConnectSection {
   autoCompact?: boolean;
   /** Context usage percentage that triggers auto-compaction. */
   autoCompactThresholdPct?: number;
+  /** Retry a turn that ended on a transient network/provider failure. */
+  autoResume?: boolean;
+  /** Interval between automatic resume attempts, in ms. */
+  autoResumeIntervalMs?: number;
   /** Default working directory for new sessions. */
   workDir?: string;
   /** Additional workspace roots offered to new sessions. */

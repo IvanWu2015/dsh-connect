@@ -155,6 +155,10 @@ export interface Messages {
   taskStatsAutocompactArmed(pct: string): string;
   /** Auto-compaction is on and this turn reached the threshold. */
   taskStatsAutocompactDue(pct: string): string;
+  /** The turn failed on a transient error and is being retried automatically. */
+  autoResuming(attempt: number, max: number): string;
+  /** Automatic resume gave up after `max` attempts. */
+  autoResumeGaveUp(max: number): string;
   taskDuration(ms: number): string;
   imageDownloadFailed(imageError: string): string;
   fileDownloadFailed(fileError: string): string;
@@ -480,6 +484,8 @@ const zh: Messages = {
   taskStatsCompactSuggest: "⚠️ 上下文占用较高，建议发送 /compact 压缩上下文",
   taskStatsAutocompactArmed: (pct) => `🤖 自动压缩已开启（达到 ${pct}% 时自动执行）`,
   taskStatsAutocompactDue: (pct) => `🤖 已达自动压缩阈值 ${pct}%`,
+  autoResuming: (attempt, max) => `🌐 网络中断，任务已中止。正在自动重试（第 ${attempt}/${max} 次）…`,
+  autoResumeGaveUp: (max) => `❌ 已自动重试 ${max} 次仍未成功，任务停止。请检查网络后重新发送。`,
   taskDuration: (ms) =>
     ms < 60_000 ? `${Math.round(ms / 1000)} 秒` : `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`,
   imageDownloadFailed: (imageError) => `[用户发送了图片，但下载失败：${imageError}]`,
@@ -809,6 +815,8 @@ const en: Messages = {
   taskStatsCompactSuggest: "⚠️ Context usage is high — consider sending /compact",
   taskStatsAutocompactArmed: (pct) => `🤖 Auto-compaction is on (runs at ${pct}%)`,
   taskStatsAutocompactDue: (pct) => `🤖 Reached the auto-compaction threshold of ${pct}%`,
+  autoResuming: (attempt, max) => `🌐 The network dropped and the task stopped. Retrying automatically (attempt ${attempt}/${max})…`,
+  autoResumeGaveUp: (max) => `❌ Still failing after ${max} automatic retries, so the task has stopped. Check your connection and send it again.`,
   taskDuration: (ms) =>
     ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`,
   imageDownloadFailed: (imageError) => `[The user sent an image, but download failed: ${imageError}]`,

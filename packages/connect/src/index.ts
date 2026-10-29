@@ -56,7 +56,7 @@ export { AgentRunner, resolveConnectConfig } from "./runner.js";
 export { MenuController } from "./menu-controller.js";
 export type { MenuHost } from "./menu-controller.js";
 export type { ConnectConfig, ResolvedConnectConfig } from "./runner.js";
-export { applyStreamChunk, applyToolCall, classifyError, questionTextOf, showsLiveStatus, summarizeTurn, toolCallSummary } from "./stream.js";
+export { applyStreamChunk, applyToolCall, classifyError, isResumableFailure, questionTextOf, showsLiveStatus, summarizeTurn, toolCallSummary } from "./stream.js";
 export type { ErrorCategory, NotifyLevel, StreamChunkLike, StreamState } from "./stream.js";
 export { InteractionBridge, decodeTextAnswer } from "./interaction.js";
 export type { AskQuestionLike } from "./interaction.js";
@@ -321,6 +321,15 @@ export const Config = z.object({
    * which `autoCompact` fires (default: 80).
    */
   autoCompactThresholdPct: z.number().volatile(),
+  /**
+   * Retry a turn that stopped on a transient network/provider failure (default: false).
+   *
+   * Volatile like the other pane fields: a non-volatile general key would still save, but the
+   * projection on the next write would reset it.
+   */
+  autoResume: z.boolean().volatile(),
+  /** Interval between automatic resume attempts, in ms (default: 120000). */
+  autoResumeIntervalMs: z.number().volatile(),
   /**
    * Channels to activate, shared `channelDefaults`, and the per-channel options
    * the settings pane edits. Spread from `paneConfigFields()` rather than

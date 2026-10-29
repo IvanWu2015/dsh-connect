@@ -161,6 +161,7 @@ test("GENERAL_FIELDS is the five groups, flattened, in render order", () => {
   assert.deepEqual(GENERAL_FIELDS.map((f) => f.key), [
     "language", "notifyLevel", "progressTimeoutMs",
     "autoCompact", "autoCompactThresholdPct",
+    "autoResume", "autoResumeIntervalMs",
     "workDir", "workspaces",
     "allowUsers", "allowChats",
     "agentPreset", "autoMirror", "streamHeartbeatMs",

@@ -95,6 +95,17 @@ async function withBridge(options, body) {
  * persists exactly this before `ensureAgent` runs — and it is what makes the
  * runner attempt to resume the empty id, miss, and fall through to `create`.
  */
+/**
+ * The scripted agent a chat is currently bound to.
+ *
+ * Resume drives the SAME agent again, so `followupCalls` is the honest count of how many
+ * turns actually ran — which is how the auto-resume tests tell "retried" from "left alone".
+ */
+function agentOfBridge(bridge, channel = "stub", chatKey = "chat-x") {
+  const binding = bridge.binding(channel, chatKey);
+  return bridge.agentOf(binding.sessionId);
+}
+
 function bindingFor(channel, chatKey, overrides = {}) {
   const now = Date.now();
   return {
@@ -1101,6 +1112,88 @@ test("a failed reminder rewrite still delivers the notice", () =>
           adapter.sent.filter((m) => m.kind === "text").map((m) => String(m.text).slice(0, 30)),
         )}`,
       );
+    },
+  ));
+
+test("R1 a transient failure is resumed automatically", () =>
+  // Reported: 「部分电脑网络不稳定，会导致任务中止」. A TIMEOUT leaves the work half done and the
+  // user must retype the whole request on a link that is likely to drop again.
+  //
+  // The plan fails once, then succeeds — so this also proves the retry STOPS on success
+  // rather than repeating a completed turn.
+  withBridge(
+    {
+      // The 30 s production floor is lifted for the test; waiting it out would add half a
+      // minute per attempt to the suite.
+      config: { autoResume: true, autoResumeIntervalMs: 300, allowShortResumeInterval: true },
+      // The script varies by TURN, not by agent: the plan is bound when the agent is created,
+      // so a fixed script could never both fail the first attempt and succeed on the retry.
+      planFor: {
+        reason: (turn) => (turn === 1 ? "error" : "completed"),
+        errorCode: "TIMEOUT",
+        answer: (turn) => (turn === 1 ? "" : "recovered"),
+      },
+    },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-resume"));
+
+      await bridge.inbound(inboundFor("stub", "chat-resume", { text: "do the work" }));
+      await waitFor(
+        () => adapter.sent.some((m) => String(m.text ?? m.markdown ?? "").includes("recovered")),
+        20_000,
+      );
+
+      assert.equal(agentOfBridge(bridge, "stub", "chat-resume").followupCalls.length, 2,
+        "exactly one resume: fails once, then succeeds and stops");
+      const told = adapter.sent.filter((m) => String(m.text ?? "").includes("Retrying automatically"));
+      assert.equal(told.length, 1, "the user must be told a retry is happening");
+    },
+  ));
+
+test("R2 a completed task is never resumed", () =>
+  // The explicit requirement: 「一定要分清，正常结束的任务不要盲目继续」. Resuming a finished task
+  // repeats work the user already has — and bills for it again.
+  withBridge(
+    { config: { autoResume: true, autoResumeIntervalMs: 30_000 }, planFor: { answer: "done" } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-done"));
+
+      await bridge.inbound(inboundFor("stub", "chat-done", { text: "quick job" }));
+      await waitFor(() => adapter.sent.some((m) => String(m.text ?? "").includes("done")), 10_000);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      assert.equal(agentOfBridge(bridge, "stub", "chat-done").followupCalls.length, 1,
+        "a completed turn must run exactly once");
+    },
+  ));
+
+test("R3 a user abort is never resumed", () =>
+  // Restarting what the user stopped is the worst thing this feature could do.
+  withBridge(
+    { config: { autoResume: true, autoResumeIntervalMs: 30_000 }, planFor: { reason: "aborted", answer: "" } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-abort"));
+
+      await bridge.inbound(inboundFor("stub", "chat-abort", { text: "stop me" }));
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      assert.equal(agentOfBridge(bridge, "stub", "chat-abort").followupCalls.length, 1,
+        "an aborted turn must not be resurrected");
+    },
+  ));
+
+test("R4 auto-resume does nothing when the setting is off", () =>
+  withBridge(
+    { config: { autoResume: false }, planFor: { reason: "error", errorCode: "TIMEOUT", answer: "" } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-off"));
+
+      await bridge.inbound(inboundFor("stub", "chat-off", { text: "work" }));
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      assert.equal(agentOfBridge(bridge, "stub", "chat-off").followupCalls.length, 1,
+        "the feature is off by default and must stay off");
     },
   ));
 

@@ -31,6 +31,7 @@ import {
   toolCallSummary,
   questionTextOf,
   summarizeTurn,
+  isResumableFailure,
   classifyError,
   mapReason,
   showsLiveStatus,
@@ -93,6 +94,18 @@ export interface ConnectConfig {
   /** Context-window usage percentage that triggers `autoCompact` (default: 80). */
   autoCompactThresholdPct?: number;
   /**
+   * Retry a turn that ended because of a network/provider failure, every
+   * `autoResumeIntervalMs`, until it settles (default: false).
+   *
+   * Only transient failures qualify — see `isResumableFailure`. A completed turn, a turn the
+   * user stopped, and a blocked or budget-limited one are never resumed.
+   */
+  autoResume?: boolean;
+  /** Interval between automatic resume attempts in ms (default: 120000, minimum 30000). */
+  autoResumeIntervalMs?: number;
+  /** Test-only: lift the 30 s floor on `autoResumeIntervalMs`. Never set in production. */
+  allowShortResumeInterval?: boolean;
+  /**
    * How long a streaming card can be trusted to still exist (ms).
    *
    * Not user configuration — it is Feishu's ten-minute card lifetime. It lives here only so
@@ -119,6 +132,24 @@ export interface ResolvedConnectConfig {
   progressTimeoutMs: number;
   autoCompact: boolean;
   autoCompactThresholdPct: number;
+  /**
+   * Resume a turn that ended abnormally — timeouts and transport failures — by retrying the
+   * same request every `autoResumeIntervalMs` until it settles or the backoff runs out.
+   *
+   * Off by default, because retrying a failed run is a decision only the user can price: for
+   * a metered model a silent retry is a silent charge.
+   */
+  autoResume: boolean;
+  /** How long to wait between automatic resume attempts. Defaults to two minutes. */
+  autoResumeIntervalMs: number;
+  /**
+   * Test-only: skip the 30 s minimum on `autoResumeIntervalMs`.
+   *
+   * The floor protects production from a request loop against a provider that is down. A
+   * test needs an interval it can actually wait out, and there is no other way to exercise
+   * the retry without sleeping half a minute per attempt.
+   */
+  allowShortResumeInterval?: boolean;
   /** Test-only override of the streaming-card lifetime. See the ConnectConfig field. */
   cardLifetimeMs?: number;
 }
@@ -179,6 +210,16 @@ export function resolveConnectConfig(config: ConnectConfig): ResolvedConnectConf
     // Clamped to 1–99 so a nonsense value cannot mean "compact on every turn"
     // (0) or "never, even when the window is full" (100+).
     autoCompactThresholdPct: Math.min(99, Math.max(1, Math.round(config.autoCompactThresholdPct ?? 80))),
+    // Off unless asked for: a silent retry of a failed run is a silent charge on a metered
+    // model, so enabling it has to be a deliberate act.
+    autoResume: config.autoResume ?? false,
+    // Clamped to at least 30s. A tiny interval would turn a hard-down provider into a
+    // request loop, which is the opposite of what a flaky-network retry is for. The clamp is
+    // lifted only for tests, which cannot otherwise wait out a 30 s interval.
+    autoResumeIntervalMs: config.allowShortResumeInterval === true
+      ? Math.max(0, Math.round(config.autoResumeIntervalMs ?? 120_000))
+      : Math.max(30_000, Math.round(config.autoResumeIntervalMs ?? 120_000)),
+    allowShortResumeInterval: config.allowShortResumeInterval,
     // Carried through so a test can drive a "long turn" without waiting ten real minutes.
     ...(config.cardLifetimeMs === undefined ? {} : { cardLifetimeMs: config.cardLifetimeMs }),
   };
@@ -333,6 +374,10 @@ export class AgentRunner implements MenuHost {
   autoCompact: boolean;
   /** Context-window usage percentage that triggers auto-compaction. */
   autoCompactThresholdPct: number;
+  /** Resume turns that ended on a transient network/provider failure. */
+  autoResume: boolean;
+  /** Interval between those resume attempts. */
+  autoResumeIntervalMs: number;
   t: Messages;
   private readonly menu: MenuController;
 
@@ -364,6 +409,8 @@ export class AgentRunner implements MenuHost {
     // it for one chat without touching the profile.
     this.autoCompact = stored?.autoCompact ?? config.autoCompact;
     this.autoCompactThresholdPct = stored?.autoCompactThresholdPct ?? config.autoCompactThresholdPct;
+    this.autoResume = config.autoResume;
+    this.autoResumeIntervalMs = config.autoResumeIntervalMs;
     // A Feishu platform constant, overridable through the resolved config only so tests
     // can drive a "long turn" without waiting ten real minutes.
     this.cardLifetimeMs = config.cardLifetimeMs ?? AgentRunner.CARD_LIFETIME_MS;
@@ -838,7 +885,8 @@ export class AgentRunner implements MenuHost {
       await this.maybeSendWelcome(msg);
 
       const agent = await this.ensureAgent(msg);
-      const outcome = await this.driveAgent(agent, msg);
+      let outcome = await this.driveAgent(agent, msg);
+      outcome = await this.resumeIfTransient(msg, agent, outcome);
       this.touchBinding(msg);
 
       // Task-end stats: model, tokens, elapsed, and a compaction suggestion.
@@ -1379,6 +1427,70 @@ export class AgentRunner implements MenuHost {
   }
 
   /**
+   * Retry a turn that ended because the network or the provider gave up.
+   *
+   * Reported: 「部分电脑网络不稳定，会导致任务中止」. A TIMEOUT or TRANSPORT failure leaves the
+   * work half done and the user staring at an error they can only clear by retyping the
+   * request — on a flaky link, repeatedly.
+   *
+   * What is deliberately NOT retried matters more than what is:
+   *
+   *   - a **completed** turn. Retrying finished work is the one outcome that would be
+   *     actively harmful: it repeats what the user already has, and on a metered model it
+   *     bills for the repeat;
+   *   - a turn the user **aborted**, or one the host **interrupted**;
+   *   - budget and credential failures, where waiting cures nothing.
+   *
+   * See {@link isResumableFailure} for the exact test. It requires both the `error` reason
+   * and a known-transient code, so an unrecognised failure is left alone rather than retried
+   * on a guess.
+   *
+   * Bounded by `MAX_RESUME_ATTEMPTS` during one turn: a provider that is simply down should
+   * produce a handful of attempts and then an honest error, not a request loop.
+   */
+  private async resumeIfTransient(msg: InboundMessage, agent: Agent, first: TurnOutcome): Promise<TurnOutcome> {
+    if (!this.autoResume) return first;
+    let outcome = first;
+    for (let attempt = 1; attempt <= AgentRunner.MAX_RESUME_ATTEMPTS; attempt += 1) {
+      if (!isResumableFailure(outcome.reason, outcome.code)) return outcome;
+      // The user may have stopped the run between the failure and now; never resurrect what
+      // they asked to stop.
+      if (this.disposed) return outcome;
+      this.log(
+        `connect: resuming after ${outcome.code ?? outcome.reason} in ${this.chatKey} (attempt ${attempt}/${AgentRunner.MAX_RESUME_ATTEMPTS})`,
+      );
+      // Tell the user, or a silent two-minute pause reads as the bot having forgotten them.
+      await this.adapter
+        .sendText(this.target(msg), this.t.autoResuming(attempt, AgentRunner.MAX_RESUME_ATTEMPTS))
+        .catch(() => undefined);
+      await this.pause(this.autoResumeIntervalMs);
+      if (this.disposed) return outcome;
+      try {
+        outcome = await this.driveAgent(agent, msg);
+      } catch (error) {
+        // A throw here is not a turn outcome, so there is nothing to classify — report it
+        // rather than looping on an unknown.
+        this.log(`connect: resume attempt ${attempt} threw: ${String(error)}`);
+        return outcome;
+      }
+    }
+    // Attempts exhausted, still failing: say so plainly instead of looping forever.
+    this.log(`connect: gave up resuming ${this.chatKey} after ${AgentRunner.MAX_RESUME_ATTEMPTS} attempts`);
+    await this.adapter
+      .sendText(this.target(msg), this.t.autoResumeGaveUp(AgentRunner.MAX_RESUME_ATTEMPTS))
+      .catch(() => undefined);
+    return outcome;
+  }
+
+  /** A cancellable pause, so disposing the runner does not leave a timer holding the process. */
+  private pause(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      timer.unref?.();
+    });
+  }
+
+  /**
    * Build the user content for one inbound message. When the message carries
    * images, either pass them directly to the main model (if it supports
    * vision) or run a vision sub-task with a capable model and inject its
@@ -1696,6 +1808,16 @@ export class AgentRunner implements MenuHost {
   private readonly cardLifetimeMs: number;
 
   private static readonly COMPACT_THRESHOLD_PCT = 75;
+
+  /**
+   * How many automatic resume attempts one turn may make.
+   *
+   * Bounded on purpose: a provider that is down rather than flaky does not recover because
+   * we asked again, and an unbounded retry turns a transient error into a request loop that
+   * costs money. Five attempts at the default two-minute interval spans about ten minutes,
+   * which covers a dropped connection or a rolling restart.
+   */
+  private static readonly MAX_RESUME_ATTEMPTS = 5;
 
   /**
    * Send a compact task-end card: the model used, input/output tokens, elapsed

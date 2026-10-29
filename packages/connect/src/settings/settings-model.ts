@@ -134,6 +134,8 @@ export const GENERAL_FIELD_GROUPS: readonly { title: string; fields: readonly Co
     fields: [
       { key: 'autoCompact', kind: 'boolean', label: 'autoCompact' },
       { key: 'autoCompactThresholdPct', kind: 'number', label: 'autoCompactThresholdPct' },
+      { key: 'autoResume', kind: 'boolean', label: 'autoResume' },
+      { key: 'autoResumeIntervalMs', kind: 'number', label: 'autoResumeIntervalMs' },
     ],
   },
   {

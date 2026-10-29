@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, messages, helpText, applyStreamChunk, applyToolCall, showsLiveStatus, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer, classifyError, InboundDedup, retry, withOutboundRetry, isLockTimedOut, acquireLock, releaseLockState, lockCanWrite, DEFAULT_LOCK_TIMEOUT_MS, ReminderStore, parseRemindTime, formatRemindAt } from "../lib/index.js";
+import { parseCommand, BindingStore, createAsyncQueue, summarizeTurn, isResumableFailure, messages, helpText, applyStreamChunk, applyToolCall, showsLiveStatus, toolCallSummary, resolveConnectConfig, questionTextOf, decodeTextAnswer, classifyError, InboundDedup, retry, withOutboundRetry, isLockTimedOut, acquireLock, releaseLockState, lockCanWrite, DEFAULT_LOCK_TIMEOUT_MS, ReminderStore, parseRemindTime, formatRemindAt } from "../lib/index.js";
 import { menuTitle, rootMenuSections, reasonLabel, goalPhaseLabel, listWorkspaces, menuRender } from "../lib/index.js";
 import { MenuController } from "../lib/index.js";
 
@@ -137,6 +137,40 @@ test("summarizeTurn ignores assistant messages with no text", () => {
   ];
   const outcome = summarizeTurn(events, 0);
   assert.equal(outcome.text, "before", "a text-free step must not change the accumulation");
+});
+
+test("isResumableFailure resumes only transient network failures", () => {
+  // The whole feature hinges on this classification. A false positive continues a task that
+  // already finished — and on a metered model, bills for it — so the test is deliberately
+  // exact about what qualifies.
+  //
+  // The two codes come from real session data: across 641 sessions, TIMEOUT (30) and
+  // TRANSPORT (5) were the dominant failures, and both are transient by nature.
+  assert.equal(isResumableFailure("error", "TIMEOUT"), true, "a timeout is worth retrying");
+  assert.equal(isResumableFailure("error", "TRANSPORT"), true, "a dropped connection is worth retrying");
+});
+
+test("isResumableFailure never resumes a task that ended for a normal reason", () => {
+  // The user's instruction was explicit: 「一定要分清，正常结束的任务不要盲目继续」.
+  assert.equal(isResumableFailure("completed", undefined), false, "a finished task must never be resumed");
+  assert.equal(isResumableFailure("completed", "TIMEOUT"), false, "not even if a code leaked through");
+  assert.equal(isResumableFailure("aborted", undefined), false, "the user stopped it; do not resurrect it");
+  assert.equal(isResumableFailure("interrupted", undefined), false, "the host is shutting down");
+  assert.equal(isResumableFailure("blocked", undefined), false, "waiting on input; resending does not help");
+  assert.equal(isResumableFailure("max-tokens", undefined), false, "a budget the user set, not a fault");
+  assert.equal(isResumableFailure("unknown", undefined), false, "no reason recorded is not evidence");
+});
+
+test("isResumableFailure leaves failures that waiting cannot cure", () => {
+  // These are real codes seen in the same session survey. Retrying them bills again for a
+  // request that is certain to fail the same way.
+  assert.equal(isResumableFailure("error", "QUOTA"), false, "an exhausted balance does not refill by itself");
+  assert.equal(isResumableFailure("error", "MISSING_CREDENTIAL"), false, "an absent key stays absent");
+  assert.equal(isResumableFailure("error", "MALFORMED_RESPONSE"), false, "the same request tends to fail the same way");
+  assert.equal(isResumableFailure("error", "PI_AI_ERROR"), false, "a bad endpoint or model name is not transient");
+  // An error with no code cannot be shown to be a transport problem, so it is not resumed on
+  // a guess.
+  assert.equal(isResumableFailure("error", undefined), false, "an unclassified error is left alone");
 });
 
 test("summarizeTurn derives a completed outcome", () => {

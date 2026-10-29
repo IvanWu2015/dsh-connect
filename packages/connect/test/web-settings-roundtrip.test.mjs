@@ -70,13 +70,15 @@ test("empty backend reports all-false credentials", async () => {
 // two endpoints as everything else. The interesting part is not the trip out —
 // it is what happens to them on the way back in, which is the next test.
 
-/** All twelve, one of every kind: two selects, four scalars, three lists, two booleans. */
+/** One of every kind: two selects, five scalars, three lists, three booleans. */
 const GENERAL_SAVE = {
   language: "en",
   notifyLevel: "result",
   progressTimeoutMs: 45000,
   autoCompact: true,
   autoCompactThresholdPct: 80,
+  autoResume: true,
+  autoResumeIntervalMs: 120000,
   workDir: "C:/code/example",
   workspaces: ["packages", "docs"],
   allowUsers: ["ou_first", "ou_second"],
