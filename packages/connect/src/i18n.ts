@@ -208,6 +208,13 @@ export interface Messages {
   languageSet(lang: string): string;
 
   statusNoSession(workdir: string): string;
+  /**
+   * A session is bound to this chat, but this process is not the one holding it.
+   *
+   * Reported instead of 「无活动会话」 when the bound session was last driven elsewhere (the
+   * desktop GUI) or this host restarted: claiming there is no session would be false.
+   */
+  statusBoundElsewhere(sessionId: string, workdir: string): string;
   statusRunning: string;
   statusIdle: string;
   statusExecuting: string;
@@ -540,6 +547,10 @@ const zh: Messages = {
   languageSet: (lang) => `语言已切换为 ${lang}。`,
 
   statusNoSession: (workdir) => `状态：无活动会话\n当前工作区：${workdir}`,
+  statusBoundElsewhere: (sessionId, workdir) =>
+    `状态：会话已绑定，但当前没有在本渠道进行中的任务\n` +
+    `会话：\`${sessionId}\`\n当前工作区：${workdir}\n` +
+    `说明：这个会话可能正在桌面端进行，或刚经历过重启。从这边发一条消息即可接管。`,
   statusRunning: "🟢 执行中",
   statusIdle: "⚪ 空闲",
   statusExecuting: "🔄 正在处理任务",
@@ -871,6 +882,10 @@ const en: Messages = {
   languageSet: (lang) => `Language switched to ${lang}.`,
 
   statusNoSession: (workdir) => `Status: no active session\nCurrent workspace: ${workdir}`,
+  statusBoundElsewhere: (sessionId, workdir) =>
+    `Status: a session is bound, but no task is running on this channel\n` +
+    `Session: \`${sessionId}\`\nCurrent workspace: ${workdir}\n` +
+    `Note: it may be running in the desktop app, or this host has just restarted. Send a message here to take it over.`,
   statusRunning: "🟢 Executing",
   statusIdle: "⚪ Idle",
   statusExecuting: "🔄 Processing task",

@@ -1197,6 +1197,40 @@ test("R4 auto-resume does nothing when the setting is off", () =>
     },
   ));
 
+test("S5 a bound session is never reported as 'no active session'", () =>
+  // Reported: 「/dir 说无活动会话，但当前其实是有几个活动会话的」. The session was live on disk and
+  // bound to the chat; `showStatus` only looked at `this.agent`, which exists only after THIS
+  // runner has driven a turn. A session last driven from the desktop GUI — or one whose runner
+  // was re-created by a restart — therefore read as non-existent, and the report was false.
+  withBridge({ planFor: { answer: "ok" } }, async (bridge) => {
+    const adapter = bridge.addAdapter("stub");
+    bridge.seedBinding(bindingFor("stub", "chat-bound"));
+    await bridge.inbound(inboundFor("stub", "chat-bound", { text: "hello" }));
+    await waitFor(() => texts(adapter).length > 0, 5_000);
+
+    const runner = bridge.runnerFor("stub", "chat-bound");
+    assert.ok(runner, "the inbound must have created a runner");
+
+    // Model the state a restart leaves: the binding still names a session, this process holds
+    // no agent for it. The session id is written once the turn has its agent.
+    await waitFor(() => bridge.binding("stub", "chat-bound").sessionId !== "", 5_000);
+    runner["agent"] = undefined;
+
+    const target = { channel: "stub", chatKey: "chat-bound" };
+    const before = texts(adapter).length;
+    await runner.showStatus(target);
+    const status = texts(adapter).slice(before).map((m) => m.text).join("\n");
+
+    assert.ok(
+      !status.includes("no active session"),
+      `a bound session must not be reported as absent; got ${JSON.stringify(status)}`,
+    );
+    assert.ok(
+      status.includes("bound"),
+      `the status must say a session is bound; got ${JSON.stringify(status)}`,
+    );
+  }));
+
 test("K4c repeated progress reminders rewrite one message instead of stacking up", () =>
   // Reported from a turn left running overnight: 「一晚上，会堆积无数的提醒出来」. The
   // watchdog appended a new message every interval, so a 13.6-hour turn produced over 160

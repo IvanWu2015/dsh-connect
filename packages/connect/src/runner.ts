@@ -2313,6 +2313,18 @@ export class AgentRunner implements MenuHost {
   async showStatus(target: OutboundTarget): Promise<void> {
     const agent = this.agent;
     if (agent === undefined) {
+      // `this.agent` only exists once THIS runner has driven a turn. A session can still be
+      // bound and live — most often when the previous turn was driven from the desktop GUI, or
+      // after a host restart — and reporting that as 「无活动会话」 is simply false. Reported
+      // against a session that had been written seconds earlier.
+      //
+      // So say what is actually known: which session is bound, and that this process is not
+      // the one holding it. That also explains why nothing arrives here.
+      const bound = this.bindings.get(this.channel, this.chatKey)?.sessionId;
+      if (bound !== undefined && bound !== "") {
+        await this.adapter.sendText(target, this.t.statusBoundElsewhere(bound, this.workDir));
+        return;
+      }
       await this.adapter.sendText(target, this.t.statusNoSession(this.workDir));
       return;
     }
