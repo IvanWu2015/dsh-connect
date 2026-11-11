@@ -31,6 +31,15 @@ export interface InboundMessage {
   readonly imageError?: string;
   /** Set when a non-image attachment download failed. */
   readonly fileError?: string;
+  /**
+   * When this message started waiting behind another one, in ms since epoch.
+   *
+   * Stamped at enqueue time when the runner is busy. Without it a queued message is
+   * indistinguishable from an immediate one once it starts: the queue has already been shifted,
+   * so the count reads zero and the user sees a plain 「已收到，开始处理」 — which reads as though
+   * the earlier turn had swallowed it.
+   */
+  readonly queuedAt?: number;
 }
 
 /** Where an outbound message goes. */

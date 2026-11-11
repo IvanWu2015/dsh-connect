@@ -1231,6 +1231,53 @@ test("S5 a bound session is never reported as 'no active session'", () =>
     );
   }));
 
+test("a message that waited in the queue says so when its turn starts", () =>
+  // Reported: a message sent while another task was running was treated as queued, but the
+  // acknowledgement read 「已收到，开始处理」 with no sign it had waited — so it looked as though
+  // the message had been ignored until the turn finally started.
+  //
+  // The old acknowledgement reported `this.queue.length`, which counts only messages arriving
+  // AFTER this one: by the time a queued message's turn begins, the queue has been shifted and
+  // the count is zero.
+  withBridge(
+    { planFor: { whenIdleHoldMs: 600, answer: "first done" } },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      bridge.seedBinding(bindingFor("stub", "chat-queue"));
+
+      // First message starts a turn that holds the runner busy.
+      await bridge.inbound(inboundFor("stub", "chat-queue", { text: "first task" }));
+      await waitFor(() => texts(adapter).some((m) => String(m.text).includes("first task")), 5_000);
+
+      // Second message arrives while the first is still running: it queues.
+      await bridge.inbound(inboundFor("stub", "chat-queue", { text: "second task", replyRef: undefined }));
+
+      // When its own turn starts it must admit it waited. Waited for explicitly rather than
+      // caught-and-ignored: the first version wrapped this in .catch(() => undefined) and then
+      // asserted on a variable that could never distinguish a timeout from a pass.
+      // `waitFor` RETURNS false on timeout rather than throwing, so the result must be
+      // asserted — awaiting it bare makes the check vanish, which is how this test passed
+      // against the unfixed code the first time.
+      assert.ok(
+        await waitFor(
+          () => adapter.sent.some((m) => /waiting behind the previous task/.test(String(m.text ?? ""))),
+          10_000,
+        ),
+        `the queued message must say it waited; got ${JSON.stringify(texts(adapter).map((m) => String(m.text)).slice(-4))}`,
+      );
+
+      // Only the message that actually waited says so. A first message claiming it queued would
+      // be just as misleading in the other direction.
+      const firstAck = adapter.sent.find((m) => /starting to process/.test(String(m.text ?? "")));
+      assert.ok(firstAck, "the first message must be acknowledged");
+      assert.doesNotMatch(
+        String(firstAck.text),
+        /waiting behind the previous task/,
+        "a message that did not wait must not claim it did",
+      );
+    },
+  ));
+
 test("K4c repeated progress reminders rewrite one message instead of stacking up", () =>
   // Reported from a turn left running overnight: 「一晚上，会堆积无数的提醒出来」. The
   // watchdog appended a new message every interval, so a 13.6-hour turn produced over 160

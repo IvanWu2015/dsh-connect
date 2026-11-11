@@ -42,6 +42,13 @@ export interface Messages {
 
   // Processing-start acknowledgment + proactive progress notices.
   processingStarted(preview: string): string;
+  /**
+   * Said when this message spent time queued behind an earlier turn.
+   *
+   * Without it a queued message looks identical to one answered immediately, which reads as if
+   * the message had been dropped while the previous task ran.
+   */
+  processingQueued(seconds: number): string;
   progressReminder(minutes: number, status: string): string;
   progressThinking: string;
   /** Tool-free milestone for the progress reminder: how much work happened, not which tools. */
@@ -398,6 +405,8 @@ const zh: Messages = {
   processingFailed: (detail) => `⚠️ 处理失败：${detail}`,
   processingStarted: (preview) =>
     preview === "" ? "✅ 已收到，开始处理…" : `✅ 已收到，开始处理：\n「${preview}」`,
+  processingQueued: (seconds) =>
+    `（这条消息刚才在上一个任务后面排队，等了 ${seconds < 60 ? `${seconds} 秒` : `${Math.round(seconds / 60)} 分钟`}）`,
   progressReminder: (minutes, status) =>
     `⏳ 任务仍在处理中（已进行 ${minutes} 分钟）\n最近进展：${status}\n可发送 /status 查看详情，或 /stop 停止当前任务`,
   progressThinking: "🤔 思考中",
@@ -733,6 +742,8 @@ const en: Messages = {
   processingFailed: (detail) => `⚠️ Processing failed: ${detail}`,
   processingStarted: (preview) =>
     preview === "" ? "✅ Received — starting to process…" : `✅ Received — starting to process:\n“${preview}”`,
+  processingQueued: (seconds) =>
+    `(this message was waiting behind the previous task for ${seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)} min`})`,
   progressReminder: (minutes, status) =>
     `⏳ Still working on the task (${minutes} min so far)\nLatest progress: ${status}\nSend /status for details, or /stop to cancel`,
   progressThinking: "🤔 Thinking",

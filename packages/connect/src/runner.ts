@@ -477,11 +477,15 @@ export class AgentRunner implements MenuHost {
     // A task is already running (or queued): tell the user they can append a
     // note to the in-flight task with /ps instead of queueing a brand-new turn
     // behind it. The message still queues as before.
+    // Did this message have to wait? It waits when a turn is running, or when another message
+    // is already ahead of it. Recorded here because that is the only moment the answer is
+    // knowable — once the turn starts, the queue has been shifted and the count is zero.
+    const waited = this.running || this.queue.length > 0;
     if (this.running) {
       const hint = this.t.busyHint(truncate(msg.text, 20));
       void this.adapter.sendText(this.target(msg), hint).catch(() => undefined);
     }
-    this.queue.push(msg);
+    this.queue.push(waited ? { ...msg, queuedAt: Date.now() } : msg);
     void this.drain();
   }
 
@@ -873,10 +877,19 @@ export class AgentRunner implements MenuHost {
     }
 
     try {
-      // Acknowledge receipt before the (possibly slow) agent spin-up so the
-      // user knows processing started. When more messages are queued, say so.
+      // Acknowledge receipt before the (possibly slow) agent spin-up so the user knows
+      // processing started — and say plainly when this message had been waiting.
+      //
+      // The old line reported `this.queue.length`, which counts only messages that arrived
+      // AFTER this one. For a message that itself spent time queued that count is zero by the
+      // time the turn begins, so the acknowledgement read 「已收到，开始处理」 as if it had been
+      // started immediately. To someone who had sent it while another task was running, that
+      // looks like the message was dropped.
       const ack = this.t.processingStarted(truncate(msg.text, 60));
-      const ackText = this.queue.length > 0 ? `${ack}\n${this.t.queuedHint(this.queue.length)}` : ack;
+      const waited = msg.queuedAt === undefined
+        ? undefined
+        : this.t.processingQueued(Math.max(0, Math.round((Date.now() - msg.queuedAt) / 1000)));
+      const ackText = [ack, ...(waited === undefined ? [] : [waited]), ...(this.queue.length > 0 ? [this.t.queuedHint(this.queue.length)] : [])].join("\n");
       await this.adapter
         .sendText(this.target(msg), ackText)
         .catch(() => undefined);
