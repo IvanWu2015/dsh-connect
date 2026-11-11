@@ -19,6 +19,13 @@ export interface FeishuMessages {
   menuReviveLabel: string;
   /** Shown when the user taps a button on a card whose interaction is no longer pending. */
   actionStale: string;
+  /**
+   * The revive button was tapped but nothing is waiting behind that card.
+   *
+   * Said out loud because the alternative — silence — leaves the user unable to tell whether
+   * the tap registered, the card is dead, or the bot is gone.
+   */
+  reviveUnavailable: string;
   doneHeader: string;
   onboardingEnter: string;
   /** Non-interactive host (no TTY): say what to do instead of starting a scan. */
@@ -53,6 +60,9 @@ const zh: FeishuMessages = {
   menuExpiredHint: "这个问题还在等你回答，点下面的按钮可以重新显示选项。",
   menuReviveLabel: "🔄 显示选项",
   actionStale: "⚠️ 此操作已失效（可能已被处理或已过期）。",
+  reviveUnavailable:
+    "⚠️ 这个提问已经不在这里等待了（可能已被回答、已取消，或插件重启过）。\n" +
+    "如果任务还在跑，直接发一条消息就能继续；需要重新选择时，请让我再问一次。",
   doneHeader: "✅ 完成",
   onboardingEnter: "connect-feishu: 未配置 appId/appSecret，进入一键接入模式（扫码或点击链接自动创建飞书应用）。",
   onboardingSkipped: "connect-feishu: 未配置飞书凭据，且当前不是交互式终端，跳过一键接入。请在设置面板 dsh-connect 中填写 appId/appSecret。",
@@ -85,6 +95,9 @@ const en: FeishuMessages = {
   menuExpiredHint: "This question is still waiting for you — tap below to show the options again.",
   menuReviveLabel: "🔄 Show options",
   actionStale: "⚠️ This action is no longer active (already handled or expired).",
+  reviveUnavailable:
+    "⚠️ That question is no longer waiting here — it may have been answered, cancelled, or the plugin restarted.\n" +
+    "If the task is still running, just send a message to continue; ask me again when you need the choices.",
   doneHeader: "✅ Done",
   onboardingEnter: "connect-feishu: no appId/appSecret configured — entering one-click onboarding (scan or open the link to auto-create the Feishu app).",
   onboardingSkipped: "connect-feishu: no Feishu credentials configured and this host is not an interactive terminal — skipping one-click onboarding. Enter appId/appSecret in the dsh-connect settings pane.",

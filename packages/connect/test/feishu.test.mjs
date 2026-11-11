@@ -809,13 +809,14 @@ test("a close whose redraw fails recalls the card instead of leaving its buttons
   );
 });
 
-test("an expired question card keeps a way back instead of going dead", async (t) => {
-  // Reported live: a question asked at 13:52 was answered at 19:18 — five and a half hours
-  // later. The user was at the PC watching 「思考中」 while the chat held a grey card with no
-  // live buttons: the only route to unblocking the turn was unusable.
+test("tapping revive actually brings the question back", async (t) => {
+  // Reported: 「我点击显示选项，没有任何反应了。我不知道是什么状态」.
   //
-  // Expiry retired the listener and greyed the card. It now keeps a revive button, so a
-  // pending question stays reachable without redrawing every minute.
+  // The button appeared, the handler ran, and nothing happened — because expiry had ALREADY
+  // resolved the prompt's promise, so the revive's resolve() was a silent no-op. A promise
+  // settles once. The tap was swallowed with no error and no feedback of any kind.
+  //
+  // So the assertion is not "a tap was routed" but "the tap produced a real result".
   const { adapter, fake } = await startedAdapter({}, { shortChoiceTimeout: true });
   t.after(() => adapter.stop());
 
@@ -825,30 +826,28 @@ test("an expired question card keeps a way back instead of going dead", async (t
   });
   await waitFor(() => fake.sends.length === 1, "the question card");
   const cardId = fake.sends[0].messageId;
-  const expired = await first;
-  assert.equal(expired.choice, undefined, "expiry still resolves the prompt so the loop can re-present");
+  // Let it expire. The promise stays pending by design, so it must NOT be awaited -- that is
+  // the very change this test guards.
+  await waitFor(() => fake.cardUpdates.length >= 1, "the expired card");
 
-  const grey = fake.cardUpdates.find((u) => u.messageId === cardId);
-  assert.ok(grey, "the card must be rewritten on expiry");
-  const json = JSON.stringify(grey.card);
-  assert.match(json, /"revive":"1"/, "the expired card must offer a way back");
-  assert.match(json, /still waiting|还在等你回答/, "and say the question is still pending");
+  // Let the expiry work finish before tapping, the way a real user taps seconds later. Without
+  // this the tap can win a race against the expiry's own async block, and the test would pass
+  // even against the broken version — which is exactly what happened on the first attempt.
+  // Wait until the EXPIRY WORK IS FINISHED, not merely started: the expiry block awaits its
+  // own card update, and with the old code that is when the prompt gets settled with
+  // `undefined`. Tapping before that point would let the revive win a race it must not have to
+  // win, and the test would pass against the broken build — which is what happened at first.
+  await waitFor(() => adapter["pendingChoices"].size === 0, "the prompt to be retired");
 
-  // The bridge may be backing off, so the tap must reach it rather than be reported stale.
-  const noticesBefore = fake.sends.length;
+  // Tap the revive button on the expired card.
   fake.handlers.cardAction({ messageId: cardId, chatId: "oc_chat", action: { tag: "button", value: { revive: "1" } } });
-  await tick();
-  assert.equal(fake.sends.length, noticesBefore, "a revive tap must not be answered with a stale notice");
 
-  // Once re-presented, the card accepts a real answer again.
-  const second = adapter.promptChoice({ chatKey: "oc_chat", chatType: "p2p" }, {
-    title: "Pick",
-    options: [{ id: "a", label: "A" }],
-  }, cardId);
-  await tick();
-  fake.handlers.cardAction({ messageId: cardId, chatId: "oc_chat", action: { tag: "button", value: { choice: "q:a:0" } } });
-  const answered = await second;
-  assert.equal(answered.choice, "q:a:0", "the revived card must accept the answer");
+  const result = await Promise.race([first, new Promise((r) => setTimeout(() => r({ choice: "TIMEOUT" }), 1_000))]);
+  assert.equal(
+    result.choice,
+    "revive",
+    "the revive must settle the ORIGINAL prompt — before this fix the expiry had already settled it, so the tap was a silent no-op",
+  );
 });
 
 test("a card abandoned after a failed in-place update is disarmed, not left tappable", async (t) => {
@@ -1093,7 +1092,7 @@ test("feishu streamText forwards empty and whitespace-only streams verbatim", as
   assert.deepEqual(fake.streams[1].appended, ["\n", "   "]);
 });
 
-test("feishu promptChoice expires the card and resolves undefined on timeout", async (t) => {
+test("feishu promptChoice expires the card, leaving the revive open", async (t) => {
   const { adapter, fake } = await startedAdapter();
   t.after(() => adapter.stop());
   // The 60s wait is mocked rather than slept through, so this path is actually
@@ -1105,13 +1104,23 @@ test("feishu promptChoice expires the card and resolves undefined on timeout", a
   await new Promise((resolve) => { setImmediate(resolve); });
   assert.equal(adapter["pendingChoices"].size, 1);
   t.mock.timers.tick(60_000);
-  // A menu nobody answered must resolve (undefined) and replace itself with an
-  // "expired" notice — an unresolved promise would park the caller forever, and
-  // a silent card would keep inviting taps that go nowhere.
-  assert.deepEqual(await result, { choice: undefined, messageId: fake.sends[0].messageId });
+  // Expiry replaces the card with the "tap to continue" notice...
   assert.equal(fake.cardUpdates[0].messageId, fake.sends[0].messageId);
   assert.equal(fake.cardUpdates[0].card.header.title.content, feishuMessages("zh").menuExpired);
   assert.equal(adapter["pendingChoices"].size, 0);
+
+  // ...but deliberately does NOT resolve the prompt any more.
+  //
+  // It used to resolve with `undefined`, and that is exactly what broke the revive button: a
+  // promise settles once, so the button's later resolve("revive") was a silent no-op — the
+  // reported 「点击显示选项，没有任何反应」. Leaving it pending is safe because the bridge races
+  // this promise against a 5-second text-answer window, so nothing parks forever; a typed
+  // answer still lands (covered by the text-answer tests).
+  let settled = false;
+  void result.then(() => { settled = true; });
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(settled, false, "expiry must leave the prompt open for the revive button");
+  assert.equal(adapter["pendingRevives"].size, 1, "and register the revive handler for the card");
 });
 
 test("feishu reject/error handlers log compact reasons without echoing content", async (t) => {

@@ -612,7 +612,30 @@ export class FeishuAdapter implements ChannelAdapter {
       // schedule. Hand the revive straight to whoever is waiting on this card so the question
       // is drawn again immediately, instead of telling the user the action has expired.
       if (choiceIdOf(evt) === "revive") {
-        this.pendingRevives.get(evt.messageId)?.();
+        const revive = this.pendingRevives.get(evt.messageId);
+        if (revive !== undefined) {
+          revive();
+          return;
+        }
+        // No handler for this card. Two real causes, and both used to look identical to the
+        // user — a tap that did nothing at all, which is exactly 「我不知道是什么状态」:
+        //
+        //   - the host restarted since the card was drawn, so the in-memory revive map is
+        //     gone while the card in chat survives;
+        //   - the question was already answered or cancelled, and the card is simply old.
+        //
+        // Saying nothing is the one response that leaves the user unable to tell which. So
+        // answer, once per card: the tap was received, the question is no longer waiting here,
+        // and what to send instead.
+        if (!this.staleNoticed.has(evt.messageId)) {
+          this.staleNoticed.add(evt.messageId);
+          const timer = setTimeout(() => {
+            this.staleNoticed.delete(evt.messageId);
+            this.staleTimers.delete(timer);
+          }, 30_000);
+          this.staleTimers.add(timer);
+          void this.sendText({ chatKey: evt.chatId, chatType: "p2p" }, this.t.reviveUnavailable).catch(() => undefined);
+        }
         return;
       }
       const pending = this.pendingChoices.get(evt.messageId);
@@ -902,6 +925,11 @@ export class FeishuAdapter implements ChannelAdapter {
       // Registered BEFORE the redraw, so the button works the moment it is visible.
       this.pendingRevives.set(id, () => {
         this.pendingRevives.delete(id);
+        retire(id);
+        // This promise has NOT been settled: expiry used to resolve it, which is why the old
+        // revive silently did nothing — a promise resolves once, so the second call was a
+        // no-op and the bridge never heard the tap. Expiry now leaves the promise pending and
+        // only marks the card as sleeping, so this resolve is the first and only one.
         resolvePending({ choice: "revive", messageId: id });
       });
       void (async () => {
@@ -922,7 +950,12 @@ export class FeishuAdapter implements ChannelAdapter {
             ],
           })
           .catch(() => undefined);
-        resolvePending({ choice: undefined, messageId: id });
+        // Deliberately NOT resolved here.
+        //
+        // Resolving on expiry is what broke the revive button: the promise settled with
+        // `undefined`, so the later resolve("revive") was a silent no-op — the exact
+        // 「点击显示选项，没有任何反应」. Leaving it pending keeps the door open for the tap, and
+        // the bridge already handles an unanswered question on its own schedule.
       })();
     }, choiceTimeoutMs);
 
