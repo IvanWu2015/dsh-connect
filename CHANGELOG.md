@@ -2,6 +2,51 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.18] - 2026-11-11
+
+One new setting, and four fixes for the question flow — three of which correct mistakes in
+1.0.17 itself.
+
+### Added
+
+- **「网络中断自动续跑」 (autoResume)** — off by default. When a turn stops because of a network timeout or a dropped connection, it is retried automatically every two minutes (`autoResumeIntervalMs`, floor 30 s), up to five attempts, and the user is told each time. Only genuinely transient failures qualify: the turn must have ended with `error` **and** a known-transient code (`TIMEOUT`, `TRANSPORT`), taken from a survey of 641 real sessions. A completed turn, a turn the user stopped, a blocked or budget-limited one, an exhausted quota, a bad credential and any unrecognised code are never resumed — resuming finished work repeats it, and on a metered model bills for it again.
+
+### Fixed
+
+- **The revive button did nothing at all.** The expired card offered 「🔄 显示选项」, the tap was
+  received, and nothing happened. Expiry resolved the prompt's promise with `undefined`, so the
+  button's later `resolve("revive")` was a silent no-op — a promise settles once. Expiry no
+  longer settles it; the tap does, once. A revive tap with no handler at all (the plugin
+  restarted since the card was drawn) now says so instead of returning silently.
+- **A pending question could be unreachable for hours.** Measured: a question asked at 13:52 was
+  answered at 19:18. Expiry retired the tap listener and greyed the card out, so the only route
+  to unblocking the turn was dead while the user waited at the PC. The expired card now keeps a
+  way back, and re-presents the question on a tap — without redrawing every minute.
+- **Every progress notice re-quoted the original message.** `replyRef` was attached to every
+  outbound send, so each reminder was a reply to the user's first message and the client
+  rendered 「回复 …: <the whole original>」 above it. A recurring status line is not an answer to
+  one message; it now goes to the chat without the reply header.
+- **A message that waited in the queue said it had started immediately.** The acknowledgement
+  counted the queue at the start of its own turn, which is after the message has been shifted —
+  so a message that had genuinely queued looked identical to one answered at once. It now says
+  how long it waited, and only when it actually did.
+
+### Changed
+
+- **`/status` no longer claims there is no session when one is bound.** A session driven from the
+  desktop GUI, or one whose runner was re-created by a restart, has no agent in this process —
+  and that was reported as 「无活动会话」. It now says a session is bound, that no task is running
+  on this channel, and where it may be running instead.
+
+### Testing
+
+- **653 tests, 31 suites, green**, plus E2E OK against a mock and a live host.
+- Three of these tests passed against the broken code on the first attempt and had to be
+  rewritten: one counted presentations where it should have counted repaints; one advanced a
+  counter on a path that never increments it; and one awaited `waitFor`, which **returns false**
+  rather than throwing, so the assertion disappeared. Each is now written so that removing the
+  fix turns it red.
+
 ## [1.0.17] - 2026-10-28
 
 Nine fixes, most of them for behaviour that only shows up when a question goes unanswered or a
