@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.20] - 2026-11-12
+
+**A crash, fixed.** dsh-connect could take the whole harness down during a network outage.
+
+### Fixed
+
+- **A channel that failed to start crashed the host process.** The channel runtime called each
+  channel's `apply()` without awaiting it. A synchronous throw was caught, but an **async**
+  rejection floated free — and on Node ≥ 15 an unhandled rejection terminates the process. The
+  recorded crash ended with `dsh: fatal load failure: AxiosError: getaddrinfo ENOTFOUND
+  open.feishu.cn`: during a DNS outage the Feishu adapter's `start()` rejected and took the
+  harness with it.
+
+  Because the plugin awaits the runtime while loading, the harness then **could not start at
+  all** until the network came back — the failure was not just annoying, it was fatal and
+  self-sustaining. `ChannelApply` was typed `=> void`, which is what allowed the promise to be
+  dropped; it now declares `void | Promise<void>`.
+
+  A channel that cannot start is now a channel-level failure: it is logged and recorded as
+  failed, and every other channel starts normally.
+
+### Testing
+
+- **655 tests, 31 suites, green**, plus E2E OK against a mock and a live host.
+- The new test asserts no unhandled rejection escapes and that the other channels still start;
+  restoring the un-awaited call turns it red.
+
 ## [1.0.19] - 2026-11-12
 
 One fix, for a subtask card that silently stopped updating.
