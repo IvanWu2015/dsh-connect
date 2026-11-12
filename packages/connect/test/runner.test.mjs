@@ -1252,28 +1252,42 @@ test("a message that waited in the queue says so when its turn starts", () =>
       // Second message arrives while the first is still running: it queues.
       await bridge.inbound(inboundFor("stub", "chat-queue", { text: "second task", replyRef: undefined }));
 
-      // When its own turn starts it must admit it waited. Waited for explicitly rather than
-      // caught-and-ignored: the first version wrapped this in .catch(() => undefined) and then
-      // asserted on a variable that could never distinguish a timeout from a pass.
-      // `waitFor` RETURNS false on timeout rather than throwing, so the result must be
-      // asserted — awaiting it bare makes the check vanish, which is how this test passed
-      // against the unfixed code the first time.
-      assert.ok(
-        await waitFor(
-          () => adapter.sent.some((m) => /waiting behind the previous task/.test(String(m.text ?? ""))),
-          10_000,
-        ),
-        `the queued message must say it waited; got ${JSON.stringify(texts(adapter).map((m) => String(m.text)).slice(-4))}`,
-      );
-
-      // Only the message that actually waited says so. A first message claiming it queued would
-      // be just as misleading in the other direction.
+      // 1. The message that starts immediately says so, and claims nothing about a queue.
+      //    A first message claiming it queued would be just as misleading as a queued one
+      //    claiming it started.
       const firstAck = adapter.sent.find((m) => /starting to process/.test(String(m.text ?? "")));
       assert.ok(firstAck, "the first message must be acknowledged");
+      assert.doesNotMatch(String(firstAck.text), /queued|排队/, "a message that did not wait must not claim it did");
+
+      // 2. The one that queued says it QUEUED — at the moment it queues, not later.
+      //    「已收到，开始处理」 for a message that is waiting is the exact wording the user
+      //    rejected twice.
+      const queuedNotice = await waitFor(
+        () => adapter.sent.some((m) => /queued/i.test(String(m.text ?? ""))),
+        5_000,
+      );
+      assert.ok(
+        queuedNotice,
+        `a queued message must be told it is queued; got ${JSON.stringify(texts(adapter).map((m) => String(m.text)).slice(-4))}`,
+      );
+      const queueMsg = adapter.sent.find((m) => /queued/i.test(String(m.text ?? "")));
+      assert.doesNotMatch(String(queueMsg.text), /starting to process/, "a queued message must not say it started");
+
+      // 3. When its turn actually comes it says it left the queue — not 「已收到，开始处理」,
+      //    which is what made it read as handled at send time.
+      const resumed = await waitFor(
+        () => adapter.sent.some((m) => /Starting now|出队开始处理/.test(String(m.text ?? ""))),
+        10_000,
+      );
+      assert.ok(
+        resumed,
+        `the queued message's turn must say it is leaving the queue; got ${JSON.stringify(texts(adapter).map((m) => String(m.text)).slice(-4))}`,
+      );
+      const resumedMsg = adapter.sent.find((m) => /Starting now|出队开始处理/.test(String(m.text ?? "")));
       assert.doesNotMatch(
-        String(firstAck.text),
-        /waiting behind the previous task/,
-        "a message that did not wait must not claim it did",
+        String(resumedMsg.text),
+        /已收到/,
+        "a message that waited must not be described as just received",
       );
     },
   ));

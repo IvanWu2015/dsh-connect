@@ -896,21 +896,20 @@ export class AgentRunner implements MenuHost {
     }
 
     try {
-      // Acknowledge receipt before the (possibly slow) agent spin-up so the user knows
-      // processing started — and say plainly when this message had been waiting.
+      // Acknowledge before the (possibly slow) agent spin-up — and say which of the two things
+      // actually happened: this turn STARTS the message, or the message had been WAITING and is
+      // only now getting its turn.
       //
-      // The old line reported `this.queue.length`, which counts only messages that arrived
-      // AFTER this one. For a message that itself spent time queued that count is zero by the
-      // time the turn begins, so the acknowledgement read 「已收到，开始处理」 as if it had been
-      // started immediately. To someone who had sent it while another task was running, that
-      // looks like the message was dropped.
-      const ack = this.t.processingStarted(truncate(msg.text, 60));
-      const waited = msg.queuedAt === undefined
-        ? undefined
-        : this.t.processingQueued(Math.max(0, Math.round((Date.now() - msg.queuedAt) / 1000)));
-      const ackText = [ack, ...(waited === undefined ? [] : [waited]), ...(this.queue.length > 0 ? [this.t.queuedHint(this.queue.length)] : [])].join("\n");
+      // The distinction is the whole point. 「已收到，开始处理」 is right for a message that begins
+      // immediately; for one that waited it reads as though it had been handled at send time.
+      // Reported twice: 「我发内容时，其实当前已经正在处理会话…但提示给用户的还是说开始处理」 and then
+      // 「我在乎的是需要明确告诉用户进入队列，而不是说开始处理」.
+      const waitedMs = msg.queuedAt === undefined ? undefined : Math.max(0, Date.now() - msg.queuedAt);
+      const ack = waitedMs === undefined
+        ? this.t.processingStarted(truncate(msg.text, 60))
+        : this.t.processingResumed(truncate(msg.text, 60), Math.round(waitedMs / 1000), this.queue.length);
       await this.adapter
-        .sendText(this.target(msg), ackText)
+        .sendText(this.target(msg), ack)
         .catch(() => undefined);
 
       // First message in this chat: one-time welcome card.

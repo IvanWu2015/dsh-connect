@@ -48,7 +48,14 @@ export interface Messages {
    * Without it a queued message looks identical to one answered immediately, which reads as if
    * the message had been dropped while the previous task ran.
    */
-  processingQueued(seconds: number): string;
+  /**
+   * The message had been queued and is only NOW getting its turn.
+   *
+   * Deliberately does not open with 「已收到」: that phrasing is for a message that starts
+   * immediately, and using it here made a queued message look as though it had been handled at
+   * send time.
+   */
+  processingResumed(preview: string, waitedSeconds: number, stillQueued: number): string;
   progressReminder(minutes: number, status: string): string;
   progressThinking: string;
   /** Tool-free milestone for the progress reminder: how much work happened, not which tools. */
@@ -133,6 +140,13 @@ export interface Messages {
   psReceived(text: string): string;
   psNoActiveSession: string;
   psAppendLabel(text: string): string;
+  /**
+   * Sent the moment an incoming message is QUEUED behind a running turn.
+   *
+   * It must say "queued", not "the previous request is still running": the user's own request
+   * is the subject here, and the one thing they need to know is whether it was accepted and
+   * when it will run. Reported: 「我在乎的是需要明确告诉用户进入队列，而不是说开始处理」.
+   */
   busyHint(text: string): string;
   contextHighPrompt(pct: number): string;
   contextHighTitle: string;
@@ -405,8 +419,11 @@ const zh: Messages = {
   processingFailed: (detail) => `⚠️ 处理失败：${detail}`,
   processingStarted: (preview) =>
     preview === "" ? "✅ 已收到，开始处理…" : `✅ 已收到，开始处理：\n「${preview}」`,
-  processingQueued: (seconds) =>
-    `（这条消息刚才在上一个任务后面排队，等了 ${seconds < 60 ? `${seconds} 秒` : `${Math.round(seconds / 60)} 分钟`}）`,
+  processingResumed: (preview, waitedSeconds, stillQueued) => {
+    const waited = waitedSeconds < 60 ? `${waitedSeconds} 秒` : `${Math.round(waitedSeconds / 60)} 分钟`;
+    const behind = stillQueued > 0 ? `\n（还有 ${stillQueued} 条消息在排队）` : "";
+    return `▶️ 出队开始处理（等了 ${waited}）：\n「${preview}」${behind}`;
+  },
   progressReminder: (minutes, status) =>
     `⏳ 任务仍在处理中（已进行 ${minutes} 分钟）\n最近进展：${status}\n可发送 /status 查看详情，或 /stop 停止当前任务`,
   progressThinking: "🤔 思考中",
@@ -478,7 +495,10 @@ const zh: Messages = {
   psReceived: (text) => `✅ 已向当前任务追加：${text}`,
   psNoActiveSession: "当前没有活动会话，无法追加。可发送消息开始新对话。",
   psAppendLabel: (text) => `[用户通过 /ps 追加的说明]\n${text}`,
-  busyHint: (text) => `⏳ 上一个请求仍在处理中。使用 \`/ps ${text}\` 可向正在执行的任务追加补充信息；或发 \`/stop\` 停止当前任务。`,
+  busyHint: (text) =>
+    `📥 已进入队列：\n「${text}」\n` +
+    `当前任务还在进行，这条消息会在它结束后自动开始，不需要重新发送。\n` +
+    `想并入正在跑的任务：发 \`/ps <补充说明>\`；想中止当前任务：发 \`/stop\`。`,
   contextHighPrompt: (pct) => `⚠️ 上下文占用已达 ${pct}%，接近上限。是否现在压缩上下文？\n（压缩可减少 token 占用，但会概括早期对话内容）`,
   contextHighTitle: "上下文压缩建议",
   compactQueued: "✅ 已确认，当前任务结束后将自动压缩上下文。",
@@ -742,8 +762,11 @@ const en: Messages = {
   processingFailed: (detail) => `⚠️ Processing failed: ${detail}`,
   processingStarted: (preview) =>
     preview === "" ? "✅ Received — starting to process…" : `✅ Received — starting to process:\n“${preview}”`,
-  processingQueued: (seconds) =>
-    `(this message was waiting behind the previous task for ${seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)} min`})`,
+  processingResumed: (preview, waitedSeconds, stillQueued) => {
+    const waited = waitedSeconds < 60 ? `${waitedSeconds}s` : `${Math.round(waitedSeconds / 60)} min`;
+    const behind = stillQueued > 0 ? `\n(${stillQueued} more message(s) still queued)` : "";
+    return `▶️ Starting now — after waiting ${waited}:\n“${preview}”${behind}`;
+  },
   progressReminder: (minutes, status) =>
     `⏳ Still working on the task (${minutes} min so far)\nLatest progress: ${status}\nSend /status for details, or /stop to cancel`,
   progressThinking: "🤔 Thinking",
@@ -815,7 +838,10 @@ const en: Messages = {
   psReceived: (text) => `✅ Note appended to the current task: ${text}`,
   psNoActiveSession: "No active session to append to. Send a message to start a new conversation.",
   psAppendLabel: (text) => `[Note appended by the user via /ps]\n${text}`,
-  busyHint: (text) => `⏳ The previous request is still processing. Use \`/ps ${text}\` to append a note to the running task, or \`/stop\` to cancel it.`,
+  busyHint: (text) =>
+    `📥 Queued:\n“${text}”\n` +
+    `A task is already running; this message will start automatically when it finishes — no need to resend.\n` +
+    `To add to the running task: \`/ps <note>\`. To stop it: \`/stop\`.`,
   contextHighPrompt: (pct) => `⚠️ Context usage is at ${pct}%, close to the limit. Compact now?\n(Compaction reduces token usage but summarizes earlier conversation content)`,
   contextHighTitle: "Context compaction suggestion",
   compactQueued: "✅ Confirmed — the context will be compacted automatically once the current task finishes.",
