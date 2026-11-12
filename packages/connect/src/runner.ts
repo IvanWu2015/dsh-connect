@@ -526,6 +526,9 @@ export class AgentRunner implements MenuHost {
     // that re-posts itself is noise rather than progress.
     if (event.type === "todo/write") {
       const todos = [...(event.data.todos as TodoItem[])];
+      // Remembered so the end of the turn can re-render from the latest known state: the last
+      // write the agent emits is not necessarily the state the turn ends in.
+      this.lastTodos = todos;
       this.publishSubtasks(todos);
       return;
     }
@@ -725,12 +728,28 @@ export class AgentRunner implements MenuHost {
     const id = this.subtasksMessageId;
     void edit
       .call(this.adapter, id, { markdown: this.subtaskBody(rendered.body) })
-      .catch(() => {
-        // The card is gone (deleted, or an epoch-old id). Clear it so the next write
-        // posts a fresh list instead of editing something that no longer exists.
+      .catch((error: unknown) => {
+        // The card could not be edited — deleted, or an id from a previous process.
+        //
+        // Clearing the id was all this used to do, so the list stayed frozen at whatever the
+        // old card said until some LATER write happened to arrive. Reported: a card showing
+        // 「0/9 已完成」 and 「更新于 11:47」 while the session had already recorded 5/9 at 12:03.
+        // When no further write comes — the turn ended, or the agent went quiet — the stale
+        // card is the last thing the user ever sees, with nothing saying it is stale.
+        //
+        // So converge immediately: clear the id and post the current state as a new card.
+        // A second card is a small price for telling the truth; a silently frozen plan is not.
+        this.warn(
+          "connect: subtask card " + id + " could not be updated (" +
+            (error instanceof Error ? error.message : String(error)) +
+            "); reposting the current list",
+        );
         if (this.subtasksMessageId === id) this.subtasksMessageId = undefined;
+        this.lastSubtasksKey = undefined;
+        this.publishSubtasks(todos);
       });
   }
+
 
   /**
    * Proactive context-high nudge: when the turn's observed context usage
@@ -2797,6 +2816,8 @@ export class AgentRunner implements MenuHost {
   private subtasksMessageId?: string;
   /** Identity of the rendered subtask list, so an unchanged plan costs no API call. */
   private lastSubtasksKey?: string;
+  /** The most recent todo list the agent reported, for the end-of-turn refresh. */
+  private lastTodos?: readonly TodoItem[];
   /** True while the initial post is in flight, so concurrent writes cannot post again. */
   private subtasksPosting = false;
   /**

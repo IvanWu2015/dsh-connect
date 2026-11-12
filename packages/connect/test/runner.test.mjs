@@ -1278,6 +1278,51 @@ test("a message that waited in the queue says so when its turn starts", () =>
     },
   ));
 
+test("S6 a subtask card that cannot be edited is reposted, not left frozen", () =>
+  // Reported: a card read 「子任务（0/9 已完成）」 and 「更新于 11:47」 while the session log had
+  // already recorded 5/9 at 12:03. So a `todo/write` did arrive — and the card edit failed.
+  //
+  // The failure path only cleared the message id and waited for a LATER write to post a fresh
+  // card. When the turn goes idle, no later write comes, and the user is left reading a plan
+  // that is hours stale while its timestamp still looks current.
+  withBridge(
+    {
+      planFor: {
+        answer: "done",
+        todoWrites: [
+          [
+            { content: "task one", status: "pending" },
+            { content: "task two", status: "pending" },
+          ],
+          [
+            { content: "task one", status: "completed" },
+            { content: "task two", status: "completed" },
+          ],
+        ],
+      },
+    },
+    async (bridge) => {
+      const adapter = bridge.addAdapter("stub");
+      // Every in-place edit fails, as it does after a restart: the card belongs to a previous
+      // process and its id is no longer usable.
+      adapter.updateCard = async () => {
+        throw new Error("230099 card not found");
+      };
+      bridge.seedBinding(bindingFor("stub", "chat-subtasks-fail", {}));
+      await bridge.inbound(inboundFor("stub", "chat-subtasks-fail", { text: "go" }));
+
+      // The final state must still reach the user — as a new card, since editing is hopeless.
+      const showsFinal = await waitFor(
+        () => adapter.sent.filter((m) => m.kind === "card" && /2\/2/.test(String(m.markdown ?? ""))).length >= 1,
+        10_000,
+      );
+      assert.ok(
+        showsFinal,
+        `a card that cannot be edited must be reposted with the current state; got ${JSON.stringify(adapter.sent.filter((m) => /子任务|Subtasks/.test(String(m.markdown ?? ""))).map((m) => m.kind + ":" + String(m.markdown).split("\\n")[0]))}`,
+      );
+    },
+  ));
+
 test("K4c repeated progress reminders rewrite one message instead of stacking up", () =>
   // Reported from a turn left running overnight: 「一晚上，会堆积无数的提醒出来」. The
   // watchdog appended a new message every interval, so a 13.6-hour turn produced over 160
