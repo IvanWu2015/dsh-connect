@@ -29,8 +29,17 @@ export interface LoggerLike {
   logger?: { warn?: (...args: unknown[]) => void } | undefined;
 }
 
-/** A channel plugin's `apply(ctx, config)`, loosely typed for the selector. */
-export type ChannelApply<Ctx extends LoggerLike = LoggerLike> = (ctx: Ctx, config: any) => void;
+/**
+ * A channel plugin's `apply(ctx, config)`, loosely typed for the selector.
+ *
+ * Returns a promise: cordis `apply` functions are async, and Feishu's connects to the network
+ * while starting. Declaring `void` here is what let the caller drop that promise — and a
+ * dropped rejection terminates the host on Node ≥ 15 (see `ChannelRuntime.apply`).
+ */
+export type ChannelApply<Ctx extends LoggerLike = LoggerLike> = (
+  ctx: Ctx,
+  config: any,
+) => void | Promise<void>;
 
 /** Built-in channels, in a stable order (for docs and the default selector). */
 export const CHANNELS: readonly ChannelName[] = ["feishu", "telegram", "dingtalk", "web"];

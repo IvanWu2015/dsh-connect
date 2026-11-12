@@ -15,13 +15,16 @@ import assert from "node:assert/strict";
 import { ChannelRuntime } from "../lib/settings/channel-runtime.js";
 
 /** Runtime wired to fake channels that record their lifecycle as events. */
-function makeRuntime(t, { channelNames = ["feishu", "telegram", "dingtalk", "web"], getSecrets, failing = {} } = {}) {
+function makeRuntime(t, { channelNames = ["feishu", "telegram", "dingtalk", "web"], getSecrets, rejects = {}, failing = {} } = {}) {
   const events = [];
   const warnings = [];
   const channels = {};
   for (const name of channelNames) {
     channels[name] = (_ctx, config) => {
       if (failing[name] !== undefined) throw new Error(failing[name]);
+      // An ASYNC failure: the real channel `apply` functions are async and connect to the
+      // network, so this is the shape a startup failure actually takes.
+      if (rejects[name] !== undefined) return Promise.reject(new Error(rejects[name]));
       events.push({ kind: "start", name, config });
     };
   }
@@ -151,6 +154,31 @@ test("a channel that fails to start does not take the others down", async (t) =>
   // And it is not recorded as running, so the next apply retries it.
   assert.deepEqual(runtime.active(), ["feishu", "web"]);
   assert.match(warnings.join("\n"), /channel "telegram" failed to start: Error: no token/);
+});
+
+test("a channel whose start REJECTS asynchronously does not crash the process", async (t) => {
+  // The crash this pins: during a DNS outage the Feishu adapter's start() rejected with
+  // `getaddrinfo ENOTFOUND open.feishu.cn`. The runtime called `apply(...)` without awaiting
+  // it, so the rejection floated free of the surrounding try/catch — and on Node ≥ 15 an
+  // unhandled rejection terminates the process. The host exited 1 and, because the plugin
+  // awaits `runtime.apply` while loading, the harness could not start at all.
+  //
+  // A channel that cannot start must be a channel-level failure, never a host-level one.
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  t.after(() => process.off("unhandledRejection", onUnhandled));
+
+  const { runtime, events, warnings } = makeRuntime(t, { rejects: { feishu: "getaddrinfo ENOTFOUND open.feishu.cn" } });
+  await runtime.apply({ channels: ["feishu", "web"] });
+
+  // Let any floating rejection surface before asserting.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.deepEqual(unhandled, [], "an async channel start failure must never escape as an unhandled rejection");
+  assert.deepEqual(starts(events), ["web"], "the other channels must still start");
+  assert.deepEqual(runtime.active(), ["web"], "the failed channel must not be recorded as running");
+  assert.match(warnings.join("\n"), /channel "feishu" failed to start: Error: getaddrinfo ENOTFOUND/);
 });
 
 test("a teardown that throws still leaves the channel off the books", async (t) => {

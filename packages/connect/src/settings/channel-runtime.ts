@@ -174,7 +174,18 @@ export class ChannelRuntime<Ctx extends LoggerLike = LoggerLike> {
       const apply = this.opts.channels[name];
       if (apply === undefined) continue;
       try {
-        apply(this.opts.ctx, channelConfig);
+        // AWAITED: a channel `apply` is async, so calling it bare leaves a floating promise.
+        //
+
+        // A synchronous throw is caught by this try; an asynchronous rejection is not — and on
+        // Node >= 15 an unhandled rejection kills the process. Measured: during a DNS outage
+        // the Feishu adapter's start() rejected with `getaddrinfo ENOTFOUND open.feishu.cn`,
+        // the host exited 1, and because the plugin awaits `runtime.apply` while loading, the
+        // harness could not start at all until the network came back.
+        //
+
+        // A channel that cannot start is a channel-level failure, never a host-level one.
+        await apply(this.opts.ctx, channelConfig);
         this.running.set(name, channelConfig);
         this.failed.delete(name);
       } catch (error) {
