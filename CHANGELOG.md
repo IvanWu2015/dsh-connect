@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.21] - 2026-11-12
+
+The queue now says what it is.
+
+### Fixed
+
+- **A queued message is told it was queued, not that it started.** Two messages were both
+  slightly wrong in opposite directions:
+  - when a message arrived behind a running turn, the notice said 「上一个请求仍在处理中」. It was
+    true, but it answered a question nobody asked: the user's own request is the subject, and
+    what they need to know is that it was accepted and when it will run. It now opens with
+    「📥 已进入队列」, says the task will start automatically when the current one finishes, and
+    adds that there is nothing to resend;
+  - when that message's turn finally began, the acknowledgement still said
+    「已收到，开始处理」 — which, minutes after sending, reads as though it had been handled at
+    send time. It now says 「▶️ 出队开始处理（等了 N）」. A message that starts immediately keeps
+    the plain 「已收到」 wording, because for it that wording is correct.
+
+### Testing
+
+- **655 tests, 31 suites, green**, plus E2E OK against a mock and a live host.
+- The test pins all three cases: a message that starts at once claims nothing about a queue; a
+  queued message is told it queued and does **not** claim it started; and the turn that follows
+  never says 已收到. Restoring the old wording turns it red.
+
 ## [1.0.20] - 2026-11-12
 
 **A crash, fixed.** dsh-connect could take the whole harness down during a network outage.
