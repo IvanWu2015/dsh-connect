@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.19] - 2026-11-12
+
+One fix, for a subtask card that silently stopped updating.
+
+### Fixed
+
+- **A subtask card that could no longer be edited stayed frozen.** When the in-place update
+  failed — the card deleted, or an id left over from a previous process — the list kept showing
+  whatever it last said, with nothing indicating it was stale. Reported: a card reading
+  「子任务（0/9 已完成）」 and 「更新于 11:47」 while the session log had already recorded 5/9 at
+  12:03. The failure path waited for a later write to post a fresh card, but by then the turn had
+  gone idle and no later write ever came. It now reports the failure and reposts the current
+  state immediately.
+
+### Testing
+
+- **654 tests, 31 suites, green**, plus E2E OK against a mock and a live host.
+- The first attempt at a fix here was a no-op that could never fire: an end-of-turn refresh
+  reading the last `todo/write` payload, which is exactly what the card had already been drawn
+  from. It was removed rather than shipped looking helpful.
+
 ## [1.0.18] - 2026-11-11
 
 One new setting, and four fixes for the question flow — three of which correct mistakes in
