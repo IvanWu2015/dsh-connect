@@ -257,7 +257,30 @@ export class ConnectService extends Service {
   /** Register a channel adapter; its inbound messages route through here. */
   registerAdapter(adapter: ChannelAdapter): void {
     if (this.adapters.has(adapter.id)) {
-      throw new Error(`connect: channel "${adapter.id}" is already registered`);
+      throw new Error(`connect: channel "${adapter.id}" already registered`);
+    }
+    // Let a channel recover from a tap whose card id it can no longer route.
+    //
+    // Feishu's question cards expire, and a tap on an expired card may arrive after the prompt
+    // was re-presented under a different card — so the adapter has no handler for that id even
+    // though the question is still waiting. Reported live: 「显示选项」 replied 「已经不在这里
+    // 等待了」 while the desktop showed the agent waiting, and the task was stuck for hours.
+    //
+    // The card id is not reliable; the chat is. So the adapter asks by chat and the bridge
+    // redraws whatever is live there.
+    const recoverable = adapter as { representForChat?: (chatId: string) => boolean };
+    if (typeof recoverable.representForChat === "undefined") {
+      // A Feishu chat id IS its chat key unless the chat is thread-isolated, in which case the
+      // key carries a ":thread=" suffix. Try the bare id first (the common case), then any
+      // thread-scoped key rooted at it.
+      recoverable.representForChat = (chatId: string) => {
+        if (this.interaction.represent(chatId)) return true;
+        const prefix = chatId + ":thread=";
+        for (const key of this.interaction.pendingChatKeys()) {
+          if (key.startsWith(prefix)) return this.interaction.represent(key);
+        }
+        return false;
+      };
     }
     // Wrap outbound delivery with bounded retry so transient channel failures
     // (network blips, 429/5xx) don't silently drop user-visible messages.

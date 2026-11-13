@@ -123,6 +123,14 @@ interface PendingQuestion extends PendingBase {
    * waiting the moment the user's message lands (instead of polling).
    */
   waiters: Set<() => void>;
+  /**
+   * Ask this question to be shown again, right now.
+   *
+   * The adapter calls this when a revive tap arrives for a card it can no longer route by id.
+   * A card id is not a reliable handle — the prompt may have been re-presented under another
+   * card — but the CHAT is, so the request travels by chat.
+   */
+  represent?: () => void;
 }
 
 interface PendingApproval extends PendingBase {
@@ -296,6 +304,28 @@ export class InteractionBridge {
   /** Whether a question/approval is waiting on an answer in this chat. */
   pendingFor(chatKey: string): boolean {
     return this.pending.has(chatKey);
+  }
+
+  /**
+   * Ask the live question in this chat to be shown again.
+   *
+   * This is the recovery path for a tap on an expired card whose own handler is gone. The card
+   * id is not a reliable handle — the question may have been re-presented under a different
+   * card — so the request is addressed to the CHAT, and the bridge redraws whatever is live.
+   *
+   * Returns false when nothing is waiting, which is the honest case for "this question is
+   * over" — the caller must not claim otherwise.
+   */
+  /** Every chat that currently has a question or approval waiting. */
+  pendingChatKeys(): string[] {
+    return [...this.pending.keys()];
+  }
+
+  represent(chatKey: string): boolean {
+    const p = this.pending.get(chatKey);
+    if (p === undefined || p.kind !== "question" || p.represent === undefined) return false;
+    p.represent();
+    return true;
   }
 
   /** Deliver a plain-text chat reply as the answer to the pending question. */
@@ -489,6 +519,22 @@ export class InteractionBridge {
      * back finds a live card rather than a dead one.
      */
     let nextRedrawAt = 0;
+    /**
+     * Set when something OUTSIDE this loop asked for the question to be shown again.
+     *
+     * The adapter can receive a revive tap for a card whose own handler is gone — the prompt
+     * was re-presented under a different card, or the tap landed after the map entry was
+     * replaced. The card id is not a reliable way back; the CHAT is. So the tap asks the bridge
+     * instead, and the bridge redraws whatever question is live in this chat.
+     *
+     * This is what makes an expired card safe to tap: the worst case is another redraw.
+     */
+    interaction.represent = () => {
+      nextRedrawAt = 0;
+      representatives = 0;
+      repaintRequested = true;
+    };
+    let repaintRequested = false;
     while (!interaction.controller.signal.aborted && !interaction.settled) {
       // While cooling down the question still PRESENTS — it just does not repaint the card.
       //
@@ -500,6 +546,14 @@ export class InteractionBridge {
       //
       // So `quiet` tells the adapter to keep listening without rewriting the card. A tap
       // during the cooldown proves the user is back, and the next round draws normally.
+      // A request from outside (an expired-card tap the adapter could not route by id) forces
+      // a fresh presentation: the card on screen may be the wrong one, or a retired one.
+      if (repaintRequested) {
+        repaintRequested = false;
+        card = undefined;
+        nextRedrawAt = 0;
+        representatives = 0;
+      }
       const quiet = Date.now() < nextRedrawAt;
       // A text reply (`answerText`) records the answer without any tap, and it may
       // already have arrived — the user who typed instead of tapping, or who typed
@@ -559,6 +613,11 @@ export class InteractionBridge {
         // question to be shown again, which is exactly what someone returning to a dead card
         // wants. Handle it before choice decoding so it never reads as a bad tap.
         if (choice === REVIVE_CHOICE) {
+          // The user asked for the question again. Clear the settled card HERE: the promise's
+          // own .finally runs a microtask after this race resolves, so `continue` would reach
+          // the top of the loop while `card` was still the settled promise, `card ??=` would
+          // skip re-presenting, and the tap would produce no card at all.
+          card = undefined;
           nextRedrawAt = 0;
           representatives = 0;
           continue;

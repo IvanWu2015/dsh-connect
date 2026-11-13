@@ -386,6 +386,14 @@ export class FeishuAdapter implements ChannelAdapter {
    * deliberately still offering a way back.
    */
   private readonly pendingRevives = new Map<string, () => void>();
+  /**
+   * Ask the bridge to show whatever question is live in a chat again.
+   *
+   * A card id is not a reliable handle: the prompt can be re-presented under another card, and
+   * then a tap on the old card has no handler. The CHAT is reliable, so that is what this takes.
+   * Returns false when nothing is waiting, which is the honest "this question is over".
+   */
+  representForChat?: (chatId: string) => boolean;
   /** Cards whose stale-button tap was already noticed (dedupe, self-clearing). */
   private readonly staleNoticed = new Set<string>();
   private readonly staleTimers = new Set<NodeJS.Timeout>();
@@ -617,8 +625,18 @@ export class FeishuAdapter implements ChannelAdapter {
           revive();
           return;
         }
-        // No handler for this card. Two real causes, and both used to look identical to the
-        // user — a tap that did nothing at all, which is exactly 「我不知道是什么状态」:
+        // No handler for THIS card id — but the question may very well still be waiting under a
+        // different card id. Reported live: tapping 「显示选项」 answered 「已经不在这里等待了」
+        // while the desktop showed the agent waiting on that very question, and the task was
+        // stuck for hours.
+        //
+        // So do not trust the id, trust the CHAT: ask the bridge to re-present whatever question
+        // is live here. An expired card then costs nothing — the worst case is another redraw.
+        if (this.representForChat?.(evt.chatId) === true) {
+          return;
+        }
+        // Nothing is waiting in this chat, so the question really is over. Two causes for a card
+        // still sitting there:
         //
         //   - the host restarted since the card was drawn, so the in-memory revive map is
         //     gone while the card in chat survives;

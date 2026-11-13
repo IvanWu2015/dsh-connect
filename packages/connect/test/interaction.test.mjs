@@ -258,6 +258,106 @@ test("answers a question from the card and reports the option label", async () =
   assert.equal(bridge.pendingFor("oc_1"), false, "the chat is released after answering");
 });
 
+test("a question revived after a long wait can still be answered", async () => {
+  // Reported: 「如果问答长时间没回复，会过期，但点击又恢复不了，任务会完全卡死」.
+  //
+  // Traced: the revive tap was received and the adapter redrew the card, but the bridge
+  // `continue`d while `card` still held the SETTLED promise — its own .finally clears the
+  // variable a microtask later, one step too late. The next iteration therefore reused the dead
+  // promise, never called promptChoice again, never left a live prompt for the restored card,
+  // and every following tap was swallowed. The turn waited forever.
+  //
+  // This drives the exact sequence: present -> expire -> revive -> answer.
+  const { adapter, calls } = fakeAdapter({ holdPrompts: true });
+  const { bridge, harness } = bridgeFor(adapter);
+
+  const answer = answerer(harness, "user-questions/request").listener(
+    {
+      questions: [{ id: "q1", question: "Which one?", options: [{ label: "A" }, { label: "B" }] }],
+      agent: { id: "sess-1" },
+    },
+    next,
+  );
+
+  // The card is presented and stays pending, as it does while nobody answers.
+  // This file has no `waitFor` helper; poll directly so the assertion stays explicit.
+  const until = async (predicate, ms = 5_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (predicate()) return true;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return predicate();
+  };
+  assert.ok(await until(() => calls.prompts.length === 1), "the question card must be presented");
+
+  // The user returns and taps 「显示选项」. The adapter resolves the pending prompt with
+  // "revive" — not an answer — which is what the bridge must turn into a fresh presentation.
+  assert.equal(adapter.tap("revive"), true, "the expired card must still accept a revive tap");
+
+  // The bridge must re-present: a SECOND prompt, or the restored card has nothing listening.
+  assert.ok(
+    await until(() => calls.prompts.length >= 2),
+    `the revive must re-present the question; prompts=${calls.prompts.length}`,
+  );
+
+  // And that restored prompt is answerable.
+  assert.equal(adapter.tap("q:q1:1"), true, "the restored card must accept an answer");
+  const settled = await Promise.race([
+    answer,
+    new Promise((r) => setTimeout(() => r("TIMEOUT"), 5_000)),
+  ]);
+  assert.notEqual(settled, "TIMEOUT", "the restored question must be answerable, not deadlock");
+  assert.deepEqual(settled, { answers: [{ id: "q1", selected: ["B"] }] });
+});
+
+test("a tap on an expired card with an unroutable id revives the live question", async () => {
+  // The user's design, and better than an apology: 「如果卡片ID会过期…就让他过期，但用户只要发
+  // 过期ID上来，我们检测到，就重新发正确的选项过去」.
+  //
+  // Reported live: tapping 「显示选项」 replied 「已经不在这里等待了」 while the desktop showed the
+  // agent waiting on that very question — the task then stayed stuck for hours. The card id was
+  // unroutable (the prompt had been re-presented under a different card), but the QUESTION was
+  // still pending in the chat. So route by chat, not by card id.
+  const { adapter, calls } = fakeAdapter({ holdPrompts: true });
+  const { bridge, harness } = bridgeFor(adapter);
+  // Exactly how the service wires it.
+  adapter.representForChat = (chatId) => bridge.represent(chatId);
+
+  const answer = answerer(harness, "user-questions/request").listener(
+    {
+      questions: [{ id: "q1", question: "Which one?", options: [{ label: "A" }, { label: "B" }] }],
+      agent: { id: "sess-1" },
+    },
+    next,
+  );
+
+  const until = async (predicate, ms = 5_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (predicate()) return true;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return predicate();
+  };
+  assert.ok(await until(() => calls.prompts.length === 1), "the question must be presented");
+
+  // The card the user is looking at has an id the adapter cannot route: the prompt was
+  // re-presented under a different one. Tapping it must NOT dead-end.
+  const handled = adapter.representForChat("oc_1");
+  assert.equal(handled, true, "a tap on a stale card must still find the live question by chat");
+
+  assert.ok(
+    await until(() => calls.prompts.length >= 2),
+    `the live question must be re-presented; prompts=${calls.prompts.length}`,
+  );
+
+  // And it is answerable.
+  assert.equal(adapter.tap("q:q1:1"), true);
+  const settled = await Promise.race([answer, new Promise((r) => setTimeout(() => r("TIMEOUT"), 5_000))]);
+  assert.notEqual(settled, "TIMEOUT", "the recovered question must be answerable, not deadlock");
+});
+
 test("a session with no binding in this chat falls through to the host", async () => {
   const { adapter, calls } = fakeAdapter();
   const { harness } = bridgeFor(adapter);
