@@ -109,6 +109,8 @@ export interface Messages {
   approvalStale: string;
   /** Shown when answering an interactive question failed (e.g. it was already answered elsewhere). */
   questionStale: string;
+  /** Shown on a question card whose request was withdrawn before it was answered. */
+  questionWithdrawn: string;
 
   // First-time welcome card (sent once per chat).
   welcomeTitle: string;
@@ -464,6 +466,7 @@ const zh: Messages = {
     outcome === "allowed-once" ? `✅ 已同意授权：\`${toolName}\`` : `已拒绝授权：\`${toolName}\``,
   approvalStale: "⚠️ 此授权请求已失效（可能已被处理或已过期），本次操作未生效。",
   questionStale: "⚠️ 此问题已失效（可能已被处理或已过期），本次回答未生效。",
+  questionWithdrawn: "⚠️ 这个提问已取消（对应的任务已停止或已结束），无需再回答。你现在发的消息会作为新的消息处理。",
   welcomeTitle: "👋 欢迎使用 dsh-connect",
   welcomeBody: (workdir) =>
     [
@@ -807,6 +810,7 @@ const en: Messages = {
     outcome === "allowed-once" ? `✅ Approved: \`${toolName}\`` : `Rejected: \`${toolName}\``,
   approvalStale: "⚠️ This approval request is no longer active (already handled or expired) — this action had no effect.",
   questionStale: "⚠️ This question is no longer active (already handled or expired) — this answer had no effect.",
+  questionWithdrawn: "⚠️ This question was cancelled (the task it belonged to was stopped or has finished) — you do not need to answer it. Anything you send now starts a new message.",
   welcomeTitle: "👋 Welcome to dsh-connect",
   welcomeBody: (workdir) =>
     [

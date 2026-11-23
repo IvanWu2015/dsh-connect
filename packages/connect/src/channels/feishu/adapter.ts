@@ -187,6 +187,32 @@ export function buildChoiceElements(prompt: ChoicePrompt, defaultColumns: number
 }
 
 /**
+ * Render a choice prompt as a Feishu interactive card.
+ *
+ * One element per FOOTER LINE, deliberately: a Feishu `note`/`plain_text` element renders
+ * its content as a single run of text and does not honour newlines, so a multi-line footer
+ * (`「点击按钮回答，或直接回复文字…」` + 「（可多选：…）」) collapsed onto one unreadable line.
+ * Splitting is a rendering concern, so it lives here rather than in the bridge, which only
+ * knows what the message should SAY. Blank trailing lines are dropped; a blank line in the
+ * middle is kept as its own empty note so intentional spacing survives.
+ */
+export function buildChoiceCard(prompt: ChoicePrompt, columnsPerRow: number = 2): { header: unknown; elements: unknown[] } {
+  const footerLines = prompt.footer === undefined
+    ? []
+    : prompt.footer.split(/\r?\n/).filter((line, index, all) => line.trim() !== "" || index < all.length - 1);
+  return {
+    header: { title: { tag: "plain_text", content: prompt.title }, template: "indigo" },
+    elements: [
+      ...(prompt.description === undefined
+        ? []
+        : [{ tag: "div", text: { tag: "plain_text", content: prompt.description } }]),
+      ...buildChoiceElements(prompt, columnsPerRow),
+      ...footerLines.map((line) => ({ tag: "note", elements: [{ tag: "plain_text", content: line }] })),
+    ],
+  };
+}
+
+/**
  * How many buttons fit on one row, given how wide their labels are.
  *
  * Every choice card used to be a fixed 2-column grid. That is right for short
@@ -872,18 +898,7 @@ export class FeishuAdapter implements ChannelAdapter {
       return { choice: undefined, messageId: updateMessageId ?? "" };
     }
     const columnsPerRow = prompt.columnsPerRow ?? 2;
-    const card = {
-      header: { title: { tag: "plain_text", content: prompt.title }, template: "indigo" },
-      elements: [
-        ...(prompt.description === undefined
-          ? []
-          : [{ tag: "div", text: { tag: "plain_text", content: prompt.description } }]),
-        ...buildChoiceElements(prompt, columnsPerRow),
-        ...(prompt.footer === undefined
-          ? []
-          : [{ tag: "note", elements: [{ tag: "plain_text", content: prompt.footer }] }]),
-      ],
-    };
+    const card = buildChoiceCard(prompt, columnsPerRow);
 
     let messageId: string;
     if (updateMessageId !== undefined) {

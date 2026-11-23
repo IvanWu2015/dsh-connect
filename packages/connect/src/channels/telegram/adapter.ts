@@ -423,7 +423,14 @@ export class TelegramAdapter implements ChannelAdapter {
     const keyboard = buildInlineKeyboard(prompt.options, prompt.columnsPerRow ?? 2);
     const title = `<b>${escapeHtml(prompt.title)}</b>`;
     const desc = prompt.description === undefined ? "" : `\n${escapeHtml(prompt.description)}`;
-    const text = `${title}${desc}`;
+    // The footer is separate from the description so a multi-line hint keeps its own lines.
+    // Telegram HTML honours "\n", so the only thing that could collapse the hint was an
+    // adapter dropping it — the card told the user to reply with text, and the channel that
+    // offered no buttons at all said nothing.
+    const footer = prompt.footer === undefined || prompt.footer.trim() === ""
+      ? ""
+      : `\n<i>${escapeHtml(prompt.footer)}</i>`;
+    const text = `${title}${desc}${footer}`;
     const chatId = target.chatKey;
 
     let messageId: number;

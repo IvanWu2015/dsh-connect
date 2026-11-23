@@ -134,6 +134,8 @@ export class ConnectService extends Service {
       this.config,
       // Which surface is mid-turn right now — see InteractionBridge's `isDriving`.
       (channel, chatKey) => this.runners.get(runnerKey(channel, chatKey))?.isDrivingTurn === true,
+      // ...and WHICH session that turn belongs to — see `claimTarget` and `answerText`.
+      (channel, chatKey) => this.runners.get(runnerKey(channel, chatKey))?.drivingSessionId,
     );
     this.reminders = new ReminderStore(this.config.stateDir);
     this.startReminderLoop();
@@ -409,8 +411,17 @@ export class ConnectService extends Service {
     // no answer recorded, no reply, and the user's only escape route from an
     // unresponsive card vanished into silence. Falling through to the normal
     // path is strictly better: the text still reaches the agent as a message.
+    //
+    // The answer must also belong to the session that is waiting. The chat's
+    // binding can point at one session while another — the one the user is
+    // actually talking in, and the one whose turn is blocked on the question —
+    // is the pending owner; treating every text in the chat as its answer either
+    // answers the wrong question or, more often, misses the right one and the
+    // reply is queued as a brand-new turn (「回复文字没有用，像是处理成了下一个对话」).
+    // `pendingFor` alone used to decide that, which is exactly the conflation.
     if (!msg.text.trim().startsWith("/") && this.interaction.pendingFor(msg.chatKey)) {
-      if (this.interaction.answerText(msg.chatKey, msg.text)) return;
+      const waitingSession = this.runners.get(runnerKey(msg.channel, msg.chatKey))?.drivingSessionId;
+      if (this.interaction.answerText(msg.chatKey, msg.text, waitingSession)) return;
       this.ctx.logger?.warn?.(
         `connect: text reply was not usable as an answer (${msg.channel}/${msg.chatKey}); passing it to the runner`,
       );

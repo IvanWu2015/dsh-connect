@@ -361,10 +361,34 @@ export class AgentRunner implements MenuHost {
   get isDrivingTurn(): boolean {
     return this.running;
   }
+  /**
+   * The session this runner is turning right now, if it is turning one.
+   *
+   * A chat can reach several sessions over its lifetime — its binding moves on, `/model`
+   * resets the agent, a fresh session is created — and a question may belong to any of them.
+   * Which one is the user actually talking in is answered by the runner that is doing the
+   * work, not by the binding, which may already point somewhere else. The interaction
+   * bridge uses this to claim a question for the right chat and to route a typed reply to
+   * the right session instead of queueing it as a new turn.
+   */
+  get drivingSessionId(): string | undefined {
+    if (!this.running) return undefined;
+    const id = this.agent?.id ?? this.drivingAgentId;
+    return id === undefined || id === "" ? undefined : String(id);
+  }
   /** Set by `dispose()`; makes the runner permanently inert. */
   private disposed = false;
   private agent?: Agent;
   private handle?: AgentHandle;
+  /**
+   * The session this runner's current turn belongs to, set before the turn begins.
+   *
+   * `this.agent` is only assigned once the turn's session has been resolved, and the
+   * interaction bridge may ask which session is being driven while a turn is still starting
+   * (its first question can only arrive after that, but a `/model` reset mid-flight leaves
+   * `agent` briefly unset). Recording the id at turn start keeps the answer honest.
+   */
+  private drivingAgentId?: string;
   private turn?: ActiveTurn;
   workDir: string;
   language: Language;
@@ -862,6 +886,7 @@ export class AgentRunner implements MenuHost {
       }
     } finally {
       this.running = false;
+      this.drivingAgentId = undefined;
     }
   }
 
@@ -916,6 +941,7 @@ export class AgentRunner implements MenuHost {
       await this.maybeSendWelcome(msg);
 
       const agent = await this.ensureAgent(msg);
+      this.drivingAgentId = String(agent.id);
       let outcome = await this.driveAgent(agent, msg);
       outcome = await this.resumeIfTransient(msg, agent, outcome);
       this.touchBinding(msg);

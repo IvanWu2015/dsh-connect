@@ -2,6 +2,49 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+**A typed answer now lands on the question that is waiting.**
+
+### Fixed
+
+- **Replying in text to a question card could be handled as the next conversation.** Reported as
+  「在给用户选项等待回答时，还提示用户可直接文字回复，但我测试发现直接回复文字没有用，像是处理成
+  下一个对话了」 — the bot answered 「已收到，开始处理」 while the question card stayed up.
+  Three separate holes, each able to produce that:
+  - **A question from a session that was not the chat's current binding was never claimed.** The
+    claim matched `sessionId` / `webMirrorSessionId` only, and a chat passes through several
+    sessions (a switch, a `/model` reset, a new one). When the blocked session was not the bound
+    one, the chat got no card at all and the reply had no pending question to become an answer.
+    The claim now also goes to the chat whose runner is mid-turn on that session.
+  - **A reply was treated as an answer for any pending question in the chat, regardless of
+    session.** It is now matched by session: the one the turn is blocked on answers, and a message
+    in another session is never swallowed as that answer.
+  - **A question withdrawn before it was answered left a live-looking card.** The request now
+    retires the card with a notice ("this question was cancelled, you need not answer it, anything
+    you send now starts a new message") and releases the chat, instead of leaving a stuck card
+    whose reply was queued as a new task.
+
+- **「显示选项」 on an expired card waited out the answer-poll window before redrawing.** The
+  revive set a flag but did not wake the loop parked in its 5-second wait, so a returning user
+  saw nothing for up to five seconds — which reads as a dead card. The revive now wakes it and the
+  question is redrawn at once.
+
+- **The multi-select hint collapsed into the first line of the card footer.** Feishu
+  `note`/`plain_text` does not honour newlines, so 「点击按钮回答…」 and 「（可多选：…）」 rendered as one
+  run. One note element per line now. Telegram cards additionally dropped `prompt.footer`
+  entirely; it is now rendered.
+
+### Testing
+
+- **661 tests, 31 suites, green**, plus SMOKE OK and E2E OK (offline and against a live host).
+- Four new regression tests, each verified red against the unfixed code: a text reply answers a
+  question claimed for another session; a reply in a different session is not consumed; a typed
+  answer during a busy turn is taken (not announced as a new task); a withdrawn question retires
+  its card with a notice. The revive test now asserts the redraw is **prompt** (under 2 s) rather
+  than merely eventual — it previously raced the 5-second window and failed about a quarter of
+  the time.
+
 ## [1.0.21] - 2026-11-12
 
 The queue now says what it is.

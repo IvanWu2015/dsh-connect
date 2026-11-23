@@ -34,7 +34,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
-// client/settings-client.mjs
+// packages/connect/client/settings-client.mjs
 var settings_client_exports = {};
 __export(settings_client_exports, {
   ConnectSettingsTab: () => ConnectSettingsTab,
@@ -47,7 +47,7 @@ __export(settings_client_exports, {
 module.exports = __toCommonJS(settings_client_exports);
 var React = __toESM(require("react"), 1);
 
-// lib/settings/settings-rpc.js
+// packages/connect/lib/settings/settings-rpc.js
 var SETTINGS_RPC_CHANNEL = "/dsh-connect";
 var SETTINGS_ENDPOINTS = Object.freeze([
   "settings.get",
@@ -60,7 +60,7 @@ var SETTINGS_ENDPOINTS = Object.freeze([
 ]);
 var MAX_BODY_BYTES = 1024 * 1024;
 
-// lib/settings/rpc-client.js
+// packages/connect/lib/settings/rpc-client.js
 var RpcError = class extends Error {
   constructor(code, message) {
     super(message);
@@ -87,7 +87,7 @@ function saveCredentials(rpcCall, channel, values) {
   return callRpc(rpcCall, "credentials.save", { channel, values });
 }
 
-// lib/settings/channels.js
+// packages/connect/lib/settings/channels.js
 var CHANNELS = ["feishu", "telegram", "dingtalk", "web"];
 function readDotPath(obj, path) {
   let node = obj;
@@ -118,7 +118,7 @@ function writeDotPath(target, path, value) {
   return target;
 }
 
-// lib/settings/credential-store.js
+// packages/connect/lib/settings/credential-store.js
 var CHANNEL_SECRET_KEYS = Object.freeze({
   // The last two are the **webhook** transport's secrets, and they are declared
   // `role("secret")` in the Feishu `Config` like appId/appSecret — so they
@@ -166,7 +166,7 @@ function groupRefs(channel) {
   return Object.freeze([...seen]);
 }
 
-// lib/settings/settings-model.js
+// packages/connect/lib/settings/settings-model.js
 var CHANNEL_SECRET_FIELDS = Object.fromEntries(Object.entries(CHANNEL_SECRET_KEYS).map(([ch, map]) => [ch, Object.keys(map ?? {})]));
 var CHANNEL_CONFIG_FIELDS = {
   feishu: [
@@ -230,7 +230,9 @@ var GENERAL_FIELD_GROUPS = [
     title: "g.group.context",
     fields: [
       { key: "autoCompact", kind: "boolean", label: "autoCompact" },
-      { key: "autoCompactThresholdPct", kind: "number", label: "autoCompactThresholdPct" }
+      { key: "autoCompactThresholdPct", kind: "number", label: "autoCompactThresholdPct" },
+      { key: "autoResume", kind: "boolean", label: "autoResume" },
+      { key: "autoResumeIntervalMs", kind: "number", label: "autoResumeIntervalMs" }
     ]
   },
   {
@@ -387,7 +389,7 @@ function buildCredentialSaves(form) {
   return out;
 }
 
-// lib/settings/secret-disclosure.js
+// packages/connect/lib/settings/secret-disclosure.js
 var SECRET_DISCLOSURE = Object.freeze({
   appId: "full",
   clientId: "full",
@@ -404,7 +406,7 @@ function isMaskedSecret(configKey) {
   return disclosureOf(configKey) !== "full";
 }
 
-// client/locale.mjs
+// packages/connect/client/locale.mjs
 var LOCALES = {
   zh: {
     title: "dsh-connect",
@@ -538,6 +540,10 @@ var LOCALES = {
     "g.autoCompact.hint": "\u5F00\u542F\u540E\uFF0C\u4E00\u8F6E\u4EFB\u52A1\u7ED3\u675F\u65F6\u82E5\u4E0A\u4E0B\u6587\u5360\u7528\u8FBE\u5230\u4E0B\u9762\u7684\u9608\u503C\uFF0C\u81EA\u52A8\u538B\u7F29\u4F1A\u8BDD\u5386\u53F2\uFF0C\u65E0\u9700\u624B\u52A8\u53D1\u9001 /compact\u3002\u538B\u7F29\u672C\u8EAB\u4E0D\u53D1\u9001\u804A\u5929\u6D88\u606F\uFF1B\u5931\u8D25\u65F6\u624D\u4F1A\u63D0\u793A\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
     "g.autoCompactThresholdPct": "\u81EA\u52A8\u538B\u7F29\u9608\u503C\uFF08%\uFF09",
     "g.autoCompactThresholdPct.hint": "\u4E0A\u4E0B\u6587\u5360\u7528\u8FBE\u5230\u8FD9\u4E2A\u767E\u5206\u6BD4\u65F6\u89E6\u53D1\u81EA\u52A8\u538B\u7F29\uFF0C\u9ED8\u8BA4 80\u3002\u4EC5\u5728\u5F00\u542F\u300C\u81EA\u52A8\u538B\u7F29\u4E0A\u4E0B\u6587\u300D\u540E\u751F\u6548\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.autoResume": "\u7F51\u7EDC\u4E2D\u65AD\u81EA\u52A8\u7EED\u8DD1",
+    "g.autoResume.hint": "\u5F00\u542F\u540E\uFF0C\u82E5\u4E00\u8F6E\u4EFB\u52A1\u56E0\u7F51\u7EDC\u8D85\u65F6\u6216\u8FDE\u63A5\u4E2D\u65AD\u800C\u4E2D\u6B62\uFF0C\u63D2\u4EF6\u4F1A\u81EA\u52A8\u91CD\u8BD5\u7EE7\u7EED\u8BE5\u4EFB\u52A1\u3002\u53EA\u5904\u7406\u8FD9\u7C7B\u4E34\u65F6\u6545\u969C\uFF1A\u6B63\u5E38\u5B8C\u6210\u7684\u4EFB\u52A1\u3001\u4F60\u4E3B\u52A8\u505C\u6B62\u7684\u4EFB\u52A1\u3001\u989D\u5EA6\u4E0D\u8DB3\u6216\u51ED\u636E\u9519\u8BEF\u7684\u5931\u8D25\u90FD\u4E0D\u4F1A\u91CD\u8BD5\u3002\u6BCF\u8F6E\u6700\u591A\u91CD\u8BD5 5 \u6B21\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
+    "g.autoResumeIntervalMs": "\u81EA\u52A8\u7EED\u8DD1\u95F4\u9694\uFF08\u6BEB\u79D2\uFF09",
+    "g.autoResumeIntervalMs.hint": "\u4E24\u6B21\u81EA\u52A8\u91CD\u8BD5\u4E4B\u95F4\u7684\u7B49\u5F85\u65F6\u95F4\uFF0C\u9ED8\u8BA4 120000\uFF082 \u5206\u949F\uFF09\uFF0C\u6700\u5C0F 30000\uFF0830 \u79D2\uFF09\u3002\u95F4\u9694\u592A\u77ED\u4F1A\u628A\u300C\u670D\u52A1\u6682\u65F6\u4E0D\u53EF\u7528\u300D\u53D8\u6210\u4E0D\u65AD\u8BF7\u6C42\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
     "g.language": "\u8BED\u8A00",
     "g.language.hint": "\u673A\u5668\u4EBA\u56DE\u590D\u7528\u6237\u4F7F\u7528\u7684\u8BED\u8A00\uFF0C\u5BF9\u6240\u6709\u6E20\u9053\u751F\u6548\uFF08\u6E20\u9053\u5361\u7247\u91CC\u7684\u300C\u56DE\u590D\u8BED\u8A00\u300D\u53EF\u5355\u72EC\u8986\u76D6\uFF09\u3002\u4FEE\u6539\u540E\u9700\u91CD\u542F dsh \u624D\u751F\u6548\u3002",
     "g.notifyLevel": "\u901A\u77E5\u7EA7\u522B",
@@ -720,6 +726,10 @@ var LOCALES = {
     "g.autoCompact.hint": "When on, a session is compacted automatically at the end of a turn once context usage reaches the threshold below \u2014 no need to send /compact by hand. Compaction itself posts no chat message; only a failure does. A change takes effect after dsh restarts.",
     "g.autoCompactThresholdPct": "Auto-compact threshold (%)",
     "g.autoCompactThresholdPct.hint": "Context usage at which auto-compaction fires, default 80. Only applies when \u201CAuto-compact context\u201D is on. A change takes effect after dsh restarts.",
+    "g.autoResume": "Resume after a network failure",
+    "g.autoResume.hint": "When on, a turn that stopped because of a network timeout or a dropped connection is retried automatically. Only those transient failures qualify: completed turns, turns you stopped, and failures from an exhausted quota or a bad credential are never retried. At most 5 attempts per turn. Takes effect after dsh restarts.",
+    "g.autoResumeIntervalMs": "Resume interval (ms)",
+    "g.autoResumeIntervalMs.hint": 'How long to wait between automatic retries. Default 120000 (2 min), minimum 30000 (30 s) \u2014 too short an interval turns "temporarily unavailable" into a request loop. Takes effect after dsh restarts.',
     "g.language": "Language",
     "g.language.hint": "The language the bot replies to users in, for every channel (a channel card\u2019s \u201CReply language\u201D overrides it). A change takes effect after dsh restarts.",
     "g.notifyLevel": "Notify level",
@@ -786,7 +796,7 @@ function optionalText(t, key) {
   return hasLocale(key) ? t(key) : void 0;
 }
 
-// client/panel-state.mjs
+// packages/connect/client/panel-state.mjs
 var PANE_VIEWS = ["general", "channels"];
 var DEFAULT_VIEW = "channels";
 var ADVANCED_KEYS = {
@@ -853,7 +863,7 @@ function onboardingIssues(outcome) {
   return issues;
 }
 
-// client/settings-client.mjs
+// packages/connect/client/settings-client.mjs
 var name = "dsh-connect-settings";
 var inject = ["slots", "connection", "locale"];
 var NS = "dsh-connect";

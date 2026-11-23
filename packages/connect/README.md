@@ -263,7 +263,11 @@ When the agent needs a decision from you it stops and asks, and the asking happe
 
 One chat holds one pending card at a time. A second request is handed back to the host's own path (the Web GUI) rather than fighting the first card for the same message — and so is a card that could not be delivered, or a request cancelled before you answered; in each case the chat is **released**, because a leaked pending entry would silently swallow your next message.
 
-"This action is no longer active" means the card has expired — it auto-closes after 60 s idle, so ask again. A double tap, or a tap landing right after the previous question was answered, falls inside the card's redraw window and is ignored silently rather than misreported as expired.
+**A typed answer belongs to the question that is actually waiting.** The card says "or reply with text", so a plain message sent while a question is pending in that chat IS the answer — provided it belongs to the session the question came from. A chat passes through several sessions over its life (a switch, a `/model` reset, a new session), and the chat's bound session is not necessarily the one currently blocked on the question; matching by session makes the reply land on the question that is really waiting instead of being queued as a new task (which showed up as 「已收到，开始处理」 next to a stuck card). A message sent in a different session is never swallowed as the answer.
+
+When a question is **cancelled before you answer it** (the task was stopped, the step was interrupted), the card is replaced with a note saying the question was withdrawn, that you do not need to answer it, and that anything you send now starts a new message. Previously the card stayed up with live-looking buttons while your reply became a new task — the other half of "it says I can reply in text, but replying does nothing".
+
+"This action is no longer active" means the card has expired — it auto-closes after 60 s idle, so ask again. A double tap, or a tap landing right after the previous question was answered, falls inside the card's redraw window and is ignored silently rather than misreported as expired. Tapping 「Show options」 on an expired card redraws the question **immediately**, without waiting.
 
 ## Configuration
 

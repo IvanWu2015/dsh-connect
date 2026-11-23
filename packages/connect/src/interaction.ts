@@ -251,6 +251,14 @@ function decodeChoice(q: AskQuestionLike, choice: string): { selected: string[];
  */
 export class InteractionBridge {
   private readonly pending = new Map<string, PendingInteraction>();
+  /**
+   * The question whose card is currently up, if any.
+   *
+   * `pending` alone cannot answer "was a card ever shown": it is deleted by `settle` even
+   * when the question was never presented, and a withdrawn request must only be reported
+   * when there is something in the chat to withdraw.
+   */
+  private presented: PendingQuestion | undefined;
 
   constructor(
     private readonly ctx: Context,
@@ -268,6 +276,16 @@ export class InteractionBridge {
      * Feishu — where the user could not answer it, and the turn blocked.
      */
     private readonly isDriving: (channel: string, chatKey: string) => boolean = () => false,
+    /**
+     * The session a chat's runner is turning RIGHT NOW, if any.
+     *
+     * A chat can reach several sessions over its lifetime (its binding moves on, sessions
+     * are resumed, a fresh one is created), and the question belongs to whichever session is
+     * actually blocked on it. Asking the runner answers "which session is the user in" for
+     * the chat that is provably doing the work, instead of trusting a binding that may have
+     * moved — the mismatch that let a typed answer be queued as a new turn.
+     */
+    private readonly drivingSession: (channel: string, chatKey: string) => string | undefined = () => undefined,
   ) {
     const seam = ctx as unknown as EventSeam;
     ctx.effect(
@@ -328,10 +346,20 @@ export class InteractionBridge {
     return true;
   }
 
-  /** Deliver a plain-text chat reply as the answer to the pending question. */
-  answerText(chatKey: string, text: string): boolean {
+  /**
+   * Deliver a plain-text chat reply as the answer to the pending question.
+   *
+   * `sessionId` is the session the reply was sent in, when the caller knows it. A message
+   * typed in a DIFFERENT session than the one blocked on the question is an ordinary turn:
+   * consuming it as the answer would record a choice the user never made in that
+   * conversation and swallow the message they did send. An unknown session (a scheduled push,
+   * an older call shape) still answers the live question, because it cannot be attributed
+   * anywhere else.
+   */
+  answerText(chatKey: string, text: string, sessionId?: string): boolean {
     const p = this.pending.get(chatKey);
     if (p === undefined || p.kind !== "question") return false;
+    if (sessionId !== undefined && sessionId !== "" && sessionId !== p.sessionId) return false;
     const q = p.questions[p.current];
     if (q === undefined) return false;
     const answer = decodeTextAnswer(q, text);
@@ -347,7 +375,7 @@ export class InteractionBridge {
     const sessionId = req.agent?.id;
     if (sessionId === undefined || sessionId === "" || questions.length === 0) return next();
     if (hostCancelled(req.signal)) return next();
-    const target = this.claimTarget(sessionId);
+    const target = this.claimTarget(sessionId, this.drivingSession);
     if (target === undefined) return next();
 
     const interaction: PendingQuestion = {
@@ -368,10 +396,19 @@ export class InteractionBridge {
     const onAbort = (): void => this.settle(interaction);
     req.signal?.addEventListener("abort", onAbort, { once: true });
 
+    // Remember that this card is up, so a cancelled request can retire it instead of
+    // leaving live-looking buttons in the chat for a question nothing will ever answer.
+    this.presented = interaction;
+    const t = messages(interaction.language);
+    // Genuinely withdrew while its card was up, as opposed to "answered, but the host had
+    // already stopped caring by the time the answers were assembled".
+    let withdrawnWithCardUp = false;
     try {
       const answers = await this.runQuestions(interaction);
-      if (answers === undefined) return next();
-      const t = messages(interaction.language);
+      if (answers === undefined) {
+        withdrawnWithCardUp = true;
+        return next();
+      }
       // Retire the question card before the acknowledgement. Every question has
       // been answered, so leaving the buttons live would let the user tap a
       // control whose answer can no longer go anywhere — and because a tap on a
@@ -410,6 +447,22 @@ export class InteractionBridge {
       this.log(`connect: question presentation failed (${interaction.chatKey}): ${String(error)}`);
       return next();
     } finally {
+      // The chat is released BEFORE the teardown below: a user who answers and immediately
+      // sends something else must not find this question still occupying the chat (the
+      // next request would be declined as "one already pending"), and
+      // `pendingFor` must stop claiming the reply is still live.
+      if (interaction.answers.size === 0 && withdrawnWithCardUp && interaction.messageId !== undefined) {
+        await interaction.adapter
+          .closeMenu(interaction.messageId, t.questionWithdrawn)
+          .catch(() => undefined);
+      } else if (!withdrawnWithCardUp && interaction.answers.size > 0 && interaction.messageId !== undefined) {
+        // Every question was answered, so the card must stop inviting taps even when the
+        // close could not run where it was attempted. Retiring it here is the last chance:
+        // a card left behind keeps live buttons whose answer has already been taken.
+        await interaction.adapter
+          .closeMenu(interaction.messageId, t.answersSubmitted(this.questionSummaries(interaction)))
+          .catch(() => undefined);
+      }
       req.signal?.removeEventListener("abort", onAbort);
       this.settle(interaction);
     }
@@ -533,6 +586,10 @@ export class InteractionBridge {
       nextRedrawAt = 0;
       representatives = 0;
       repaintRequested = true;
+      // Wake the loop NOW. It is parked in `waitForAnswer` for up to `ANSWER_RACE_MS` (5 s),
+      // and without this the redraw the user just asked for waited out that whole window —
+      // long enough that a tap on an expired card looked like it did nothing.
+      for (const wake of [...interaction.waiters]) wake();
     };
     let repaintRequested = false;
     while (!interaction.controller.signal.aborted && !interaction.settled) {
@@ -876,35 +933,43 @@ export class InteractionBridge {
    * — it can neither show a card nor report a tap, so claiming it would spin
    * the re-present loop forever. Declining it leaves the request to the host's
    * own forwarder, which is precisely the Web GUI.
+   *
+   * `claimedSessionId` is the session whose turn is mid-flight for a chat: the
+   * runner is busy on it right now, which is proof the user is on that chat AND
+   * that this session is the one they are talking in — even when the binding
+   * has since been repointed at another session. Without it a question from a
+   * session the chat had moved on from was claimed by nobody, so the chat showed
+   * no card at all and a typed reply was queued as a new turn.
+   *
+   * Claiming still happens ONLY while a chat channel is driving a turn: that is
+   * the one unambiguous signal that the user is on that channel waiting. Every
+   * other case — a turn started in the desktop Web GUI, a scheduled hook,
+   * anything the host began on its own — falls through to `next()` so the host
+   * renders its own question UI where the user actually is. Claiming on binding
+   * order as a fallback is what once hijacked desktop questions into Feishu; the
+   * WebAdapter declares `supportsChoices = false` and so never appears in
+   * `candidates`, which is why falling through is the only route that reaches
+   * the GUI.
    */
-  private claimTarget(sessionId: string): { binding: ChatBinding; adapter: ChannelAdapter } | undefined {
+  private claimTarget(
+    sessionId: string,
+    claimedSessionId?: (channel: string, chatKey: string) => string | undefined,
+  ): { binding: ChatBinding; adapter: ChannelAdapter } | undefined {
     const candidates: { binding: ChatBinding; adapter: ChannelAdapter }[] = [];
     for (const binding of this.bindings.list()) {
-      if (binding.sessionId !== sessionId && binding.webMirrorSessionId !== sessionId) continue;
+      // The chat owns this session when its binding says so OR when its runner is mid-turn
+      // on it: the second clause is what survives a binding that has moved on, where the
+      // user is still in that conversation and the turn blocked on the question is the proof.
+      const driving = claimedSessionId?.(binding.channel, binding.chatKey);
+      const ownsByBinding = binding.sessionId === sessionId || binding.webMirrorSessionId === sessionId;
+      if (!(ownsByBinding || driving === sessionId)) continue;
+      // With a driving-session oracle, a claim also requires the turn to be on THIS session.
+      if (claimedSessionId !== undefined && driving !== sessionId) continue;
       const adapter = this.adapters.get(binding.channel);
       if (adapter === undefined || adapter.supportsChoices === false) continue;
       if (this.pending.has(binding.chatKey)) continue;
       candidates.push({ binding, adapter });
     }
-    if (candidates.length === 0) return undefined;
-    // Claim a question ONLY when a chat channel is driving the turn right now.
-    //
-    // That is the one unambiguous signal that the user is on that channel: they sent a
-    // message and are waiting. Every other case — a turn started in the desktop Web GUI, a
-    // scheduled hook, anything the host began on its own — must NOT be claimed, so the
-    // request falls through to `next()` and the host renders its own question UI wherever
-    // the user actually is.
-    //
-    // Claiming on binding ORDER as a fallback is what hijacked desktop questions into
-    // Feishu. It cannot be fixed by preferring a busier surface, because the WebAdapter
-    // declares `supportsChoices = false` and never appears in `candidates` at all — there
-    // was never a web candidate to prefer. Falling through is the only route that reaches
-    // the GUI.
-    //
-    // The mirrored-session case is exactly this: a session reachable from a chat *and* from
-    // the GUI. If the chat's runner is busy, the message came from the chat, so the chat
-    // gets the question. If nothing is busy, the turn came from the GUI, and the host
-    // handles it.
     return candidates.find((c) => this.isDriving(c.binding.channel, c.binding.chatKey));
   }
 

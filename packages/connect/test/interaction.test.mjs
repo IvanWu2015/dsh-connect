@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { InteractionBridge, BindingStore, messages, resolveConnectConfig } from "../lib/index.js";
+import { makeBridge, texts, waitFor } from "./bridge-harness.mjs";
 
 const zh = messages("zh");
 
@@ -141,8 +142,14 @@ function fakeAdapter({ id = "feishu", supportsChoices, onPrompt, holdPrompts = f
   };
 }
 
-/** Build a bridge over one binding, returning everything a test needs. */
-function bridgeFor(adapter, bindingOverrides = {}) {
+/**
+ * Build a bridge over one binding, returning everything a test needs.
+ *
+ * `drivingSession` mirrors production: `ConnectService` hands the bridge the session its
+ * runner is mid-turn on. Here it is the binding's own session, which is what "the chat is
+ * talking in this session" means for a one-surface bridge.
+ */
+function bridgeFor(adapter, bindingOverrides = {}, drivingSession) {
   const bindings = new BindingStore(tempDir());
   bindings.put({
     channel: "feishu",
@@ -165,6 +172,7 @@ function bridgeFor(adapter, bindingOverrides = {}) {
     // requires that signal (see claimTarget), so the single-surface default must report it;
     // tests about the signal itself pass their own resolver.
     () => true,
+    drivingSession ?? ((_channel, _chatKey) => bindings.get("feishu", "oc_1")?.sessionId),
   );
   harness.track(bridge);
   return { bridge, harness, bindings };
@@ -204,12 +212,16 @@ function twoSurfaceBridge({ driving }) {
   // Held open so the routing tests can answer after asserting where the question went.
   const web = fakeAdapter({ id: "web", holdPrompts: true });
   const harness = fakeContext();
+  // The session each surface's runner is mid-turn on: whichever one `driving` names. A
+  // surface that is not driving has no session of its own, exactly as `AgentRunner` reports.
+  const drivingSession = (channel) => (driving(channel) ? "sess-1" : undefined);
   const bridge = new InteractionBridge(
     harness.ctx,
     new Map([["feishu", feishu.adapter], ["web", web.adapter]]),
     bindings,
     resolveConnectConfig({}),
     driving,
+    drivingSession,
   );
   harness.track(bridge);
   return { bridge, harness, feishu, web };
@@ -347,9 +359,19 @@ test("a tap on an expired card with an unroutable id revives the live question",
   const handled = adapter.representForChat("oc_1");
   assert.equal(handled, true, "a tap on a stale card must still find the live question by chat");
 
+  // The redraw must be PROMPT, not merely eventual. The loop parks in a 5-second wait for a
+  // typed answer, so a revive that only sets a flag waited out that whole window — the user
+  // taps 「显示选项」 and nothing happens for five seconds, which reads as a dead card. This
+  // used to pass for the wrong reason: the test's own 5-second deadline raced the 5-second
+  // wait, so about a quarter of runs failed and the rest saw an eventual redraw.
+  const representedAt = Date.now();
   assert.ok(
-    await until(() => calls.prompts.length >= 2),
-    `the live question must be re-presented; prompts=${calls.prompts.length}`,
+    await until(() => calls.prompts.length >= 2, 2_000),
+    `the live question must be re-presented promptly; prompts=${calls.prompts.length}`,
+  );
+  assert.ok(
+    Date.now() - representedAt < 2_000,
+    "the revive must wake the wait, not run after its full window",
   );
 
   // And it is answerable.
@@ -371,7 +393,13 @@ test("a session with no binding in this chat falls through to the host", async (
 
 test("a mirror-only session is claimed, but a channel that cannot present choices is not", async () => {
   const { adapter } = fakeAdapter({ onPrompt: async () => ({ choice: "q:q1:0", messageId: "om_1" }) });
-  const { harness } = bridgeFor(adapter, { sessionId: "sess-active", webMirrorSessionId: "sess-1" });
+  // The chat's runner is mid-turn on the MIRRORED session (`webMirrorSessionId`), which is
+  // how a session reachable both from the chat and from the GUI gets its question here.
+  const { harness } = bridgeFor(
+    adapter,
+    { sessionId: "sess-active", webMirrorSessionId: "sess-1" },
+    () => "sess-1",
+  );
   const mirrored = await answerer(harness, "user-questions/request").listener(
     { questions: [{ id: "q1", question: "?", options: [{ label: "A" }] }], agent: { id: "sess-1" } },
     next,
@@ -1064,6 +1092,175 @@ test("approval decided after the host gave up falls through, with a stale notice
   assert.equal(await dispatched, NEXT);
   // Silence here is what makes a user believe the tool ran. Say it did not.
   assert.deepEqual(calls.closed, [{ messageId: "om_9", summary: zh.approvalStale }]);
+  assert.equal(bridge.pendingFor("oc_1"), false);
+});
+
+test("a text reply answers the LIVE question while a new turn is queued behind it", async () => {
+  // THE REPORTED BUG: 「在给用户选项等待回答时，还提示用户可直接文字回复，但我测试发现直接
+  // 回复文字没有用，像是处理成下一个对话了」.
+  //
+  // A question raised by a session that is NOT the chat's current binding was never claimed
+  // at all (`claimTarget` matched only `sessionId` / `webMirrorSessionId`), so the chat never
+  // saw a card, and a typed answer found no pending question and was queued as a new turn —
+  // exactly the "handled as the next conversation" the report describes. The claim must go
+  // to the chat when its runner is mid-turn on that session, whatever the binding points at.
+  const { adapter, calls } = fakeAdapter();
+  // The adapter reports the card id while its prompt is pending (`onPresented`), exactly as
+  // the Feishu adapter does — otherwise there is no card id to close and this assertion
+  // would be testing the fake rather than the bridge.
+  adapter.promptChoice = async (target, prompt, updateMessageId, signal, onPresented) => {
+    calls.prompts.push({ target, prompt, updateMessageId, signal, quiet: prompt.quiet === true });
+    onPresented?.("om_live");
+    return untilAborted("om_live")({ signal });
+  };
+  // The binding points at `sess-1`; the runner is mid-turn on `sess-old`, which is where the
+  // question was raised (the chat moved on to a new session and this one came back).
+  const { bridge, harness } = bridgeFor(adapter, { sessionId: "sess-1" }, () => "sess-old");
+  const dispatched = answerer(harness, "user-questions/request").listener(
+    { questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }, { label: "B" }] }], agent: { id: "sess-old" } },
+    next,
+  );
+  await tick();
+  assert.equal(bridge.pendingFor("oc_1"), true, "the question must be claimed by the chat");
+
+  // The user types, as the card invited them to: it must become the answer, not a new turn.
+  assert.equal(bridge.answerText("oc_1", "B", "sess-old"), true);
+
+  const answer = await dispatched;
+  assert.deepEqual(answer.answers, [{ id: "q1", selected: ["B"] }]);
+  // The close is awaited inside the bridge's `finally`, which starts only after this
+  // promise settles — so poll instead of asserting on a half-run teardown.
+  for (let i = 0; i < 50 && calls.closed.length === 0; i += 1) await tick();
+  assert.ok(calls.closed.length > 0, "the card must be closed once the typed answer lands");
+});
+
+test("a text reply that belongs to another live session is not consumed as the answer", async () => {
+  // The other half of the same bug, from the opposite side: while the question of
+  // `sess-old` is waiting, a message answered in a DIFFERENT session must not be swallowed
+  // as its answer. Consuming it records an answer to a question the user never saw in that
+  // conversation and their actual message disappears.
+  const { adapter } = fakeAdapter({ onPrompt: untilAborted("om_live") });
+  const { bridge, harness } = bridgeFor(adapter, { sessionId: "sess-1" }, () => "sess-old");
+  const controller = new AbortController();
+  const dispatched = answerer(harness, "user-questions/request").listener(
+    {
+      questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }, { label: "B" }] }],
+      agent: { id: "sess-old" },
+      signal: controller.signal,
+    },
+    next,
+  );
+  await tick();
+  assert.equal(bridge.pendingFor("oc_1"), true);
+
+  // A message that belongs to another session is an ordinary turn, not an answer.
+  assert.equal(bridge.answerText("oc_1", "hello", "sess-1"), false);
+  assert.equal(bridge.pendingFor("oc_1"), true, "the question in sess-old must still be waiting");
+
+  // A message with no session (a scheduled push, an older call shape) still answers the
+  // live question: it cannot be attributed anywhere else.
+  assert.equal(bridge.answerText("oc_1", "A"), true);
+  const answer = await dispatched;
+  assert.deepEqual(answer.answers, [{ id: "q1", selected: ["A"] }]);
+  assert.equal(bridge.pendingFor("oc_1"), false);
+});
+
+test("a typed answer is taken while the chat's own turn is still running", async () => {
+  // THE REPORTED SHAPE: 「回了「开始处理」并且问题卡一直卡着」. When a question is waiting on a
+  // chat that is mid-turn, the answer must be TAKEN — the bridge replies 「已收到你的回答」
+  // and the card is closed. Without that, `handleInbound` falls through to the runner, which
+  // announces 「已收到，开始处理」 and queues the answer as a new task; the question stays up
+  // and its target is right in front of the user.
+  //
+  // The first version of this test asserted on `runner.queue.length`, which is 0 whenever the
+  // queue moved on between the send and the assertion — it passed against the unfixed code.
+  // The delivery texts are what the user actually sees, so they are what is asserted.
+  const stateDir = mkdtempSync(join(tmpdir(), "dsh-connect-race-"));
+  const previousCwd = process.cwd();
+  process.chdir(stateDir);
+  try {
+    const bridge = await makeBridge({ stateDir, language: "zh", planFor: { answer: "done", whenIdleHoldMs: 400 } });
+    const adapter = bridge.addAdapter("feishu");
+    const interaction = bridge.service.interaction;
+
+    // A turn that is live in this chat (its runner is `running`).
+    void bridge.inbound({
+      channel: "feishu", chatKey: "oc_race", chatType: "p2p", senderKey: "ou_race",
+      text: "帮我选一个", replyRef: "om_race_1",
+    });
+    await waitFor(() => bridge.runnerFor("feishu", "oc_race")?.isDrivingTurn === true, 3000);
+    const runner = bridge.runnerFor("feishu", "oc_race");
+    assert.equal(runner.isDrivingTurn, true, "the runner must be mid-turn");
+
+    // The live question, claimed by the bridge exactly as the host waterfall would ask it.
+    // The session is whatever the runner reports for THIS chat: a chat can reach several
+    // sessions, and the one the runner is turning is the one whose question is live.
+    const sessionId = runner.drivingSessionId;
+    assert.ok(sessionId !== undefined, "a running turn must report its session");
+    const dispatched = bridge.service.ctx.waterfall(
+      "user-questions/request",
+      { questions: [{ id: "q1", question: "选哪个？", options: [{ label: "A" }, { label: "B" }] }], agent: { id: sessionId } },
+      () => Promise.resolve({ answers: [] }),
+    );
+    await waitFor(() => interaction.pendingFor("oc_race") === true, 3000);
+    assert.equal(interaction.pendingFor("oc_race"), true, "the live question must be claimed by the chat");
+
+    // The user types the answer while that turn is still running.
+    await bridge.inbound({
+      channel: "feishu", chatKey: "oc_race", chatType: "p2p", senderKey: "ou_race",
+      text: "A", replyRef: "om_race_2",
+    });
+    const answer = await dispatched;
+    assert.deepEqual(answer.answers, [{ id: "q1", selected: ["A"] }], "the text must become the answer");
+
+    const sent = texts(adapter).map((t) => t.text);
+    assert.ok(
+      sent.some((t) => t.includes("已收到你的回答")),
+      `the user must be told the answer was taken, not queued; sent ${JSON.stringify(sent)}`,
+    );
+    // The answer must never be announced as a task of its own. The opening message's ack is
+    // the only 「开始处理」/「已进入队列」 permitted, and neither may name the answer.
+    for (const line of sent.filter((t) => t.includes("开始处理") || t.includes("已进入队列"))) {
+      assert.ok(
+        line.includes("帮我选一个"),
+        `the answer must not be announced as a new task; sent ${JSON.stringify(sent)}`,
+      );
+    }
+
+    await bridge.dispose();
+  } finally {
+    process.chdir(previousCwd);
+  }
+});
+
+test("a withdrawn question tells the waiting user, instead of falling silent", async () => {
+  // While the agent waits on an answer, the host can give up on the request (the turn was
+  // stopped, the tool call was aborted). The card then sits in chat with live-looking buttons
+  // and any typed reply goes to a new turn — with nothing telling the user which happened.
+  // Reported as 「提示可以直接文字回复，但回复没有用」: silence here is the whole confusion.
+  const { adapter, calls } = fakeAdapter({ onPrompt: untilAborted("om_withdraw") });
+  const { bridge, harness } = bridgeFor(adapter);
+  const controller = new AbortController();
+  const dispatched = answerer(harness, "user-questions/request").listener(
+    {
+      questions: [{ id: "q1", question: "Pick?", options: [{ label: "A" }] }],
+      agent: { id: "sess-1" },
+      signal: controller.signal,
+    },
+    next,
+  );
+  await tick();
+  assert.equal(bridge.pendingFor("oc_1"), true);
+
+  controller.abort();
+  assert.equal(await dispatched, NEXT, "a cancelled request falls through to the host");
+  await tick();
+
+  assert.ok(
+    calls.closed.some((c) => c.summary === zh.questionWithdrawn),
+    `the card must be retired with a notice; closed=${JSON.stringify(calls.closed)}`,
+  );
+  // And the next typed message is an ordinary turn again, which the notice has said.
   assert.equal(bridge.pendingFor("oc_1"), false);
 });
 
