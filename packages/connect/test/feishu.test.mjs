@@ -663,6 +663,66 @@ test("feishu promptChoice with updateMessageId reuses the card in place", async 
   assert.deepEqual(await result, { choice: "x", messageId: "om_card_1" });
 });
 
+test("feishu re-sends when the card it was told to update still shows the previous question", async (t) => {
+  // Reported: 「有两个问题需要用户确认时，确认完后，最后会变成第一个问题在那显示，像没确认的样子，
+  // 但实际已经确认完了」 — the card under the transcript is the OLD question while the answers were
+  // all recorded.
+  //
+  // The bridge hands `promptChoice` the card id it believes is on screen. That belief can be
+  // stale — a card replaced by a fallback, a redrawn card, a replayed tap — and Feishu can accept
+  // an `updateCard` for a message that no longer shows the prompt. Trusting the id alone is what
+  // leaves the previous question on screen. The in-place path must verify: after the update, the
+  // card has to show THIS prompt's title and options, or the prompt is re-sent as a fresh card.
+  const { adapter, fake } = await startedAdapter();
+  t.after(() => adapter.stop());
+  // What the card actually holds, and what `updateCard` does to it.
+  const shown = { title: "🤔 需要你的选择", labels: ["A", "B"] };
+  fake.updateCard = async (_messageId, card) => {
+    // The case under test: the update is ACCEPTED, but it does not reach the card the user is
+    // looking at (the id pointed at a card that was replaced), so the read-back still shows
+    // question 1's options.
+    void card;
+  };
+  adapter.readCard = async () => shown;
+
+  const result = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "🤔 需要你的选择", options: [{ id: "c", label: "C" }, { id: "d", label: "D" }] },
+    "om_card_1",
+  );
+  await waitFor(() => fake.sends.length === 1, "the prompt must be re-sent on the stale card");
+
+  // The card still showed A/B (question 1) after the update, so the prompt must be re-sent rather
+  // than left on the stale card.
+  assert.equal(fake.sends.length, 1, "a card that did not change must be re-sent, not trusted");
+  assert.ok(
+    JSON.stringify(fake.sends[0].payload.card).includes('"C"'),
+    `the fresh card must show question 2; got ${JSON.stringify(fake.sends[0].payload.card)}`,
+  );
+  fake.handlers.cardAction({ messageId: fake.sends[0].messageId, chatId: "oc_chat", action: { tag: "button", value: { choice: "d" } } });
+  assert.deepEqual(await result, { choice: "d", messageId: fake.sends[0].messageId });
+});
+
+test("feishu keeps the in-place update when the read-back confirms it landed", async (t) => {
+  // The other half: verification must not turn every normal redraw into a second card.
+  const { adapter, fake } = await startedAdapter();
+  t.after(() => adapter.stop());
+  fake.updateCard = async () => {};
+  adapter.readCard = async () => ({ title: "🤔 需要你的选择", labels: ["C", "D"] });
+
+  const result = adapter.promptChoice(
+    { chatKey: "oc_chat", chatType: "p2p" },
+    { title: "🤔 需要你的选择", options: [{ id: "c", label: "C" }, { id: "d", label: "D" }] },
+    "om_card_1",
+  );
+  // The tap is listened for as soon as the prompt binds (before the redraw), so no wait on
+  // `pendingChoices` — that would race the adapter's own bind/update order.
+  await tick();
+  fake.handlers.cardAction({ messageId: "om_card_1", chatId: "oc_chat", action: { tag: "button", value: { choice: "d" } } });
+  assert.deepEqual(await result, { choice: "d", messageId: "om_card_1" });
+  assert.equal(fake.sends.length, 0, "a verified in-place update must not post a second card");
+});
+
 test("feishu cardAction on a stale card tells the user instead of swallowing the tap", async (t) => {
   const { adapter, fake } = await startedAdapter();
   t.after(() => adapter.stop());

@@ -45,6 +45,36 @@ All notable changes to this project are documented following [Keep a Changelog](
   than merely eventual — it previously raced the 5-second window and failed about a quarter of
   the time.
 
+## [Unreleased]
+
+**The question card you are looking at must actually be the question being asked.**
+
+### Fixed
+
+- **A card could keep showing the previous question while the answers were already recorded.**
+  Reported as 「有两个问题需要用户确认时，确认完后，最后会变成第一个问题在那显示，像没确认的样子，
+  但实际已经确认完了」. The bridge tells the adapter which card to rewrite, and that id is only a
+  handle: a card replaced by a fallback, a card redrawn from a replayed tap, or a card already
+  rewritten as a summary can all sit behind it, and Feishu may accept an `updateCard` that does
+  not change what the user sees. The in-place path now **verifies** the result: after the update
+  the card is read back (header title and option labels) and must show the prompt being
+  presented. When it does not, the prompt is re-sent as a fresh card instead of being trusted.
+
+- **A prompt bound to an already-cancelled request left its tap listener behind.** When the
+  caller settled the question between the entry check and the listener registration, the card
+  stayed tappable with nothing to receive the tap, and every later tap was swallowed as
+  "already answered". The listener is now retired immediately in that window.
+
+### Testing
+
+- **663 tests, 31 suites, green**, plus SMOKE OK and E2E OK (offline and against a live host).
+- Two new adapter tests: a card that still shows the previous question's options is re-sent (and
+  the fresh card's tap is accepted), while a verified in-place redraw posts no second card. The
+  first is red against the previous adapter.
+- A `settle`-guard test was written, found to pass with and without the guard (the frame it
+  protects is not reachable in the reproduced sequence), and **removed** rather than kept as
+  false confidence.
+
 ## [1.0.21] - 2026-11-12
 
 The queue now says what it is.

@@ -420,6 +420,18 @@ export class FeishuAdapter implements ChannelAdapter {
    * Returns false when nothing is waiting, which is the honest "this question is over".
    */
   representForChat?: (chatId: string) => boolean;
+  /**
+   * Read back one card the adapter sent: its header title and its option labels.
+   *
+   * Used to VERIFY an in-place update landed. A card id is only a handle — the message behind it
+   * may have been replaced, recalled, or already rewritten as a summary, and Feishu may accept an
+   * update on it anyway. This function does not throw: {@link updateInPlace} treats a rejection as
+   * "cannot tell" and keeps the update, because re-sending on a failed read would post a second
+   * card for a question the user already sees.
+   *
+   * Returns `undefined` when there is nothing to compare (no transport support here).
+   */
+  readCard?: (messageId: string) => Promise<{ title: string; labels: string[] } | undefined>;
   /** Cards whose stale-button tap was already noticed (dedupe, self-clearing). */
   private readonly staleNoticed = new Set<string>();
   private readonly staleTimers = new Set<NodeJS.Timeout>();
@@ -1016,6 +1028,15 @@ export class FeishuAdapter implements ChannelAdapter {
     // The caller needs it to close the card after a *typed* answer, which settles the
     // question without this promise ever resolving.
     onPresented?.(messageId);
+    // A caller that already gave up must not leave a listener behind: without this the
+    // prompt stays registered forever when the bridge settled the question (a typed answer,
+    // a cancellation) between the `signal.aborted` check at the top and this binding.
+    // Re-read through a local so the narrowing done by the early return above does not apply.
+    const cancelledEarly = (signal as AbortSignal | undefined)?.aborted === true;
+    if (cancelledEarly) {
+      finish(undefined);
+      return pending;
+    }
 
     if (signal !== undefined) {
       // The caller cancelled the question (the agent moved on): retire the
@@ -1035,49 +1056,88 @@ export class FeishuAdapter implements ChannelAdapter {
     }
     if (updateMessageId !== undefined) {
       // Reuse the existing card when possible so a menu chain stays on one card.
-      // But never leave the previous menu's content on screen: if the in-place
-      // update fails, fall back to a fresh card so the correct options always
-      // render, and rebind the tap listener to the fresh card's message id.
-      try {
-        await this.channel.updateCard(updateMessageId, card);
-      } catch (error) {
+      //
+      // Never trust the id we were HANDED: a close retried by the outbound-retry wrapper, a card
+      // redrawn from a replayed tap, or a quiet round whose card was replaced can all hand this
+      // a stale id, and `updateCard` on a card that no longer exists fails — which drops through
+      // to the "send a fresh card" path and posts a SECOND question card. That is the visible
+      // failure users report as 「最后又出来一个问题卡」. So the in-place update is attempted
+      // while verifying it landed: the card is read back and must show THIS prompt's title and
+      // options. Anything else — a failed update, a replaced card, a card that now shows a
+      // different question — falls back to re-sending, which is the only path that is honest.
+      const landed = await this.updateInPlace(updateMessageId, card, prompt).catch((error: unknown) => {
         this.logger?.warn?.(`connect-feishu: menu card update failed (${String(error)}); sending a fresh card`);
-        // Its buttons did NOT die when the update failed — a rejected API call leaves the
-        // message exactly as it was. This used to say they had, and the assumption is why
-        // an abandoned card stayed tappable: we stopped tracking it, moved on to a fresh
-        // card, and nothing ever rewrote the old one. A user who then tapped it got no
-        // response at all, because taps on a retired card are absorbed on purpose.
-        //
-        // So the abandoned card is disarmed explicitly. It can no longer be the target of
-        // anything — `onPresented` moves the caller to the fresh card — which makes leaving
-        // it live a trap rather than a harmless leftover. Best-effort: the fresh card is
-        // the one that matters and must not be blocked by this.
-        void this.channel
-          .updateCard(updateMessageId, {
-            header: { title: { tag: "plain_text", content: this.t.menuExpired }, template: "grey" },
-            elements: [{ tag: "div", text: { tag: "plain_text", content: this.t.menuExpiredHint } }],
-          })
-          .catch(() => undefined);
-        // The expiry timer must survive, since the fresh card inherits it.
-        unbind(updateMessageId);
-        try {
-          const sent = await this.channel.send(this.chatIdOf(target.chatKey), { card }, { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) });
-          bind(sent.messageId);
-          // The card moved, so the id the caller holds is now stale — report the one
-          // that is actually on screen, or a later close would target the dead card.
-          onPresented?.(sent.messageId);
-        } catch (sendError) {
-          this.logger?.warn?.(`connect-feishu: fresh menu card send failed (${String(sendError)})`);
-          // Nothing rendered: keep listening on the original card.
-          bind(updateMessageId);
-        }
+        return false;
+      });
+      // The card was rewritten in place: the tap listener bound above already covers it, so
+      // nothing else to do. Unbinding here would disarm the card the user is looking at.
+      if (landed) return pending;
+      // The previous card could not be rewritten. It can no longer be the target of anything —
+      // `onPresented` moves the caller to the fresh card — which makes leaving it live a trap
+      // rather than a harmless leftover. So the abandoned card is disarmed explicitly.
+      // Best-effort: the fresh card is the one that matters and must not be blocked by this.
+      void this.channel
+        .updateCard(updateMessageId, {
+          header: { title: { tag: "plain_text", content: this.t.menuExpired }, template: "grey" },
+          elements: [{ tag: "div", text: { tag: "plain_text", content: this.t.menuExpiredHint } }],
+        })
+        .catch(() => undefined);
+      // The expiry timer must survive, since the fresh card inherits it.
+      unbind(updateMessageId);
+      try {
+        const sent = await this.channel.send(this.chatIdOf(target.chatKey), { card }, { ...(target.replyRef === undefined ? {} : { replyTo: target.replyRef }) });
+        bind(sent.messageId);
+        // The card moved, so the id the caller holds is now stale — report the one
+        // that is actually on screen, or a later close would target the dead card.
+        onPresented?.(sent.messageId);
+      } catch (sendError) {
+        this.logger?.warn?.(`connect-feishu: fresh menu card send failed (${String(sendError)})`);
+        // Nothing rendered: keep listening on the original card.
+        bind(updateMessageId);
       }
     }
     return pending;
   }
 
-  async closeMenu(messageId: string, summary: string): Promise<void> {
-    // Retire and absorb BEFORE the redraw, for the same reason `promptChoice` binds
+  /**
+   * Rewrite an existing card in place, and VERIFY that it now shows `prompt`.
+   *
+   * A card id is only a handle, not a promise: the card behind it may have been replaced (a
+   * previous fallback sent a fresh one), already rewritten as a summary, or recalled. Feishu
+   * accepts `updateCard` on some of those without erroring, so a successful call proves nothing
+   * about what the user is looking at. Reading the card back and comparing its title and option
+   * labels is the only evidence that the in-place path actually landed.
+   *
+   * @returns true when the card now shows this prompt; false when the caller must re-send.
+   * @throws when the update itself is refused (a missing or recalled card).
+   */
+  private async updateInPlace(
+    messageId: string,
+    card: { header: unknown; elements: unknown[] },
+    prompt: ChoicePrompt,
+  ): Promise<boolean> {
+    await this.channel.updateCard(messageId, card);
+    const read = this.readCard;
+    if (read === undefined) return true;
+    let shown: { title: string; labels: string[] } | undefined;
+    try {
+      shown = await read(messageId);
+    } catch (error: unknown) {
+      this.logger?.warn?.(`connect-feishu: could not read card ${messageId} back (${String(error)}); keeping the update`);
+      return true;
+    }
+    if (shown === undefined) return true;
+    const labels = prompt.options.map((option) => option.label);
+    const matches = shown.title === prompt.title && labels.every((label) => shown.labels.includes(label));
+    if (!matches) {
+      this.logger?.warn?.(
+        `connect-feishu: card ${messageId} still shows ${JSON.stringify(shown)} after the update; re-sending ${JSON.stringify(prompt.title)}`,
+      );
+    }
+    return matches;
+  }
+
+  async closeMenu(messageId: string, summary: string): Promise<void> {    // Retire and absorb BEFORE the redraw, for the same reason `promptChoice` binds
     // its listener before updating: a tap that lands while `updateCard` is still in
     // flight would otherwise find no pending choice and no absorber, fall through to
     // the "genuinely stale" branch, and post 「此操作已失效」 about a card the user
