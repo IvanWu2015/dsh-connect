@@ -47,6 +47,19 @@ All notable changes to this project are documented following [Keep a Changelog](
 
 ## [Unreleased]
 
+**Only Feishu is actually well tested — and both READMEs now say so.**
+
+### Documentation
+
+- **A testing-status note at the top of both READMEs.** Readers meet it before choosing a
+  channel: Feishu is the only channel shaped by real use and the only one with an end-to-end
+  round trip against the real platform; Telegram, DingTalk and the Web mirror have unit tests
+  against fake channels and fake networks only, so their defects — known and unknown — are about
+  equally many. The note names where problems are most likely (card rendering, tap and signature
+  flows, reconnects, streaming-card lifetime), states that feedback gets fixed to the same
+  standard as Feishu, and says what an issue should include (channel, steps, the `connect:` log
+  lines) and that credentials must never be pasted.
+
 **The question card you are looking at must actually be the question being asked.**
 
 ### Fixed

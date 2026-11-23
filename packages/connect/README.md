@@ -6,6 +6,11 @@ The **all-in-one plugin** for connecting [DeepSeek Harness](https://github.com/d
 
 > One install, one config block: the core `connect` service, every channel adapter (feishu / telegram / dingtalk / web), and the web-settings stack all live in this single package. Enable the channels you use via the `channels` selector. The former split packages (`dsh-connect-feishu`, `dsh-connect-telegram`, `dsh-connect-dingtalk`, `dsh-connect-web`) and the `dsh-connect-all` bundle no longer exist.
 
+> **Testing status: only the Feishu channel is actually well tested.** Telegram, DingTalk and
+> the Web mirror have unit tests, but no end-to-end runs against the real platforms and no
+> long-term real-world use — expect more problems there than in Feishu. Feedback is welcome and
+> issues get fixed. See [Only Feishu is actually well tested](#only-feishu-is-actually-well-tested).
+
 ### What it looks like
 
 The point of the plugin is the conversation, so that is what is shown first.
@@ -32,6 +37,29 @@ without changing the profile:
 
 > These are Chinese-language screenshots taken in Feishu, because that is where the project
 > is actually used. The UI strings exist in English too (`language: en`).
+
+### Only Feishu is actually well tested
+
+Know this before choosing a channel:
+
+- **Feishu is the only channel shaped by real use.** These screenshots, every accumulated fix
+  in this repository, and every change that came from feedback are all Feishu. The Feishu
+  channel also has an end-to-end round trip **against the real Feishu API**.
+- **Telegram, DingTalk and the Web mirror have not had the same verification.** They have unit
+  tests (against fake channels and fake networks, covering the adapter's shape and state
+  machine), but **no end-to-end runs against the real platforms** and no real user running long
+  tasks through them. Their code paths were written by following Feishu, and **have not been
+  validated by real traffic**.
+- **So their known and unknown defects are about equally many.** Problems are most likely in
+  card rendering differences (button/selector layout), callback and approval flows (tap events,
+  signature verification), long-connection reconnects, and streaming-card lifetime on long
+  tasks — exactly the parts that depend on real platform behaviour.
+- **Feedback is welcome; anything reported gets fixed.** If you use Telegram, DingTalk or the
+  Web mirror and hit something, open an issue at
+  [github.com/IvanWu2015/dsh-connect/issues](https://github.com/IvanWu2015/dsh-connect/issues)
+  with **the channel, the steps to reproduce, and the log lines starting with `connect:` /
+  `connect-telegram:` / `connect-dingtalk:`**. Never paste credentials into an issue. Reports
+  are fixed to the same standard as Feishu.
 
 The settings pane is configured separately — the full walkthrough, with its screenshots, is [further down](#the-settings-pane).
 
