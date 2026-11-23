@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.22] - 2026-11-23
 
 **A typed answer now lands on the question that is waiting.**
 
@@ -25,45 +25,6 @@ All notable changes to this project are documented following [Keep a Changelog](
     you send now starts a new message") and releases the chat, instead of leaving a stuck card
     whose reply was queued as a new task.
 
-- **「显示选项」 on an expired card waited out the answer-poll window before redrawing.** The
-  revive set a flag but did not wake the loop parked in its 5-second wait, so a returning user
-  saw nothing for up to five seconds — which reads as a dead card. The revive now wakes it and the
-  question is redrawn at once.
-
-- **The multi-select hint collapsed into the first line of the card footer.** Feishu
-  `note`/`plain_text` does not honour newlines, so 「点击按钮回答…」 and 「（可多选：…）」 rendered as one
-  run. One note element per line now. Telegram cards additionally dropped `prompt.footer`
-  entirely; it is now rendered.
-
-### Testing
-
-- **661 tests, 31 suites, green**, plus SMOKE OK and E2E OK (offline and against a live host).
-- Four new regression tests, each verified red against the unfixed code: a text reply answers a
-  question claimed for another session; a reply in a different session is not consumed; a typed
-  answer during a busy turn is taken (not announced as a new task); a withdrawn question retires
-  its card with a notice. The revive test now asserts the redraw is **prompt** (under 2 s) rather
-  than merely eventual — it previously raced the 5-second window and failed about a quarter of
-  the time.
-
-## [Unreleased]
-
-**Only Feishu is actually well tested — and both READMEs now say so.**
-
-### Documentation
-
-- **A testing-status note at the top of both READMEs.** Readers meet it before choosing a
-  channel: Feishu is the only channel shaped by real use and the only one with an end-to-end
-  round trip against the real platform; Telegram, DingTalk and the Web mirror have unit tests
-  against fake channels and fake networks only, so their defects — known and unknown — are about
-  equally many. The note names where problems are most likely (card rendering, tap and signature
-  flows, reconnects, streaming-card lifetime), states that feedback gets fixed to the same
-  standard as Feishu, and says what an issue should include (channel, steps, the `connect:` log
-  lines) and that credentials must never be pasted.
-
-**The question card you are looking at must actually be the question being asked.**
-
-### Fixed
-
 - **A card could keep showing the previous question while the answers were already recorded.**
   Reported as 「有两个问题需要用户确认时，确认完后，最后会变成第一个问题在那显示，像没确认的样子，
   但实际已经确认完了」. The bridge tells the adapter which card to rewrite, and that id is only a
@@ -78,15 +39,40 @@ All notable changes to this project are documented following [Keep a Changelog](
   stayed tappable with nothing to receive the tap, and every later tap was swallowed as
   "already answered". The listener is now retired immediately in that window.
 
+- **「显示选项」 on an expired card waited out the answer-poll window before redrawing.** The
+  revive set a flag but did not wake the loop parked in its 5-second wait, so a returning user
+  saw nothing for up to five seconds — which reads as a dead card. The revive now wakes it and the
+  question is redrawn at once.
+
+- **The multi-select hint collapsed into the first line of the card footer.** Feishu
+  `note`/`plain_text` does not honour newlines, so 「点击按钮回答…」 and 「（可多选：…）」 rendered as one
+  run. One note element per line now. Telegram cards additionally dropped `prompt.footer`
+  entirely; it is now rendered.
+
+### Documentation
+
+- **A testing-status note at the top of both READMEs.** Readers meet it before choosing a
+  channel: Feishu is the only channel shaped by real use and the only one with an end-to-end
+  round trip against the real platform; Telegram, DingTalk and the Web mirror have unit tests
+  against fake channels and fake networks only, so their defects — known and unknown — are about
+  equally many. The note names where problems are most likely (card rendering, tap and signature
+  flows, reconnects, streaming-card lifetime), states that feedback gets fixed to the same
+  standard as Feishu, and says what an issue should include (channel, steps, the `connect:` log
+  lines) and that credentials must never be pasted.
+
 ### Testing
 
 - **663 tests, 31 suites, green**, plus SMOKE OK and E2E OK (offline and against a live host).
-- Two new adapter tests: a card that still shows the previous question's options is re-sent (and
-  the fresh card's tap is accepted), while a verified in-place redraw posts no second card. The
-  first is red against the previous adapter.
-- A `settle`-guard test was written, found to pass with and without the guard (the frame it
-  protects is not reachable in the reproduced sequence), and **removed** rather than kept as
-  false confidence.
+- Four bridge regression tests, each verified red against the unfixed code: a text reply answers a
+  question claimed for another session; a reply in a different session is not consumed; a typed
+  answer during a busy turn is taken (not announced as a new task); a withdrawn question retires
+  its card with a notice. The revive test now asserts the redraw is **prompt** (under 2 s) rather
+  than merely eventual — it previously raced the 5-second window and failed about a quarter of
+  the time.
+- Two adapter tests: a card that still shows the previous question's options is re-sent (and the
+  fresh card's tap is accepted), while a verified in-place redraw posts no second card.
+- A `settle`-guard test was written, found to pass with and without the guard, and **removed**
+  rather than kept as false confidence.
 
 ## [1.0.21] - 2026-11-12
 
