@@ -10,6 +10,7 @@ import { FeishuAdapter, type FeishuConfig } from "./adapter.js";
 import { loadCredentials, onboardFeishu, saveCredentials } from "./onboard.js";
 import { feishuMessages } from "./i18n.js";
 import { CHANNEL_SECRET_KEYS } from "../../settings/credential-store.js";
+import { installProcessRejectionGuard } from "./network-guard.js";
 
 export { FeishuAdapter } from "./adapter.js";
 export type { FeishuConfig } from "./adapter.js";
@@ -17,6 +18,13 @@ export { padLabels, buildButtonGrid, buildSelectMenu, buildChoiceElements, build
 /** Test-only: shortens the question-card expiry so its revive path can be exercised. */
 export { setChoiceTimeoutForTests } from "./adapter.js";
 export { encodeChatKey, decodeChatKey } from "../../chat-key.js";
+export {
+  installProcessRejectionGuard,
+  isFeishuTransportRejection,
+  larkHttpInstance,
+  larkHttpGuard,
+} from "./network-guard.js";
+export type { ProcessRejectionGuardOptions } from "./network-guard.js";
 export { loadCredentials, onboardFeishu, saveCredentials } from "./onboard.js";
 export type { FeishuCredentials } from "./onboard.js";
 
@@ -53,9 +61,23 @@ interface ConnectLike {
 
 function start(connect: ConnectLike, config: FeishuConfig, logger?: { warn?: (...args: unknown[]) => void }): void {
   try {
+    // Install the process-level net BEFORE the adapter can start streaming.
+    //
+    // The Feishu SDK's streaming-card controller fires `void this.doFire()` from
+    // a timer, so a dropped cardkit request is an unhandled rejection and Node
+    // terminates the whole host — this is the crash users saw three times, each
+    // time taking every session with it. No `try/catch` here can reach that
+    // promise, and the SDK's cardkit client does not use the `httpInstance` we
+    // could inject. The guard absorbs ONLY Feishu transport failures; anything
+    // else is still the host's fatal error.
+    //
+    // Removal is tied to the channel runtime's teardown through the adapter, so
+    // disabling the channel also removes the net.
+    const removeGuard = installProcessRejectionGuard({ logger, owner: "connect-feishu" });
     // Bind the service method: FeishuAdapter invokes it as `this.isChatAllowed(...)`,
     // so a bare reference would lose the ConnectService `this` (and crash on this.config).
     const adapter = new FeishuAdapter(config, logger, connect.isChatAllowed?.bind(connect));
+    adapter.disposeExtra = removeGuard;
     connect.registerAdapter(adapter);
     void adapter.start().catch((error) => {
       logger?.warn?.(`connect-feishu: start failed: ${String(error)}`);

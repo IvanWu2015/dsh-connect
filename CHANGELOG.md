@@ -2,6 +2,47 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+**A dropped Feishu request no longer kills the whole host.**
+
+### Fixed
+
+- **The desktop host died on a Feishu network blip.** Three crashes on the same shape, reported
+  as `dsh: fatal load failure: AxiosError: read ECONNRESET` with
+  `url: 'https://open.feishu.cn/open-apis/cardkit/v1/cards'` (2026-11-02 and 2026-11-12 carried
+  `getaddrinfo ENOTFOUND` on the same endpoint instead). Every session in the host went with one
+  dropped HTTP request.
+  - The thrower is outside this package: the official Lark SDK's streaming-card controller fires
+    `void this.doFire()` from a `setTimeout`, so a failed cardkit rewrite is an **unhandled
+    rejection**, and Node ≥ 15 terminates the process on those. No `try/catch` in this plugin can
+    reach that promise.
+  - The SDK also builds its `cardkit` client internally: an `httpInstance` injected into
+    `createLarkChannel` never sees the request (measured — an injected instance saw zero calls),
+    so the transport cannot be wrapped either.
+  - The Feishu channel now installs a narrow process-level net while it is mounted. It absorbs a
+    rejection **only** when it is both a transport failure (`ECONNRESET`, `ENOTFOUND`,
+    `ETIMEDOUT`, `EPIPE`, …) and names the Feishu API host — and it logs it, so it is
+    attributable. Everything else is handed to the host's own handlers, i.e. a real bug still
+    terminates the process exactly as before. `stop()` removes the net with the channel.
+  - Verified by spawning real child processes: the same rejection exits **status 1** without the
+    guard and **survives** with it, and a control child rejecting an unrelated `TypeError` still
+    dies.
+
+- **Requests through the SDK's own HTTP client are now bounded.** A socket that never answers
+  used to pin a card rewrite indefinitely (the same defect the desktop host hit on
+  `api.deepseek.com` — "timed out after 5000 ms; keeping the previous catalog").
+
+### Testing
+
+- **673 tests, 31 suites, green**, plus SMOKE OK and E2E OK (offline and against a live host).
+- New `feishu-network` suite (10 tests): recognition of Feishu transport failures versus
+  everything else, survival measured in real child processes (guarded survives, unguarded exits
+  1, unrelated bug still exits 1), install/remove symmetry, the request timeout, and the channel
+  entry actually installing exactly one net on start and removing it on stop.
+- The entry-level test was rewritten after the first version passed with the wiring removed: it
+  now drives `register()` itself and counts listeners, so deleting the install turns it red.
+
 ## [1.0.22] - 2026-11-23
 
 **A typed answer now lands on the question that is waiting.**

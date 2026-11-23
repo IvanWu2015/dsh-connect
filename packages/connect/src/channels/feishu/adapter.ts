@@ -761,7 +761,22 @@ export class FeishuAdapter implements ChannelAdapter {
     }
   }
 
+  /**
+   * Extra teardown owned by whoever constructed this adapter.
+   *
+   * The Feishu channel registers a process-level `unhandledRejection` net (see
+   * `installProcessRejectionGuard`: the SDK's streaming-card throttle can reject
+   * where no `try/catch` of ours can reach, and Node kills the host on those).
+   * `stop()` is the moment that net must come off — a channel that was disabled
+   * must not keep a listener on the host's process.
+   */
+  disposeExtra?: () => void;
+
   async stop(): Promise<void> {
+    // Take the process net down first: this adapter is going away, so its
+    // transport failures must stop being absorbed.
+    this.disposeExtra?.();
+    this.disposeExtra = undefined;
     // Release the webhook listener first so no new callbacks arrive mid-teardown.
     const server = this.server;
     this.server = undefined;

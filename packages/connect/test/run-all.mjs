@@ -30,6 +30,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const suites = [
   "unit.test.mjs",
   "feishu.test.mjs",
+  "feishu-network.test.mjs",
   "telegram.test.mjs",
   "dingtalk.test.mjs",
   "web.test.mjs",
