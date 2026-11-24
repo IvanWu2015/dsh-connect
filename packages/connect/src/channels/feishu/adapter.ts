@@ -476,6 +476,21 @@ export class FeishuAdapter implements ChannelAdapter {
         dmMode: config.dmMode ?? "open",
       },
       loggerLevel: LoggerLevel.info,
+      // Card-button taps and messages arrive as DIFFERENT event types. The SDK
+      // drops a card action it considers a duplicate (`seenCache`) or in-flight
+      // (`lock`) in SILENCE, and a failure inside a card handler is swallowed
+      // unless a logger is supplied. "Click does nothing at all" — no stale
+      // notice, no acknowledgement — is exactly that silence, so give the SDK
+      // our logger and turn on its debug lines: the next report then carries
+      // `safety: drop duplicate action …` / `drop in-flight action …` instead of
+      // nothing.
+      logger: {
+        trace: (...args: unknown[]) => logger?.info?.(`connect-feishu[sdk]: ${args.map(String).join(" ")}`),
+        debug: (...args: unknown[]) => logger?.info?.(`connect-feishu[sdk]: ${args.map(String).join(" ")}`),
+        info: (...args: unknown[]) => logger?.info?.(`connect-feishu[sdk]: ${args.map(String).join(" ")}`),
+        warn: (...args: unknown[]) => logger?.warn?.(`connect-feishu[sdk]: ${args.map(String).join(" ")}`),
+        error: (...args: unknown[]) => logger?.error?.(`connect-feishu[sdk]: ${args.map(String).join(" ")}`),
+      },
     });
   }
 
@@ -714,6 +729,16 @@ export class FeishuAdapter implements ChannelAdapter {
           this.staleTimers.add(timer);
           void this.sendText({ chatKey: evt.chatId, chatType: "p2p" }, this.t.actionStale).catch(() => undefined);
         }
+        // A tap whose button carries no `choice` value. Not ours to answer, but
+        // silence here is indistinguishable from 「按钮点不动」 — the reported
+        // symptom was exactly a card that accepted taps and did nothing. Leave a
+        // trace that names the card and what the button actually sent, with the
+        // value truncated (it is user-visible content, not a secret).
+        const payload = JSON.stringify(evt.action?.value ?? evt.action ?? null);
+        this.logger?.warn?.(
+          `connect-feishu: ignored a button tap with no choice id on card ${evt.messageId} `
+          + `(chat=${evt.chatId}); action=${payload.slice(0, 160)}`,
+        );
         return;
       }
       pending.resolve(choiceIdOf(evt));

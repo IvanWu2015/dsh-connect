@@ -31,6 +31,7 @@ const suites = [
   "unit.test.mjs",
   "feishu.test.mjs",
   "feishu-network.test.mjs",
+  "feishu-tap-observability.test.mjs",
   "telegram.test.mjs",
   "dingtalk.test.mjs",
   "web.test.mjs",
