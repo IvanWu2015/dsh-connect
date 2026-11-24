@@ -2,9 +2,9 @@
 
 All notable changes to this project are documented following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.23] - 2026-11-24
 
-**A dropped Feishu request no longer kills the whole host.**
+**The desktop host no longer dies on a Feishu network blip, and a card tap never vanishes without a trace.**
 
 ### Fixed
 
@@ -32,16 +32,23 @@ All notable changes to this project are documented following [Keep a Changelog](
 - **Requests through the SDK's own HTTP client are now bounded.** A socket that never answers
   used to pin a card rewrite indefinitely (the same defect the desktop host hit on
   `api.deepseek.com` — "timed out after 5000 ms; keeping the previous catalog").
+- **A button tap could do nothing at all, silently.** Reported as 「按钮已经有了，但点击了，没有任何
+  反应」 while the question stayed on screen. Two places swallowed the tap completely:
+  - the Lark SDK drops a duplicate or in-flight card action with a **DEBUG** line, and that line
+    went nowhere because no logger was handed to `createLarkChannel` — the tap simply vanished;
+  - a button whose payload carries no `choice` id was discarded with no log and no reply.
+  The adapter now passes the SDK a prefixed logger (`connect-feishu[sdk]: …`), so
+  `safety: drop duplicate action …` and `drop in-flight action …` reach the host log, and it
+  warns with the card id and the (truncated) action payload when a tap cannot be answered. The
+  one deliberate silence — a tap landing inside a card's redraw window — is pinned by a test to
+  stay time-boxed, so a card can never become tappable-but-deaf.
 
 ### Testing
 
-- **673 tests, 31 suites, green**, plus SMOKE OK and E2E OK (offline and against a live host).
-- New `feishu-network` suite (10 tests): recognition of Feishu transport failures versus
-  everything else, survival measured in real child processes (guarded survives, unguarded exits
-  1, unrelated bug still exits 1), install/remove symmetry, the request timeout, and the channel
-  entry actually installing exactly one net on start and removing it on stop.
-- The entry-level test was rewritten after the first version passed with the wiring removed: it
-  now drives `register()` itself and counts listeners, so deleting the install turns it red.
+- **678 tests, 31 suites, green**, plus SMOKE OK and E2E OK (offline and against a live host).
+- New `feishu-network` suite (10 tests): recognition of Feishu transport failures versus everything else, survival measured in real child processes (guarded survives, unguarded exits 1, unrelated bug still exits 1), install/remove symmetry, the request timeout, and the channel entry installing exactly one net on start and removing it on stop.
+- New `feishu-tap-observability` suite (5 tests): the SDK logger is wired and prefixed, a tap on an unknown card is always answered, an unanswerable tap leaves a trace naming the card, the redraw absorber clears itself, and the stale notice is single-language. The "unanswerable tap leaves a trace" test was red before the fix.
+- The guard's entry-level test was rewritten after the first version passed with the wiring removed: it now drives `register()` itself and counts listeners, so deleting the install turns it red.
 
 ## [1.0.22] - 2026-11-23
 
