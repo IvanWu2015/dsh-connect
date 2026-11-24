@@ -46,7 +46,27 @@ function larkDropped() {
  * cannot tell "absorbed" from "still fatal" — only the process's exit status can.
  */
 const childMode = process.argv[2];
-if (childMode === "--crash-child" || childMode === "--guarded-child" || childMode === "--bug-child") {
+if (childMode === "--timeout-child") {
+  // A bare event loop: one request that never answers, nothing else pending.
+  const hanging = {
+    request: () => new Promise(() => undefined),
+    get: () => new Promise(() => undefined),
+    post: () => new Promise(() => undefined),
+    put: () => new Promise(() => undefined),
+    patch: () => new Promise(() => undefined),
+    delete: () => new Promise(() => undefined),
+    head: () => new Promise(() => undefined),
+    options: () => new Promise(() => undefined),
+  };
+  const http = larkHttpInstance(hanging, { timeoutMs: 50 });
+  http.post("https://open.feishu.cn/open-apis/cardkit/v1/cards", {}).then(
+    () => { process.stdout.write("RESOLVED\n"); process.exit(2); },
+    (error) => {
+      process.stdout.write(`TIMED_OUT ${error.code}\n`);
+      process.exit(0);
+    },
+  );
+} else if (childMode === "--crash-child" || childMode === "--guarded-child" || childMode === "--bug-child") {
   const install = childMode === "--guarded-child"
     ? installProcessRejectionGuard({ owner: "child", logger: { warn: () => undefined } })
     : undefined;
@@ -169,6 +189,19 @@ test("a request that never answers is cut off at the configured timeout", async 
     },
   );
   assert.deepEqual(calls, ["post"]);
+});
+
+test("the timeout timer keeps the event loop alive (the CI failure)", () => {
+  // CI caught this and the local Windows run did not: the timeout timer was
+  // `.unref()`'d, so on an event loop with nothing else to do (Linux CI right
+  // after the last assertion) Node exited while the race was still pending and
+  // reported "Promise resolution is still pending but the event loop has already
+  // resolved" instead of the timeout. Measured in a child process that does
+  // EXACTLY that and nothing else.
+  const modulePath = fileURLToPath(import.meta.url);
+  const result = spawnSync(process.execPath, [modulePath, "--timeout-child"], { encoding: "utf8" });
+  assert.equal(result.status, 0, `the timeout must fire on a bare event loop; stderr=${String(result.stderr).slice(0, 300)}`);
+  assert.equal(String(result.stdout).includes("TIMED_OUT"), true);
 });
 
 test("a wrapped request passes the result through, and a failure through unchanged", async () => {

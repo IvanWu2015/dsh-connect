@@ -189,7 +189,12 @@ export function larkHttpInstance(
             error.code = "ETIMEDOUT";
             reject(error);
           }, timeoutMs);
-          timer.unref?.();
+          // Deliberately NOT unref'd. This timer is the only thing that can settle the
+          // race when the socket never answers, so unref'ing it lets the event loop exit
+          // while this promise is still pending — Node then aborts with "Promise
+          // resolution is still pending but the event loop has already resolved" instead
+          // of producing the timeout. It is always cleared in `finally`, so it cannot
+          // outlive the request.
         }),
       ]);
     } finally {
